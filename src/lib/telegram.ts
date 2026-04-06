@@ -1,6 +1,6 @@
 const TELEGRAM_API = 'https://api.telegram.org/bot'
 
-export async function sendTelegramMessage(token: string, chatId: number | string, text: string, buttons?: { text: string; url?: string }[]) {
+export async function sendTelegramMessage(token: string, chatId: number | string, text: string, buttons?: { text: string; url?: string; callback_data?: string }[]) {
   const body: Record<string, unknown> = {
     chat_id: chatId,
     text,
@@ -9,7 +9,10 @@ export async function sendTelegramMessage(token: string, chatId: number | string
 
   if (buttons && buttons.length > 0) {
     body.reply_markup = {
-      inline_keyboard: [buttons.map(b => b.url ? { text: b.text, url: b.url } : { text: b.text, callback_data: b.text })],
+      inline_keyboard: [buttons.map(b => {
+        if (b.url) return { text: b.text, url: b.url }
+        return { text: b.text, callback_data: b.callback_data || b.text }
+      })],
     }
   }
 
