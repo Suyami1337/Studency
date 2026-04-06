@@ -171,6 +171,40 @@ function MessageCard({
             )}
           </div>
 
+          {/* Next message link */}
+          <div className="bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/10">
+            <label className="block text-xs font-medium text-[#6A55F8] mb-2">↓ Следующее сообщение</label>
+            <div className="flex items-center gap-3">
+              <select
+                value={msg.next_message_id || ''}
+                onChange={e => onUpdate(msg.id, { next_message_id: e.target.value || null })}
+                className="flex-1 px-2 py-1.5 rounded border border-[#6A55F8]/20 text-sm focus:outline-none focus:border-[#6A55F8] bg-white"
+              >
+                <option value="">Нет (конец цепочки)</option>
+                {allMessages.filter(m => m.id !== msg.id).map(m => (
+                  <option key={m.id} value={m.id}>
+                    #{m.order_position + 1}: {m.is_start ? '⭐' : m.is_followup ? '🔔' : '💬'} {(m.text || 'Пустое').slice(0, 50)}
+                  </option>
+                ))}
+              </select>
+              {msg.next_message_id && (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs text-gray-500">через</span>
+                  <input
+                    type="number"
+                    value={msg.delay_minutes}
+                    onChange={e => onUpdate(msg.id, { delay_minutes: parseInt(e.target.value) || 0 })}
+                    className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]"
+                  />
+                  <span className="text-xs text-gray-500">мин</span>
+                </div>
+              )}
+            </div>
+            {!msg.next_message_id && buttons.length > 0 && (
+              <p className="text-[10px] text-gray-400 mt-1.5">Кнопки уже настраивают переходы. Следующее сообщение нужно только для линейной цепочки.</p>
+            )}
+          </div>
+
           {/* Delete */}
           <div className="pt-2 border-t border-gray-100 flex justify-end">
             <button onClick={() => onDelete(msg.id)} className="text-xs text-red-500 hover:underline">Удалить сообщение</button>
@@ -303,15 +337,46 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
             <>
               {messages.map((msg, idx) => {
                 const msgButtons = buttons.filter(b => b.message_id === msg.id)
+                // Find which messages link TO this one
+                const linkedFrom = messages.find(m => m.next_message_id === msg.id)
+                const buttonLinkedFrom = buttons.find(b => b.action_goto_message_id === msg.id)
+                const hasIncomingLink = !!linkedFrom || !!buttonLinkedFrom
+
                 return (
                   <div key={msg.id}>
                     {/* Connection line */}
                     {idx > 0 && (
-                      <div className="flex items-center gap-2 py-1 pl-9">
-                        <div className="w-px h-4 bg-gray-200 ml-3" />
-                        {msg.delay_minutes > 0 && (
-                          <span className="text-[10px] text-gray-400">⏱ через {msg.delay_minutes >= 60 ? `${Math.round(msg.delay_minutes / 60)}ч` : `${msg.delay_minutes}мин`}</span>
-                        )}
+                      <div className="flex items-center gap-2 py-1.5 pl-4">
+                        <div className="flex flex-col items-center">
+                          <div className="w-px h-2 bg-[#6A55F8]/30" />
+                          <div className="text-[#6A55F8] text-xs">↓</div>
+                          <div className="w-px h-2 bg-[#6A55F8]/30" />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {linkedFrom && (
+                            <span className="text-[10px] bg-[#F0EDFF] text-[#6A55F8] px-1.5 py-0.5 rounded font-medium">
+                              от #{linkedFrom.order_position + 1}
+                            </span>
+                          )}
+                          {buttonLinkedFrom && (
+                            <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium">
+                              от кнопки
+                            </span>
+                          )}
+                          {msg.delay_minutes > 0 && (
+                            <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-medium">
+                              ⏱ {msg.delay_minutes >= 60 ? `${Math.round(msg.delay_minutes / 60)}ч` : `${msg.delay_minutes}мин`}
+                            </span>
+                          )}
+                          {msg.is_followup && (
+                            <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">
+                              дожим
+                            </span>
+                          )}
+                          {!hasIncomingLink && !msg.is_start && (
+                            <span className="text-[10px] text-gray-300">не привязано</span>
+                          )}
+                        </div>
                       </div>
                     )}
                     <MessageCard
