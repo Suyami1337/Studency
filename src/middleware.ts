@@ -2,6 +2,12 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // Skip middleware for static assets and API routes
+  const { pathname } = request.nextUrl
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname === '/favicon.ico') {
+    return NextResponse.next()
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -13,7 +19,7 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
+          cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
           supabaseResponse = NextResponse.next({ request })
@@ -25,19 +31,18 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // Use getSession (local check, no network) instead of getUser (API call)
+  const { data: { session } } = await supabase.auth.getSession()
 
-  const isAuthPage = request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/register'
+  const isAuthPage = pathname === '/login' || pathname === '/register'
 
-  // Not logged in → redirect to login (unless already on auth page)
-  if (!user && !isAuthPage) {
+  if (!session && !isAuthPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Logged in but on auth page → redirect to projects
-  if (user && isAuthPage) {
+  if (session && isAuthPage) {
     const url = request.nextUrl.clone()
     url.pathname = '/projects'
     return NextResponse.redirect(url)
