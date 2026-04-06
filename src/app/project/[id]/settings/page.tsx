@@ -1,2 +1,2 @@
-import SettingsScreen from '@/components/screens/SettingsScreen'
-export default function Page() { return <SettingsScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Настройки" icon="⚙️" /> }

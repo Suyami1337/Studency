@@ -1,2 +1,2 @@
-import ProductsScreen from '@/components/screens/ProductsScreen'
-export default function Page() { return <ProductsScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Продукты" icon="📦" /> }

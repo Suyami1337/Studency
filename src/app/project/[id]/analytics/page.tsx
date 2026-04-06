@@ -1,2 +1,2 @@
-import AnalyticsScreen from '@/components/screens/AnalyticsScreen'
-export default function Page() { return <AnalyticsScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Аналитика" icon="📈" /> }

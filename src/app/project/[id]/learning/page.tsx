@@ -1,2 +1,2 @@
-import LearningScreen from '@/components/screens/LearningScreen'
-export default function Page() { return <LearningScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Обучение" icon="📚" /> }

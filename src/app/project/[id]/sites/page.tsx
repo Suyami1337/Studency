@@ -1,2 +1,2 @@
-import SitesScreen from '@/components/screens/SitesScreen'
-export default function Page() { return <SitesScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Сайты" icon="🌐" /> }

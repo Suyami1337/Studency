@@ -1,2 +1,2 @@
-import ChatbotsScreen from '@/components/screens/ChatbotsScreen'
-export default function Page() { return <ChatbotsScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Чат-боты" icon="💬" /> }

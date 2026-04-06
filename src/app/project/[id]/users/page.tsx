@@ -1,2 +1,2 @@
-import UsersScreen from '@/components/screens/UsersScreen'
-export default function Page() { return <UsersScreen /> }
+import ComingSoon from '@/components/screens/ComingSoon'
+export default function Page() { return <ComingSoon title="Пользователи" icon="👤" /> }
