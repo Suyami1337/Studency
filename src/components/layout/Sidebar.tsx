@@ -1,5 +1,7 @@
 'use client'
 
+import { useRouter, usePathname, useParams } from 'next/navigation'
+
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'funnels', label: 'Воронки', icon: '🔄' },
@@ -17,7 +19,18 @@ const bottomItems = [
   { id: 'settings', label: 'Настройки', icon: '⚙️' },
 ]
 
-export default function Sidebar({ active, onNavigate, projectName }: { active: string; onNavigate: (s: string) => void; projectName?: string }) {
+export default function Sidebar({ projectName }: { projectName?: string }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const params = useParams()
+
+  const segments = pathname.split('/')
+  const active = segments[segments.length - 1] === params.id ? 'dashboard' : segments[segments.length - 1]
+
+  function navigate(page: string) {
+    router.push(`/project/${params.id}/${page}`)
+  }
+
   return (
     <aside className="w-[260px] h-screen bg-white border-r border-gray-100 flex flex-col shrink-0">
       {/* Logo */}
@@ -33,7 +46,7 @@ export default function Sidebar({ active, onNavigate, projectName }: { active: s
       {/* Project selector */}
       <div className="px-4 py-3">
         <button
-          onClick={() => onNavigate('projects')}
+          onClick={() => router.push('/projects')}
           className="w-full px-3 py-2.5 rounded-lg bg-[#F0EDFF] hover:bg-[#E8E4FF] transition-colors flex items-center justify-between"
         >
           <div className="flex items-center gap-2">
@@ -51,7 +64,7 @@ export default function Sidebar({ active, onNavigate, projectName }: { active: s
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => navigate(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 isActive
                   ? 'bg-[#6A55F8] text-white shadow-sm shadow-[#6A55F8]/25'
@@ -72,7 +85,7 @@ export default function Sidebar({ active, onNavigate, projectName }: { active: s
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => navigate(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 isActive
                   ? 'bg-[#6A55F8] text-white shadow-sm shadow-[#6A55F8]/25'

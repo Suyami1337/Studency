@@ -1,10 +1,13 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter, useParams } from 'next/navigation'
 import { notifications, currentUser } from '@/lib/mock-data'
 
-export default function Header({ onNavigate }: { onNavigate: (s: string) => void }) {
+export default function Header() {
   const [showNotif, setShowNotif] = useState(false)
+  const router = useRouter()
+  const params = useParams()
   const unread = notifications.filter(n => !n.read).length
 
   return (
@@ -46,7 +49,7 @@ export default function Header({ onNavigate }: { onNavigate: (s: string) => void
 
         {/* User */}
         <button
-          onClick={() => onNavigate('settings')}
+          onClick={() => router.push(`/project/${params.id}/settings`)}
           className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
         >
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#6A55F8] to-[#8B7BFA] flex items-center justify-center text-white text-xs font-bold">
