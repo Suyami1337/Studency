@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { orders, orderStatuses } from '@/lib/mock-data'
 
+type Order = typeof orders[number]
+
 const allStatuses = Object.entries(orderStatuses)
 
 const presets = [
@@ -11,11 +13,125 @@ const presets = [
   { name: 'Проблемные', statuses: ['refund', 'cancelled'] },
 ]
 
+const fakePaymentHistory = [
+  { date: '06.04', amount: 29900, method: 'Продамус', id: 1 },
+  { date: '01.04', amount: 2990, method: 'Продамус', id: 2 },
+]
+
+function OrderDetail({ order, onBack }: { order: Order; onBack: () => void }) {
+  const [currentStatus, setCurrentStatus] = useState(order.status)
+  const statusConf = orderStatuses[currentStatus] ?? { label: currentStatus, color: '#94A3B8' }
+
+  return (
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          ← Назад
+        </button>
+        <h1 className="text-xl font-bold text-gray-900">Заказ #{order.id}</h1>
+        <span className="rounded-full px-2.5 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: statusConf.color }}>
+          {statusConf.label}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        {/* Order info */}
+        <div className="col-span-2 space-y-4">
+          <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-900">Информация о заказе</h2>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-gray-400 text-xs mb-0.5">Клиент</p>
+                <p className="font-medium text-gray-900">{order.client}</p>
+                <p className="text-gray-500 text-xs">{order.email}</p>
+              </div>
+              <div>
+                <p className="text-gray-400 text-xs mb-0.5">Продукт</p>
+                <p className="font-medium text-gray-900">{order.product}</p>
+              </div>
+              <div>
+                <p className="text-gray-400 text-xs mb-0.5">Тариф</p>
+                <p className="font-medium text-gray-900">{order.tariff}</p>
+              </div>
+              <div>
+                <p className="text-gray-400 text-xs mb-0.5">Сумма</p>
+                <p className="font-bold text-[#6A55F8] text-lg">{order.amount.toLocaleString('ru')} ₽</p>
+              </div>
+              <div>
+                <p className="text-gray-400 text-xs mb-0.5">Дата создания</p>
+                <p className="font-medium text-gray-900">{order.date}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Payment history */}
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-900">История платежей</h2>
+              <button className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8] rounded-lg px-3 py-1.5 hover:bg-[#F0EDFF] transition-colors">
+                + Добавить платёж вручную
+              </button>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  {['Дата', 'Сумма', 'Метод'].map(h => (
+                    <th key={h} className="text-left text-xs font-semibold text-gray-500 pb-2">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {fakePaymentHistory.map(p => (
+                  <tr key={p.id} className="border-b border-gray-50">
+                    <td className="py-3 text-gray-700">{p.date}</td>
+                    <td className="py-3 font-semibold text-gray-900">{p.amount.toLocaleString('ru')} ₽</td>
+                    <td className="py-3 text-gray-500">{p.method}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Status change */}
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">Изменить статус</h2>
+            <div className="space-y-2">
+              {allStatuses.map(([key, val]) => (
+                <button
+                  key={key}
+                  onClick={() => setCurrentStatus(key as Order['status'])}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${
+                    currentStatus === key ? 'bg-[#F0EDFF] text-[#6A55F8] font-medium' : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: val.color }} />
+                  {val.label}
+                  {currentStatus === key && <span className="ml-auto text-[#6A55F8] text-xs">✓</span>}
+                </button>
+              ))}
+            </div>
+            <button className="mt-4 w-full bg-[#6A55F8] hover:bg-[#5040D6] text-white py-2 rounded-lg text-sm font-medium transition-colors">
+              Сохранить статус
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function OrdersScreen() {
   const [search, setSearch] = useState('')
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
   const [showStatusFilter, setShowStatusFilter] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
 
   const toggleStatus = (s: string) => {
     setSelectedStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
@@ -36,6 +152,16 @@ export default function OrdersScreen() {
   })
 
   const totalRevenue = filtered.filter(o => o.status === 'paid').reduce((sum, o) => sum + o.amount, 0)
+
+  const selectedOrder = orders.find(o => o.id === selectedOrderId)
+
+  if (selectedOrder) {
+    return (
+      <div className="p-6">
+        <OrderDetail order={selectedOrder} onBack={() => setSelectedOrderId(null)} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-5">
@@ -177,7 +303,11 @@ export default function OrdersScreen() {
             {filtered.map(order => {
               const statusConf = orderStatuses[order.status] ?? { label: order.status, color: '#94A3B8' }
               return (
-                <tr key={order.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
+                <tr
+                  key={order.id}
+                  className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => setSelectedOrderId(order.id)}
+                >
                   <td className="px-4 py-3 text-gray-400 font-mono text-xs">#{order.id}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900 truncate">{order.client}</div>

@@ -5,6 +5,12 @@ import { clients, crmStages } from '@/lib/mock-data'
 
 const tagColors = ['bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-blue-100 text-blue-700', 'bg-green-100 text-green-700']
 
+const fakeBoards = [
+  { id: 1, name: 'Основная воронка' },
+  { id: 2, name: 'Отдел продаж' },
+  { id: 3, name: 'VIP-клиенты' },
+]
+
 function TagPill({ tag, i }: { tag: string; i: number }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tagColors[i % tagColors.length]}`}>{tag}</span>
@@ -21,6 +27,10 @@ function stageColor(stageId: string) {
 
 export default function CrmScreen() {
   const [view, setView] = useState<'kanban' | 'table'>('kanban')
+  const [selectedBoardId, setSelectedBoardId] = useState(1)
+  const [showBoardDropdown, setShowBoardDropdown] = useState(false)
+
+  const selectedBoard = fakeBoards.find(b => b.id === selectedBoardId) ?? fakeBoards[0]
 
   return (
     <div className="p-6 space-y-5">
@@ -30,22 +40,62 @@ export default function CrmScreen() {
           <h1 className="text-2xl font-bold text-gray-900">CRM</h1>
           <p className="text-sm text-gray-500 mt-0.5">{clients.length} клиентов в базе</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setView('kanban')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'kanban' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Канбан
-            </button>
-            <button
-              onClick={() => setView('table')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'table' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              Таблица
-            </button>
-          </div>
+      </div>
+
+      {/* Board selector row */}
+      <div className="flex items-center gap-3">
+        {/* Board dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowBoardDropdown(!showBoardDropdown)}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:border-[#6A55F8] transition-colors"
+          >
+            <span className="text-[#6A55F8]">📊</span>
+            {selectedBoard.name}
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showBoardDropdown && (
+            <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 p-2 min-w-[200px]">
+              {fakeBoards.map(board => (
+                <button
+                  key={board.id}
+                  onClick={() => { setSelectedBoardId(board.id); setShowBoardDropdown(false) }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
+                    selectedBoardId === board.id ? 'bg-[#F0EDFF] text-[#6A55F8] font-medium' : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  {board.name}
+                  {selectedBoardId === board.id && <span className="text-xs text-[#6A55F8]">✓</span>}
+                </button>
+              ))}
+              <div className="border-t border-gray-100 mt-1 pt-1">
+                <button className="w-full text-left px-3 py-2 rounded-lg text-sm text-[#6A55F8] hover:bg-[#F0EDFF] transition-colors font-medium">
+                  + Создать CRM-доску
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* View toggle */}
+        <div className="flex bg-gray-100 rounded-lg p-1">
+          <button
+            onClick={() => setView('kanban')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'kanban' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            Канбан
+          </button>
+          <button
+            onClick={() => setView('table')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${view === 'table' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            Таблица
+          </button>
+        </div>
+
+        <span className="text-xs text-gray-400 ml-auto">Доска: {selectedBoard.name}</span>
       </div>
 
       {/* Kanban */}
