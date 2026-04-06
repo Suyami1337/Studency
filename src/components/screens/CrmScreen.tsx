@@ -50,11 +50,11 @@ export default function CrmScreen() {
 
       {/* Kanban */}
       {view === 'kanban' && (
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        <div className="flex gap-3 overflow-x-auto pb-4">
           {crmStages.map(stage => {
             const stageClients = clients.filter(c => c.stage === stage.id)
             return (
-              <div key={stage.id} className="min-w-[220px] flex-shrink-0">
+              <div key={stage.id} className="min-w-[220px] flex-shrink-0 bg-gray-50/80 rounded-xl p-3 border border-gray-100">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: stage.color }} />
                   <span className="text-sm font-semibold text-gray-700">{stage.name}</span>
