@@ -15,9 +15,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const message = body.message || body.callback_query?.message
 
-    if (!message) {
-      return NextResponse.json({ ok: true })
-    }
+    if (!message) return NextResponse.json({ ok: true })
 
     const chatId = message.chat.id
     const userId = message.from?.id
@@ -25,24 +23,18 @@ export async function POST(request: NextRequest) {
     const firstName = message.from?.first_name
     const text = body.message?.text || body.callback_query?.data || ''
 
-    // Find which bot this webhook belongs to by checking all active bots
-    // The bot token is extracted from the webhook URL path
     const botToken = request.nextUrl.searchParams.get('token')
-    if (!botToken) {
-      return NextResponse.json({ error: 'No token' }, { status: 400 })
-    }
+    if (!botToken) return NextResponse.json({ error: 'No token' }, { status: 400 })
 
-    // Find bot in database
+    // Find bot
     const { data: bot } = await supabase
       .from('telegram_bots')
-      .select('*, projects(id)')
+      .select('*')
       .eq('token', botToken)
       .eq('is_active', true)
       .single()
 
-    if (!bot) {
-      return NextResponse.json({ error: 'Bot not found' }, { status: 404 })
-    }
+    if (!bot) return NextResponse.json({ error: 'Bot not found' }, { status: 404 })
 
     const projectId = bot.project_id
 
@@ -60,9 +52,7 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
 
-    if (!conversation) {
-      return NextResponse.json({ ok: true })
-    }
+    if (!conversation) return NextResponse.json({ ok: true })
 
     // Save incoming message
     await supabase.from('chatbot_messages').insert({
@@ -74,9 +64,7 @@ export async function POST(request: NextRequest) {
 
     // Find or create customer
     let customerId = conversation.customer_id
-
     if (!customerId) {
-      // Create new customer
       const { data: customer } = await supabase
         .from('customers')
         .insert({
@@ -90,87 +78,94 @@ export async function POST(request: NextRequest) {
 
       if (customer) {
         customerId = customer.id
-        await supabase
-          .from('chatbot_conversations')
-          .update({ customer_id: customer.id })
-          .eq('id', conversation.id)
-
-        // Log action
+        await supabase.from('chatbot_conversations').update({ customer_id: customer.id }).eq('id', conversation.id)
         await supabase.from('customer_actions').insert({
-          customer_id: customer.id,
-          project_id: projectId,
-          action: 'bot_start',
+          customer_id: customer.id, project_id: projectId, action: 'bot_start',
           data: { bot_name: bot.name, telegram_username: username },
         })
       }
-    } else {
-      // Log message action
-      await supabase.from('customer_actions').insert({
-        customer_id: customerId,
-        project_id: projectId,
-        action: 'bot_message',
-        data: { text, bot_name: bot.name },
-      })
     }
 
-    // Find active scenario for this bot
-    const { data: scenario } = await supabase
+    // =============================================
+    // NEW: Find matching start message by trigger word
+    // =============================================
+
+    // Get all scenarios for this bot
+    const { data: scenarios } = await supabase
       .from('chatbot_scenarios')
-      .select('*')
+      .select('id')
       .eq('telegram_bot_id', bot.id)
-      .eq('status', 'active')
-      .order('is_default', { ascending: false })
-      .limit(1)
-      .single()
 
-    if (scenario) {
-      // Get current step
-      const stepPosition = conversation.current_step_position || 0
+    if (!scenarios || scenarios.length === 0) {
+      return NextResponse.json({ ok: true })
+    }
 
-      const { data: steps } = await supabase
-        .from('scenario_steps')
-        .select('*')
-        .eq('scenario_id', scenario.id)
-        .order('order_position')
+    const scenarioIds = scenarios.map(s => s.id)
 
-      if (steps && steps[stepPosition]) {
-        const step = steps[stepPosition]
+    // Find start message matching the trigger word
+    const { data: startMessages } = await supabase
+      .from('scenario_messages')
+      .select('*')
+      .in('scenario_id', scenarioIds)
+      .eq('is_start', true)
 
-        if (step.step_type === 'message' && step.content) {
-          await sendTelegramMessage(botToken, chatId, step.content)
+    const normalizedText = text.toLowerCase().trim()
+    const matchedStart = (startMessages ?? []).find(m =>
+      m.trigger_word && normalizedText === m.trigger_word.toLowerCase().trim()
+    )
 
-          // Save outgoing message
+    if (matchedStart) {
+      // Send the start message
+      if (matchedStart.text) {
+        // Get buttons for this message
+        const { data: btns } = await supabase
+          .from('scenario_buttons')
+          .select('*')
+          .eq('message_id', matchedStart.id)
+          .order('order_position')
+
+        const telegramButtons = (btns ?? []).map(b => ({
+          text: b.text,
+          url: b.action_type === 'url' ? b.action_url || undefined : undefined,
+        }))
+
+        if (telegramButtons.length > 0) {
+          await sendTelegramMessage(botToken, chatId, matchedStart.text, telegramButtons)
+        } else {
+          await sendTelegramMessage(botToken, chatId, matchedStart.text)
+        }
+
+        // Save outgoing
+        await supabase.from('chatbot_messages').insert({
+          conversation_id: conversation.id,
+          direction: 'outgoing',
+          content: matchedStart.text,
+        })
+      }
+
+      // If there's a next message linked, queue it (for now just send immediately if no delay)
+      if (matchedStart.next_message_id) {
+        const { data: nextMsg } = await supabase
+          .from('scenario_messages')
+          .select('*')
+          .eq('id', matchedStart.next_message_id)
+          .single()
+
+        if (nextMsg && nextMsg.text && nextMsg.delay_minutes === 0) {
+          await sendTelegramMessage(botToken, chatId, nextMsg.text)
           await supabase.from('chatbot_messages').insert({
             conversation_id: conversation.id,
             direction: 'outgoing',
-            content: step.content,
+            content: nextMsg.text,
           })
         }
-
-        if (step.step_type === 'button' && step.button_text) {
-          await sendTelegramMessage(
-            botToken,
-            chatId,
-            step.content || 'Выберите действие:',
-            [{ text: step.button_text, url: step.button_url || undefined }]
-          )
-        }
-
-        // Advance to next step
-        await supabase
-          .from('chatbot_conversations')
-          .update({
-            current_scenario_id: scenario.id,
-            current_step_position: stepPosition + 1,
-          })
-          .eq('id', conversation.id)
       }
-    } else {
-      // No scenario — send default message
-      if (text === '/start') {
-        await sendTelegramMessage(botToken, chatId, `Привет, ${firstName || 'друг'}! Бот подключён к Studency.`)
-      }
+
+      return NextResponse.json({ ok: true })
     }
+
+    // No matching trigger — check if it's a callback/button press that triggers a word
+    // For now, do nothing if no trigger matches
 
     return NextResponse.json({ ok: true })
   } catch (error) {

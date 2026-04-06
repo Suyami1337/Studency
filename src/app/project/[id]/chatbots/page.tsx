@@ -226,6 +226,13 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
 
   async function deleteMessage(id: string) {
     await supabase.from('scenario_messages').delete().eq('id', id)
+    // Reorder remaining messages
+    const remaining = messages.filter(m => m.id !== id)
+    for (let i = 0; i < remaining.length; i++) {
+      if (remaining[i].order_position !== i) {
+        await supabase.from('scenario_messages').update({ order_position: i }).eq('id', remaining[i].id)
+      }
+    }
     await loadData()
   }
 
