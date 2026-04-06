@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "project": "Studency",
+  "created": "2026-04-06",
+  "preferences": {
+    "language": "ru",
+    "code_language": "en",
+    "research": true,
+    "discuss": true,
+    "auto_commit": true,
+    "verification": true
+  },
+  "stack": {
+    "frontend": "Next.js",
+    "database": "Supabase",
+    "hosting": "Vercel",
+    "ai": "Claude API",
+    "payments": "Prodamus",
+    "messenger": "Telegram Bot API"
+  }
+}
