@@ -3,60 +3,51 @@
 ## Milestone 1: MVP (v1.0)
 
 ### Phase 1: Design Prototype (HTML mockup)
-**Status:** Pending
-**Scope:** Полный визуальный прототип всех экранов с фейковыми данными. Без бэкенда.
-**Covers:** Визуал всех модулей — вход, проекты, воронки, CRM, боты, лендинги, обучение, аналитика, заказы, настройки
-**Done:** Все экраны согласованы с пользователем
+**Status:** ✅ Complete
+**Scope:** Полный визуальный прототип всех экранов с фейковыми данными.
+**Done:** 13 экранов с внутренними детальными видами, AI-помощники, фильтры
 
-### Phase 2: Auth + Project Structure
-**Status:** Pending
-**Scope:** Регистрация, вход, создание проектов, навигация
+### Phase 2: Auth + Project Structure + Database
+**Status:** 🔄 In Progress
+**Scope:** Регистрация, вход, подтверждение email, проекты, схема БД для ВСЕХ модулей
 **Covers:** AUTH-01..04, PROJ-01..04
-**Depends on:** Phase 1 (согласованный дизайн)
-**Done:** Пользователь может зарегистрироваться, создать проект, видеть боковую навигацию
+**Done:** Реальная регистрация, вход, создание проекта, защита маршрутов
 
-### Phase 3: CRM + Funnels
+### Phase 3: CRM + Funnels + Core Analytics
 **Status:** Pending
-**Scope:** Карточка клиента, CRM-доска, воронки с этапами
-**Covers:** CRM-01..06, FUNL-01..05
+**Scope:** Карточка клиента, CRM-доски, воронки с этапами, трекинг, базовая аналитика
+**Covers:** CRM-01..06, FUNL-01..05, ANLT-01 (конверсии воронки)
 **Depends on:** Phase 2
-**Done:** Можно создать воронку, видеть клиентов на доске, открывать карточки
 
-### Phase 4: Chatbot (Telegram)
+### Phase 4: Chatbot (Telegram) + Bot Analytics
 **Status:** Pending
-**Scope:** Telegram-бот через AI, диалоги, воронка, рассылки, дожимы
+**Scope:** Telegram-бот, AI-сценарии, дожимы, рассылки, аналитика бота
 **Covers:** BOT-01..07
-**Depends on:** Phase 3 (CRM для записи клиентов)
-**Done:** Бот работает в Telegram, клиенты появляются в CRM, можно делать рассылки
+**Depends on:** Phase 3
 
-### Phase 5: Landings
+### Phase 5: Orders + Payments (Prodamus)
 **Status:** Pending
-**Scope:** AI-генерация лендингов, хостинг, трекинг, кнопка оплаты
-**Covers:** LAND-01..04
-**Depends on:** Phase 3 (CRM для трекинга)
-**Done:** Можно сгенерировать лендинг, он доступен по URL, посещения пишутся в CRM
-
-### Phase 6: Learning Platform
-**Status:** Pending
-**Scope:** Курсы, уроки, видео, доступ после оплаты, прогресс
-**Covers:** EDU-01..04
-**Depends on:** Phase 3 (CRM для прогресса)
-**Done:** Можно создать курс с уроками, доступ открывается после оплаты
-
-### Phase 7: Payments (Prodamus)
-**Status:** Pending
-**Scope:** Интеграция Продамус, заказы, вебхуки, автооткрытие доступа
+**Scope:** Заказы, статусы, рассрочки, Продамус, вебхуки, автодоступ
 **Covers:** PAY-01..05
-**Depends on:** Phase 6 (продукты для оплаты)
-**Done:** Клиент может оплатить, заказ меняет статус, доступ к курсу открывается
+**Depends on:** Phase 3
 
-### Phase 8: Analytics
+### Phase 6: Landings + Site Analytics
 **Status:** Pending
-**Scope:** Сквозная аналитика по воронке + отдельная по модулям
-**Covers:** ANLT-01..05
-**Depends on:** Phase 3..7 (данные из всех модулей)
-**Done:** Дашборд показывает конверсии по воронке, можно кликнуть на клиента
+**Scope:** AI-генерация лендингов, хостинг, трекинг кнопок, конверсии
+**Covers:** LAND-01..04
+**Depends on:** Phase 3
+
+### Phase 7: Learning Platform + Education Analytics
+**Status:** Pending
+**Scope:** Курсы, модули, уроки, ДЗ, прогресс, доступы по тарифам
+**Covers:** EDU-01..04
+**Depends on:** Phase 5 (оплата для доступов)
+
+### Phase 8: Dashboard + Cross-Module Analytics
+**Status:** Pending
+**Scope:** Дашборд проекта, "Весь проект", сквозная аналитика, склейка данных
+**Covers:** ANLT-02..05
+**Depends on:** Phase 3..7
 
 ---
-*Roadmap created: 2026-04-06*
-*Last updated: 2026-04-06 after initial definition*
+*Last updated: 2026-04-06 — reordered phases, analytics embedded per module*

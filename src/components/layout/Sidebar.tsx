@@ -17,7 +17,7 @@ const bottomItems = [
   { id: 'settings', label: 'Настройки', icon: '⚙️' },
 ]
 
-export default function Sidebar({ active, onNavigate }: { active: string; onNavigate: (s: string) => void }) {
+export default function Sidebar({ active, onNavigate, projectName }: { active: string; onNavigate: (s: string) => void; projectName?: string }) {
   return (
     <aside className="w-[260px] h-screen bg-white border-r border-gray-100 flex flex-col shrink-0">
       {/* Logo */}
@@ -38,7 +38,7 @@ export default function Sidebar({ active, onNavigate }: { active: string; onNavi
         >
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded bg-[#6A55F8] flex items-center justify-center text-white text-[10px] font-bold">AI</div>
-            <span className="text-sm font-medium text-[#6A55F8]">AI-Маркетинг Школа</span>
+            <span className="text-sm font-medium text-[#6A55F8]">{projectName || 'AI-Маркетинг Школа'}</span>
           </div>
           <svg className="w-4 h-4 text-[#6A55F8]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
         </button>
