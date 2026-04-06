@@ -41,11 +41,18 @@ export default function ProjectsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('projects')
       .insert({ name: newName.trim(), owner_id: user.id })
       .select()
       .single()
+
+    if (error) {
+      console.error('Create project error:', error)
+      alert('Ошибка: ' + error.message)
+      setCreating(false)
+      return
+    }
 
     if (data) {
       // Add owner as member
