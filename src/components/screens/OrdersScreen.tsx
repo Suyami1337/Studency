@@ -18,24 +18,75 @@ const fakePaymentHistory = [
   { date: '01.04', amount: 2990, method: 'Продамус', id: 2 },
 ]
 
+const fakeOrderNotes = [
+  { id: 1, date: '06.04', author: 'Хасан', text: 'Клиент обещал доплатить до конца недели' },
+  { id: 2, date: '04.04', author: 'Менеджер Анна', text: 'Связалась, обсудили рассрочку' },
+]
+
+const totalPaid = fakePaymentHistory.reduce((sum, p) => sum + p.amount, 0)
+
 function OrderDetail({ order, onBack }: { order: Order; onBack: () => void }) {
   const [currentStatus, setCurrentStatus] = useState(order.status)
+  const [isEditing, setIsEditing] = useState(false)
+  const [clientName, setClientName] = useState(order.client)
+  const [clientEmail, setClientEmail] = useState(order.email)
+  const [product, setProduct] = useState(order.product)
+  const [tariff, setTariff] = useState(order.tariff)
+  const [orderNotes, setOrderNotes] = useState(fakeOrderNotes)
+  const [newNote, setNewNote] = useState('')
+
   const statusConf = orderStatuses[currentStatus] ?? { label: currentStatus, color: '#94A3B8' }
+  const isInstallment = fakePaymentHistory.length > 1
+  const remaining = order.amount - totalPaid
+
+  const displayStatus = isInstallment
+    ? 'Частично оплачен (рассрочка)'
+    : statusConf.label
+
+  const fieldClass = isEditing
+    ? 'w-full px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8] bg-white font-medium text-gray-900'
+    : ''
+
+  function handleAddNote() {
+    if (!newNote.trim()) return
+    const today = new Date()
+    const dateStr = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}`
+    setOrderNotes(prev => [...prev, { id: Date.now(), date: dateStr, author: 'Хасан', text: newNote.trim() }])
+    setNewNote('')
+  }
 
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
-        >
-          ← Назад
-        </button>
-        <h1 className="text-xl font-bold text-gray-900">Заказ #{order.id}</h1>
-        <span className="rounded-full px-2.5 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: statusConf.color }}>
-          {statusConf.label}
-        </span>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+          >
+            ← Назад
+          </button>
+          <h1 className="text-xl font-bold text-gray-900">Заказ #{order.id}</h1>
+          <span className="rounded-full px-2.5 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: isInstallment ? '#F59E0B' : statusConf.color }}>
+            {displayStatus}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Go to user button */}
+          <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+            👤 Перейти к пользователю
+          </button>
+          <button
+            onClick={() => setIsEditing(e => !e)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+              isEditing
+                ? 'bg-[#6A55F8] text-white border-[#6A55F8] hover:bg-[#5040D6]'
+                : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            {isEditing ? '✓ Сохранить' : '✏ Редактировать'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -46,16 +97,48 @@ function OrderDetail({ order, onBack }: { order: Order; onBack: () => void }) {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <p className="text-gray-400 text-xs mb-0.5">Клиент</p>
-                <p className="font-medium text-gray-900">{order.client}</p>
-                <p className="text-gray-500 text-xs">{order.email}</p>
+                {isEditing ? (
+                  <input
+                    value={clientName}
+                    onChange={e => setClientName(e.target.value)}
+                    className={fieldClass}
+                  />
+                ) : (
+                  <p className="font-medium text-gray-900">{clientName}</p>
+                )}
+                {isEditing ? (
+                  <input
+                    value={clientEmail}
+                    onChange={e => setClientEmail(e.target.value)}
+                    className="mt-1 w-full px-3 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8] text-gray-500 bg-white"
+                  />
+                ) : (
+                  <p className="text-gray-500 text-xs">{clientEmail}</p>
+                )}
               </div>
               <div>
                 <p className="text-gray-400 text-xs mb-0.5">Продукт</p>
-                <p className="font-medium text-gray-900">{order.product}</p>
+                {isEditing ? (
+                  <input
+                    value={product}
+                    onChange={e => setProduct(e.target.value)}
+                    className={fieldClass}
+                  />
+                ) : (
+                  <p className="font-medium text-gray-900">{product}</p>
+                )}
               </div>
               <div>
                 <p className="text-gray-400 text-xs mb-0.5">Тариф</p>
-                <p className="font-medium text-gray-900">{order.tariff}</p>
+                {isEditing ? (
+                  <input
+                    value={tariff}
+                    onChange={e => setTariff(e.target.value)}
+                    className={fieldClass}
+                  />
+                ) : (
+                  <p className="font-medium text-gray-900">{tariff}</p>
+                )}
               </div>
               <div>
                 <p className="text-gray-400 text-xs mb-0.5">Сумма</p>
@@ -94,6 +177,51 @@ function OrderDetail({ order, onBack }: { order: Order; onBack: () => void }) {
                 ))}
               </tbody>
             </table>
+            {isInstallment && remaining > 0 && (
+              <div className="mt-3 flex items-center justify-between px-3 py-2.5 bg-amber-50 rounded-lg border border-amber-100">
+                <span className="text-xs font-medium text-amber-700">Осталось внести:</span>
+                <span className="text-sm font-bold text-amber-700">{remaining.toLocaleString('ru')} ₽</span>
+              </div>
+            )}
+          </div>
+
+          {/* Order notes */}
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-4">Заметки к заказу</h3>
+            <div className="space-y-3 mb-4">
+              {orderNotes.map(note => (
+                <div key={note.id} className="flex gap-3">
+                  <div className="w-7 h-7 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0 mt-0.5">
+                    {note.author[0]}
+                  </div>
+                  <div className="flex-1 bg-gray-50 rounded-lg px-3 py-2">
+                    <p className="text-xs text-gray-400 mb-0.5">
+                      <span className="font-medium text-gray-600">{note.author}</span> · {note.date}
+                    </p>
+                    <p className="text-sm text-gray-700">{note.text}</p>
+                  </div>
+                </div>
+              ))}
+              {orderNotes.length === 0 && (
+                <p className="text-sm text-gray-400">Заметок пока нет</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <textarea
+                value={newNote}
+                onChange={e => setNewNote(e.target.value)}
+                placeholder="Добавить заметку к заказу..."
+                rows={2}
+                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8] resize-none"
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddNote() } }}
+              />
+              <button
+                onClick={handleAddNote}
+                className="self-end px-4 py-2 bg-[#6A55F8] hover:bg-[#5040D6] text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                Добавить
+              </button>
+            </div>
           </div>
         </div>
 
