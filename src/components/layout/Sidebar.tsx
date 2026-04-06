@@ -28,7 +28,11 @@ export default function Sidebar({ projectName }: { projectName?: string }) {
   const active = segments[segments.length - 1] === params.id ? 'dashboard' : segments[segments.length - 1]
 
   function navigate(page: string) {
-    router.push(`/project/${params.id}/${page}`)
+    if (page === 'dashboard') {
+      router.push(`/project/${params.id}`)
+    } else {
+      router.push(`/project/${params.id}/${page}`)
+    }
   }
 
   return (
