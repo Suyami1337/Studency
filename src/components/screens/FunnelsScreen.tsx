@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 
 type Funnel = { id: string; name: string; project_id: string; status: string; created_at: string }
 type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number }
@@ -31,10 +32,7 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
-  const [aiInput, setAiInput] = useState('')
-  const [aiMessages, setAiMessages] = useState([
-    { from: 'ai', text: 'Привет! Я помогу настроить воронку. Опиши что нужно изменить.' },
-  ])
+  const [showAI, setShowAI] = useState(false)
 
   const supabase = createClient()
 
@@ -116,11 +114,7 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
     }
   }
 
-  function sendAI() {
-    if (!aiInput.trim()) return
-    setAiMessages(prev => [...prev, { from: 'user', text: aiInput }, { from: 'ai', text: 'Понял! Обновляю воронку...' }])
-    setAiInput('')
-  }
+  // AI assistant is now an overlay component
 
   const tabs = [
     { id: 'settings' as const, label: 'Настройка воронки' },
@@ -135,7 +129,8 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">← Назад</button>
         <div className="w-9 h-9 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-lg">🔀</div>
         <div>
@@ -147,6 +142,8 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
           </div>
           <p className="text-xs text-gray-500">{stages.length} этапов · {totalCustomers} клиентов</p>
         </div>
+        </div>
+        <AiAssistantButton isOpen={showAI} onClick={() => setShowAI(!showAI)} />
       </div>
 
       {/* Tabs */}
@@ -239,38 +236,16 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
                   )}
                 </div>
               </div>
-
-              {/* Right: AI assistant (visual placeholder) */}
-              <div className="flex flex-col w-[300px] flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden h-[500px]">
-                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-[#6A55F8] flex items-center justify-center text-white text-xs font-bold">AI</div>
-                  <span className="text-sm font-semibold text-gray-800">AI-помощник</span>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {aiMessages.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
-                        msg.from === 'user' ? 'bg-[#6A55F8] text-white rounded-br-none' : 'bg-gray-100 text-gray-800 rounded-bl-none'
-                      }`}>
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="px-3 py-3 border-t border-gray-100 flex gap-2">
-                  <input
-                    type="text"
-                    value={aiInput}
-                    onChange={e => setAiInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendAI()}
-                    placeholder="Настроить воронку..."
-                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]"
-                  />
-                  <button onClick={sendAI} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-3 py-2 rounded-lg text-sm transition-colors">→</button>
-                </div>
-              </div>
             </div>
           )}
+
+          <AiAssistantOverlay
+            isOpen={showAI}
+            onClose={() => setShowAI(false)}
+            title="AI-помощник воронки"
+            placeholder="Настроить воронку..."
+            initialMessages={[{ from: 'ai', text: 'Привет! Я помогу настроить воронку. Опиши что нужно изменить.' }]}
+          />
 
           {/* TAB: Аналитика */}
           {activeTab === 'analytics' && (
