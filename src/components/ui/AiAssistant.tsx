@@ -45,10 +45,11 @@ export function AiAssistantOverlay({
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
 
-      {/* Panel */}
-      <div className="fixed right-6 top-20 bottom-6 w-[400px] bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 flex flex-col overflow-hidden">
+      {/* Panel — centered, large */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-8 pointer-events-none">
+      <div className="w-full max-w-3xl h-[80vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden pointer-events-auto">
         {/* Header */}
         <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -83,6 +84,7 @@ export function AiAssistantOverlay({
           />
           <button onClick={send} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors">→</button>
         </div>
+      </div>
       </div>
     </>
   )
