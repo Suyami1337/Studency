@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 type Product = {
@@ -447,8 +447,10 @@ function ProductDetail({
 
 export default function ProductsPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
   const projectId = params.id as string
   const supabase = createClient()
+  const openProductId = searchParams.get('open')
 
   const [products, setProducts] = useState<Product[]>([])
   const [tariffCounts, setTariffCounts] = useState<Record<string, number>>({})
@@ -483,6 +485,15 @@ export default function ProductsPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadProducts() }, [projectId])
+
+  // Auto-open product from URL param
+  useEffect(() => {
+    if (openProductId && products.length > 0 && !selected) {
+      const prod = products.find(p => p.id === openProductId)
+      if (prod) setSelected(prod)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openProductId, products])
 
   async function createProduct() {
     if (!newName.trim()) return

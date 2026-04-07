@@ -393,7 +393,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
                   </div>
                 ))}
               </div>
-              <a href={`/project/${projectId}/products`}
+              <a href={`/project/${projectId}/products?open=${linkedProductId}`}
                 className="mt-3 inline-flex items-center gap-1.5 text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded-lg px-3 py-2 hover:bg-[#F0EDFF] transition-colors">
                 📦 Перейти в продукт для настройки тарифов →
               </a>
