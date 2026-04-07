@@ -707,23 +707,38 @@ function LandingsList({
 
   async function handleCreate() {
     if (!newName.trim()) return
-    setSaving(true)
     const slug = newSlug.trim() || autoSlug(newName)
+    const tempLanding: Landing = {
+      id: 'temp-' + Date.now(),
+      name: newName.trim(),
+      slug,
+      status: 'draft',
+      html_content: null,
+      meta_title: null,
+      meta_description: null,
+      funnel_id: null,
+      visits: 0,
+      conversions: 0,
+      project_id: projectId,
+      created_at: new Date().toISOString(),
+    }
+    setLandings((prev) => [tempLanding, ...prev])
+    setNewName('')
+    setNewSlug('')
+    setCreating(false)
+    setSaving(true)
     const { data } = await supabase
       .from('landings')
       .insert({
         project_id: projectId,
-        name: newName.trim(),
+        name: tempLanding.name,
         slug,
         status: 'draft',
       })
       .select()
       .single()
     if (data) {
-      setLandings((prev) => [data as Landing, ...prev])
-      setNewName('')
-      setNewSlug('')
-      setCreating(false)
+      setLandings((prev) => prev.map((l) => l.id === tempLanding.id ? data as Landing : l))
     }
     setSaving(false)
   }

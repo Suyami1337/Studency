@@ -306,7 +306,7 @@ function CreateOrderForm({
   customers: Customer[]
   products: Product[]
   tariffs: Tariff[]
-  onCreated: () => void
+  onCreated: (order: Order) => void
   onCancel: () => void
 }) {
   const supabase = createClient()
@@ -340,9 +340,8 @@ function CreateOrderForm({
     if (!cName) return setError('Выберите или введите клиента')
     if (!amount) return setError('Введите сумму')
 
-    setSaving(true)
-    const { error: err } = await supabase.from('orders').insert({
-      project_id: projectId,
+    const tempOrder: Order = {
+      id: 'temp-' + Date.now(),
       customer_id: useExisting && customerId ? customerId : null,
       customer_name: cName,
       customer_email: cEmail,
@@ -353,10 +352,27 @@ function CreateOrderForm({
       amount: parseFloat(amount),
       paid_amount: 0,
       status: 'new',
-    })
+      created_at: new Date().toISOString(),
+    }
+    onCreated(tempOrder)
+
+    setSaving(true)
+    const { data, error: err } = await supabase.from('orders').insert({
+      project_id: projectId,
+      customer_id: tempOrder.customer_id,
+      customer_name: tempOrder.customer_name,
+      customer_email: tempOrder.customer_email,
+      product_id: tempOrder.product_id,
+      product_name: tempOrder.product_name,
+      tariff_id: tempOrder.tariff_id,
+      tariff_name: tempOrder.tariff_name,
+      amount: tempOrder.amount,
+      paid_amount: 0,
+      status: 'new',
+    }).select().single()
     setSaving(false)
     if (err) return setError(err.message)
-    onCreated()
+    if (data) onCreated(data as Order)
   }
 
   return (
@@ -557,7 +573,17 @@ export default function OrdersPage() {
           customers={customers}
           products={products}
           tariffs={tariffs}
-          onCreated={() => { setShowCreate(false); loadAll() }}
+          onCreated={(order) => {
+            setShowCreate(false)
+            setOrders(prev => {
+              const existing = prev.find(o => o.id === order.id)
+              if (existing) return prev.map(o => o.id === order.id ? order : o)
+              // Replace temp if present, else prepend
+              const tempIdx = prev.findIndex(o => o.id.startsWith('temp-'))
+              if (tempIdx !== -1) return prev.map((o, i) => i === tempIdx ? order : o)
+              return [order, ...prev]
+            })
+          }}
           onCancel={() => setShowCreate(false)}
         />
       )}

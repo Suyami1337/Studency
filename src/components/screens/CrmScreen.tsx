@@ -83,17 +83,24 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
 
   async function addStage() {
     if (!newStageName.trim()) return
-    setSavingStage(true)
     const color = DEFAULT_STAGE_COLORS[stages.length % DEFAULT_STAGE_COLORS.length]
+    const tempStage: Stage = {
+      id: 'temp-' + Date.now(),
+      name: newStageName.trim(),
+      color,
+      order_position: stages.length,
+    }
+    setStages(prev => [...prev, tempStage])
+    setNewStageName('')
+    setAddingStage(false)
+    setSavingStage(true)
     const { data, error } = await supabase
       .from('crm_board_stages')
-      .insert({ board_id: board.id, name: newStageName.trim(), color, order_position: stages.length })
+      .insert({ board_id: board.id, name: tempStage.name, color, order_position: tempStage.order_position })
       .select()
       .single()
     if (!error && data) {
-      setStages(prev => [...prev, data])
-      setNewStageName('')
-      setAddingStage(false)
+      setStages(prev => prev.map(s => s.id === tempStage.id ? data : s))
     }
     setSavingStage(false)
   }
@@ -344,11 +351,20 @@ export default function CrmScreen() {
 
   async function createBoard() {
     if (!newBoardName.trim()) return
+    const tempBoard: Board = {
+      id: 'temp-' + Date.now(),
+      name: newBoardName.trim(),
+      project_id: projectId,
+      created_at: new Date().toISOString(),
+    }
+    setBoards(prev => [...prev, tempBoard])
+    setNewBoardName('')
+    setShowCreate(false)
     setCreating(true)
 
     const { data: board, error } = await supabase
       .from('crm_boards')
-      .insert({ project_id: projectId, name: newBoardName.trim() })
+      .insert({ project_id: projectId, name: tempBoard.name })
       .select()
       .single()
 
@@ -359,9 +375,7 @@ export default function CrmScreen() {
         { board_id: board.id, name: 'В работе', color: '#6A55F8', order_position: 1 },
         { board_id: board.id, name: 'Закрыт', color: '#10B981', order_position: 2 },
       ])
-      setBoards(prev => [...prev, board])
-      setNewBoardName('')
-      setShowCreate(false)
+      setBoards(prev => prev.map(b => b.id === tempBoard.id ? board : b))
     }
     setCreating(false)
   }

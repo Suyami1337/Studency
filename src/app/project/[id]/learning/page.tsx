@@ -126,15 +126,28 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
 
   async function addLesson() {
     if (!newName.trim()) return
-    await supabase.from('course_lessons').insert({ module_id: mod.id, name: newName.trim(), order_position: lessons.length })
+    const tempLesson: Lesson = {
+      id: 'temp-' + Date.now(),
+      module_id: mod.id,
+      name: newName.trim(),
+      content: null,
+      video_url: null,
+      has_homework: false,
+      homework_description: null,
+      order_position: lessons.length,
+    }
+    setLessons(prev => [...prev, tempLesson])
     setNewName('')
     setAdding(false)
-    await loadLessons()
+    const { data } = await supabase.from('course_lessons').insert({ module_id: mod.id, name: tempLesson.name, order_position: tempLesson.order_position }).select().single()
+    if (data) {
+      setLessons(prev => prev.map(l => l.id === tempLesson.id ? data as Lesson : l))
+    }
   }
 
   async function deleteLesson(id: string) {
+    setLessons(prev => prev.filter(l => l.id !== id))
     await supabase.from('course_lessons').delete().eq('id', id)
-    await loadLessons()
   }
 
   async function duplicateLesson(lesson: Lesson) {
@@ -272,15 +285,24 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
 
   async function addModule() {
     if (!newModuleName.trim()) return
-    await supabase.from('course_modules').insert({ course_id: course.id, name: newModuleName.trim(), order_position: modules.length })
+    const tempModule: Module = {
+      id: 'temp-' + Date.now(),
+      course_id: course.id,
+      name: newModuleName.trim(),
+      order_position: modules.length,
+    }
+    setModules(prev => [...prev, tempModule])
     setNewModuleName('')
     setAddingModule(false)
-    await loadModules()
+    const { data } = await supabase.from('course_modules').insert({ course_id: course.id, name: tempModule.name, order_position: tempModule.order_position }).select().single()
+    if (data) {
+      setModules(prev => prev.map(m => m.id === tempModule.id ? data as Module : m))
+    }
   }
 
   async function deleteModule(id: string) {
+    setModules(prev => prev.filter(m => m.id !== id))
     await supabase.from('course_modules').delete().eq('id', id)
-    await loadModules()
   }
 
   async function duplicateModule(mod: Module) {
@@ -595,11 +617,23 @@ export default function LearningPage() {
 
   async function createCourse() {
     if (!newName.trim()) return
-    const { data } = await supabase.from('courses').insert({ project_id: projectId, name: newName.trim() }).select().single()
+    const tempCourse: Course = {
+      id: 'temp-' + Date.now(),
+      project_id: projectId,
+      name: newName.trim(),
+      description: null,
+      is_published: false,
+      product_id: null,
+      created_at: new Date().toISOString(),
+      module_count: 0,
+    }
+    setCourses(prev => [...prev, tempCourse])
+    setNewName('')
+    setAdding(false)
+    const { data } = await supabase.from('courses').insert({ project_id: projectId, name: tempCourse.name }).select().single()
     if (data) {
+      setCourses(prev => prev.map(c => c.id === tempCourse.id ? { ...data, module_count: 0 } : c))
       selectCourse(data.id)
-      setNewName('')
-      setAdding(false)
     }
   }
 

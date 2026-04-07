@@ -450,16 +450,24 @@ export default function FunnelsScreen() {
 
   async function createFunnel() {
     if (!newFunnelName.trim()) return
+    const tempFunnel: Funnel = {
+      id: 'temp-' + Date.now(),
+      name: newFunnelName.trim(),
+      project_id: projectId,
+      status: 'draft',
+      created_at: new Date().toISOString(),
+    }
+    setFunnels(prev => [...prev, tempFunnel])
+    setNewFunnelName('')
+    setShowCreate(false)
     setCreating(true)
     const { data, error } = await supabase
       .from('funnels')
-      .insert({ project_id: projectId, name: newFunnelName.trim(), status: 'draft' })
+      .insert({ project_id: projectId, name: tempFunnel.name, status: 'draft' })
       .select()
       .single()
     if (!error && data) {
-      setFunnels(prev => [...prev, data])
-      setNewFunnelName('')
-      setShowCreate(false)
+      setFunnels(prev => prev.map(f => f.id === tempFunnel.id ? data : f))
     }
     setCreating(false)
   }

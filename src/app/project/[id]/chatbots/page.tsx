@@ -243,14 +243,30 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
   useEffect(() => { loadData() }, [scenario.id])
 
   async function addMessage() {
-    await supabase.from('scenario_messages').insert({
+    const tempMsg: Message = {
+      id: 'temp-' + Date.now(),
       scenario_id: scenario.id,
       order_position: messages.length,
       text: '',
       is_start: messages.length === 0,
       trigger_word: messages.length === 0 ? '/start' : null,
-    })
-    await loadData()
+      is_followup: false,
+      delay_minutes: 0,
+      followup_condition: null,
+      next_message_id: null,
+      parent_message_id: null,
+    }
+    setMessages(prev => [...prev, tempMsg])
+    const { data } = await supabase.from('scenario_messages').insert({
+      scenario_id: scenario.id,
+      order_position: tempMsg.order_position,
+      text: '',
+      is_start: tempMsg.is_start,
+      trigger_word: tempMsg.trigger_word,
+    }).select().single()
+    if (data) {
+      setMessages(prev => prev.map(m => m.id === tempMsg.id ? data as Message : m))
+    }
   }
 
   async function updateMessage(id: string, data: Partial<Message>) {
@@ -259,15 +275,15 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
   }
 
   async function deleteMessage(id: string) {
-    await supabase.from('scenario_messages').delete().eq('id', id)
-    // Reorder remaining messages
     const remaining = messages.filter(m => m.id !== id)
+    setMessages(remaining)
+    await supabase.from('scenario_messages').delete().eq('id', id)
+    // Reorder remaining messages in background
     for (let i = 0; i < remaining.length; i++) {
       if (remaining[i].order_position !== i) {
         await supabase.from('scenario_messages').update({ order_position: i }).eq('id', remaining[i].id)
       }
     }
-    await loadData()
   }
 
   async function addButton(messageId: string) {
@@ -482,15 +498,25 @@ export default function ChatbotsPage() {
 
   async function createScenario() {
     if (!newName.trim()) return
-    await supabase.from('chatbot_scenarios').insert({
-      project_id: projectId,
+    const tempScenario: Scenario = {
+      id: 'temp-' + Date.now(),
       name: newName.trim(),
+      status: 'draft',
       telegram_bot_id: newBotId || null,
-    })
+      created_at: new Date().toISOString(),
+    }
+    setScenarios(prev => [tempScenario, ...prev])
     setNewName('')
     setNewBotId('')
     setCreating(false)
-    await load()
+    const { data } = await supabase.from('chatbot_scenarios').insert({
+      project_id: projectId,
+      name: tempScenario.name,
+      telegram_bot_id: tempScenario.telegram_bot_id,
+    }).select().single()
+    if (data) {
+      setScenarios(prev => prev.map(s => s.id === tempScenario.id ? data as Scenario : s))
+    }
   }
 
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId)

@@ -362,12 +362,25 @@ function ProductDetail({
     const features = tFeatures.filter(f => f.trim()).map(f => f.trim())
     if (editingTariffId) {
       await supabase.from('tariffs').update({ name: tName.trim(), price: parseFloat(tPrice), features }).eq('id', editingTariffId)
+      setTariffs(prev => prev.map(t => t.id === editingTariffId ? { ...t, name: tName.trim(), price: parseFloat(tPrice), features } : t))
+      setTName(''); setTPrice(''); setTFeatures(['']); setShowTariffForm(false); setEditingTariffId(null)
+      setSavingTariff(false)
     } else {
-      await supabase.from('tariffs').insert({ product_id: product.id, name: tName.trim(), price: parseFloat(tPrice), features })
+      const tempTariff: Tariff = {
+        id: 'temp-' + Date.now(),
+        product_id: product.id,
+        name: tName.trim(),
+        price: parseFloat(tPrice),
+        features,
+      }
+      setTariffs(prev => [...prev, tempTariff])
+      setTName(''); setTPrice(''); setTFeatures(['']); setShowTariffForm(false); setEditingTariffId(null)
+      const { data } = await supabase.from('tariffs').insert({ product_id: product.id, name: tempTariff.name, price: tempTariff.price, features }).select().single()
+      if (data) {
+        setTariffs(prev => prev.map(t => t.id === tempTariff.id ? data as Tariff : t))
+      }
+      setSavingTariff(false)
     }
-    setTName(''); setTPrice(''); setTFeatures(['']); setShowTariffForm(false); setEditingTariffId(null)
-    await loadTariffs()
-    setSavingTariff(false)
   }
 
   function startEditTariff(t: Tariff) {
@@ -794,16 +807,24 @@ export default function ProductsPage() {
 
   async function createProduct() {
     if (!newName.trim()) return
+    const tempProduct: Product = {
+      id: 'temp-' + Date.now(),
+      name: newName.trim(),
+      description: null,
+      project_id: projectId,
+      created_at: new Date().toISOString(),
+    }
+    setProducts(prev => [...prev, tempProduct])
+    setNewName(''); setShowCreate(false)
     setCreating(true)
     const { data } = await supabase
       .from('products')
-      .insert({ project_id: projectId, name: newName.trim() })
+      .insert({ project_id: projectId, name: tempProduct.name })
       .select()
       .single()
     setCreating(false)
-    setNewName(''); setShowCreate(false)
     if (data) {
-      setProducts(prev => [...prev, data as Product])
+      setProducts(prev => prev.map(p => p.id === tempProduct.id ? data as Product : p))
     }
   }
 
