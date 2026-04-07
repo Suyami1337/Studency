@@ -16,8 +16,8 @@ type Landing = {
   meta_title: string | null
   meta_description: string | null
   funnel_id: string | null
-  visits_count: number
-  conversions_count: number
+  visits: number
+  conversions: number
   project_id: string
   created_at: string
 }
@@ -368,13 +368,13 @@ function LandingDetail({
       {activeTab === 'analytics' && (
         <div className="space-y-6">
           <div className="grid grid-cols-4 gap-4">
-            <StatCard label="Посещения" value={landing.visits_count} />
-            <StatCard label="Конверсии" value={landing.conversions_count} />
+            <StatCard label="Посещения" value={landing.visits} />
+            <StatCard label="Конверсии" value={landing.conversions} />
             <StatCard
               label="Конверсия %"
               value={
-                landing.visits_count > 0
-                  ? `${Math.round((landing.conversions_count / landing.visits_count) * 100)}%`
+                landing.visits > 0
+                  ? `${Math.round((landing.conversions / landing.visits) * 100)}%`
                   : '—'
               }
             />
@@ -716,9 +716,6 @@ function LandingsList({
         name: newName.trim(),
         slug,
         status: 'draft',
-        html_content: null,
-        visits_count: 0,
-        conversions_count: 0,
       })
       .select()
       .single()
@@ -865,11 +862,11 @@ function LandingsList({
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-50">
                 <div className="text-center">
-                  <p className="text-lg font-bold text-gray-900">{landing.visits_count}</p>
+                  <p className="text-lg font-bold text-gray-900">{landing.visits}</p>
                   <p className="text-xs text-gray-400">посещений</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-bold text-gray-900">{landing.conversions_count}</p>
+                  <p className="text-lg font-bold text-gray-900">{landing.conversions}</p>
                   <p className="text-xs text-gray-400">конверсий</p>
                 </div>
               </div>
