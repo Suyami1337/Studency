@@ -49,11 +49,12 @@ function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId
   const [accessRules, setAccessRules] = useState<AccessRule[]>([])
   const [courses, setCourses] = useState<CourseOption[]>([])
   const [loading, setLoading] = useState(true)
-  const [accessDays, setAccessDays] = useState<number | null>(null)
-  const [addingAccess, setAddingAccess] = useState(false)
-  const [newCourseId, setNewCourseId] = useState('')
-  const [newModuleId, setNewModuleId] = useState('')
-  const [newAccessDays, setNewAccessDays] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [accessDaysValue, setAccessDaysValue] = useState('')
+  const [expandedCourses, setExpandedCourses] = useState<Set<string>>(new Set())
+
+  // Set of checked lesson IDs
+  const [checkedLessons, setCheckedLessons] = useState<Set<string>>(new Set())
 
   async function loadData() {
     setLoading(true)
@@ -61,9 +62,10 @@ function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId
       supabase.from('tariff_access').select('*').eq('tariff_id', tariff.id),
       supabase.from('courses').select('id, name').eq('project_id', projectId),
     ])
-    setAccessRules((accessRes.data ?? []) as AccessRule[])
+    const rules = (accessRes.data ?? []) as AccessRule[]
+    setAccessRules(rules)
 
-    // Load courses with modules
+    // Load courses tree
     const rawCourses = (coursesRes.data ?? []) as { id: string; name: string }[]
     const withModules: CourseOption[] = await Promise.all(rawCourses.map(async (c) => {
       const { data: mods } = await supabase.from('course_modules').select('id, name').eq('course_id', c.id).order('order_position')
@@ -74,128 +76,201 @@ function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId
       return { ...c, modules }
     }))
     setCourses(withModules)
+
+    // Build checked set from existing rules
+    const checked = new Set<string>()
+    for (const rule of rules) {
+      if (rule.lesson_id) {
+        checked.add(rule.lesson_id)
+      } else if (rule.module_id) {
+        // Check all lessons in this module
+        const course = withModules.find(c => c.id === rule.course_id)
+        const mod = course?.modules.find(m => m.id === rule.module_id)
+        mod?.lessons.forEach(l => checked.add(l.id))
+      } else if (rule.course_id) {
+        // Check all lessons in all modules
+        const course = withModules.find(c => c.id === rule.course_id)
+        course?.modules.forEach(m => m.lessons.forEach(l => checked.add(l.id)))
+      }
+      if (rule.access_days) setAccessDaysValue(String(rule.access_days))
+    }
+    setCheckedLessons(checked)
+    // Expand courses that have checked lessons
+    const expanded = new Set<string>()
+    withModules.forEach(c => {
+      if (c.modules.some(m => m.lessons.some(l => checked.has(l.id)))) expanded.add(c.id)
+    })
+    setExpandedCourses(expanded)
     setLoading(false)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData() }, [tariff.id])
 
-  async function addAccess() {
-    if (!newCourseId) return
-    await supabase.from('tariff_access').insert({
-      tariff_id: tariff.id,
-      course_id: newCourseId,
-      module_id: newModuleId || null,
-      access_days: newAccessDays ? parseInt(newAccessDays) : null,
+  function toggleCourse(courseId: string) {
+    setExpandedCourses(prev => {
+      const next = new Set(prev)
+      if (next.has(courseId)) next.delete(courseId); else next.add(courseId)
+      return next
     })
-    setNewCourseId(''); setNewModuleId(''); setNewAccessDays(''); setAddingAccess(false)
+  }
+
+  function toggleAllModuleLessons(mod: { id: string; lessons: { id: string }[] }) {
+    const allChecked = mod.lessons.every(l => checkedLessons.has(l.id))
+    setCheckedLessons(prev => {
+      const next = new Set(prev)
+      mod.lessons.forEach(l => { if (allChecked) next.delete(l.id); else next.add(l.id) })
+      return next
+    })
+  }
+
+  function toggleLesson(lessonId: string) {
+    setCheckedLessons(prev => {
+      const next = new Set(prev)
+      if (next.has(lessonId)) next.delete(lessonId); else next.add(lessonId)
+      return next
+    })
+  }
+
+  function selectAllCourse(course: CourseOption) {
+    setCheckedLessons(prev => {
+      const next = new Set(prev)
+      const allChecked = course.modules.every(m => m.lessons.every(l => next.has(l.id)))
+      course.modules.forEach(m => m.lessons.forEach(l => { if (allChecked) next.delete(l.id); else next.add(l.id) }))
+      return next
+    })
+  }
+
+  async function saveAccess() {
+    setSaving(true)
+    // Delete old rules
+    await supabase.from('tariff_access').delete().eq('tariff_id', tariff.id)
+
+    // Build new rules — group by module for efficiency
+    const rules: { tariff_id: string; course_id: string; module_id: string | null; lesson_id: string | null; access_days: number | null }[] = []
+    const days = accessDaysValue ? parseInt(accessDaysValue) : null
+
+    for (const course of courses) {
+      for (const mod of course.modules) {
+        const checkedInMod = mod.lessons.filter(l => checkedLessons.has(l.id))
+        if (checkedInMod.length === 0) continue
+
+        if (checkedInMod.length === mod.lessons.length) {
+          // All lessons checked → save as module access
+          rules.push({ tariff_id: tariff.id, course_id: course.id, module_id: mod.id, lesson_id: null, access_days: days })
+        } else {
+          // Individual lessons
+          for (const l of checkedInMod) {
+            rules.push({ tariff_id: tariff.id, course_id: course.id, module_id: mod.id, lesson_id: l.id, access_days: days })
+          }
+        }
+      }
+    }
+
+    if (rules.length > 0) {
+      await supabase.from('tariff_access').insert(rules)
+    }
+    setSaving(false)
     await loadData()
   }
 
-  async function removeAccess(id: string) {
-    await supabase.from('tariff_access').delete().eq('id', id)
-    await loadData()
-  }
-
-  function getCourseName(id: string | null) { return courses.find(c => c.id === id)?.name ?? '—' }
-  function getModuleName(courseId: string | null, moduleId: string | null) {
-    if (!courseId || !moduleId) return null
-    const course = courses.find(c => c.id === courseId)
-    return course?.modules.find(m => m.id === moduleId)?.name ?? null
-  }
-
-  const selectedCourse = courses.find(c => c.id === newCourseId)
+  const totalChecked = checkedLessons.size
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад к тарифам</button>
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">Настройки тарифа: {tariff.name}</h2>
-          <p className="text-xs text-gray-500">{tariff.price.toLocaleString('ru')} ₽</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад к тарифам</button>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Доступ: {tariff.name}</h2>
+            <p className="text-xs text-gray-500">{tariff.price.toLocaleString('ru')} ₽ · {totalChecked} уроков выбрано</p>
+          </div>
         </div>
+        <button onClick={saveAccess} disabled={saving} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+          {saving ? 'Сохраняю...' : 'Сохранить'}
+        </button>
+      </div>
+
+      {/* Access duration */}
+      <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3">
+        <span className="text-sm text-gray-700">Срок доступа:</span>
+        <input type="number" value={accessDaysValue} onChange={e => setAccessDaysValue(e.target.value)} placeholder="∞"
+          className="w-20 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]" />
+        <span className="text-xs text-gray-500">{accessDaysValue ? `дней (${Math.round(parseInt(accessDaysValue) / 30)} мес.)` : 'Бессрочно'}</span>
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+        <div className="text-center py-8 text-gray-400 text-sm">Загрузка курсов...</div>
+      ) : courses.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-gray-400 text-sm">
+          Нет курсов. Сначала создайте курс в разделе Обучение.
+        </div>
       ) : (
-        <div className="space-y-4">
-          {/* Access rules */}
-          <div className="bg-white rounded-xl border border-gray-100 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900">Доступ к курсам и модулям</h3>
-                <p className="text-xs text-gray-500">Что открывается после оплаты этого тарифа</p>
-              </div>
-              <button onClick={() => setAddingAccess(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-3 py-1.5 rounded-lg text-xs font-medium">
-                + Добавить доступ
-              </button>
-            </div>
+        <div className="space-y-3">
+          {courses.map(course => {
+            const isExpanded = expandedCourses.has(course.id)
+            const allLessons = course.modules.flatMap(m => m.lessons)
+            const checkedCount = allLessons.filter(l => checkedLessons.has(l.id)).length
+            const allChecked = allLessons.length > 0 && checkedCount === allLessons.length
 
-            {accessRules.length === 0 && !addingAccess ? (
-              <div className="text-center py-6 text-gray-400 text-sm">
-                Нет настроенных доступов. Добавьте курс или модуль.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {accessRules.map(rule => (
-                  <div key={rule.id} className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="text-green-500">✓</span>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">
-                          🎓 {getCourseName(rule.course_id)}
-                          {rule.module_id && <span className="text-gray-500"> → {getModuleName(rule.course_id, rule.module_id)}</span>}
-                        </p>
-                        <p className="text-xs text-gray-400">
-                          {rule.access_days ? `Доступ на ${rule.access_days} дней` : 'Бессрочный доступ'}
-                        </p>
-                      </div>
-                    </div>
-                    <button onClick={() => removeAccess(rule.id)} className="text-xs text-gray-300 hover:text-red-500">✕</button>
+            return (
+              <div key={course.id} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+                {/* Course header */}
+                <div className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => toggleCourse(course.id)}>
+                  <button onClick={e => { e.stopPropagation(); selectAllCourse(course) }}
+                    className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                      allChecked ? 'bg-[#6A55F8] text-white' : checkedCount > 0 ? 'bg-[#6A55F8]/30 text-white' : 'border-2 border-gray-300'
+                    }`}>
+                    {(allChecked || checkedCount > 0) && <span className="text-xs font-bold">✓</span>}
+                  </button>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-900">🎓 {course.name}</p>
+                    <p className="text-xs text-gray-400">{checkedCount}/{allLessons.length} уроков</p>
                   </div>
-                ))}
-              </div>
-            )}
-
-            {addingAccess && (
-              <div className="mt-3 bg-[#F8F7FF] rounded-lg p-4 space-y-3 border border-[#6A55F8]/10">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Курс</label>
-                  <select value={newCourseId} onChange={e => { setNewCourseId(e.target.value); setNewModuleId('') }}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                    <option value="">Выберите курс...</option>
-                    {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <span className="text-gray-400 text-sm">{isExpanded ? '▲' : '▼'}</span>
                 </div>
 
-                {selectedCourse && selectedCourse.modules.length > 0 && (
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1">Модуль (необязательно — пусто = весь курс)</label>
-                    <select value={newModuleId} onChange={e => setNewModuleId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                      <option value="">Весь курс целиком</option>
-                      {selectedCourse.modules.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
+                {/* Modules + Lessons */}
+                {isExpanded && (
+                  <div className="border-t border-gray-100">
+                    {course.modules.map(mod => {
+                      const modChecked = mod.lessons.filter(l => checkedLessons.has(l.id)).length
+                      const modAllChecked = mod.lessons.length > 0 && modChecked === mod.lessons.length
+
+                      return (
+                        <div key={mod.id}>
+                          {/* Module */}
+                          <div className="flex items-center gap-3 px-5 py-3 bg-gray-50/50 border-b border-gray-50">
+                            <button onClick={() => toggleAllModuleLessons(mod)}
+                              className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                modAllChecked ? 'bg-[#6A55F8] text-white' : modChecked > 0 ? 'bg-[#6A55F8]/30 text-white' : 'border-2 border-gray-300'
+                              }`}>
+                              {(modAllChecked || modChecked > 0) && <span className="text-xs font-bold">✓</span>}
+                            </button>
+                            <p className="text-sm font-medium text-gray-700">{mod.name}</p>
+                            <span className="text-xs text-gray-400">{modChecked}/{mod.lessons.length}</span>
+                          </div>
+
+                          {/* Lessons */}
+                          {mod.lessons.map(lesson => (
+                            <div key={lesson.id} className="flex items-center gap-3 px-5 py-2.5 pl-12 border-b border-gray-50 last:border-0 hover:bg-[#F8F7FF] transition-colors cursor-pointer"
+                              onClick={() => toggleLesson(lesson.id)}>
+                              <button className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition-colors ${
+                                checkedLessons.has(lesson.id) ? 'bg-[#6A55F8] text-white' : 'border-2 border-gray-300'
+                              }`}>
+                                {checkedLessons.has(lesson.id) && <span className="text-[9px] font-bold">✓</span>}
+                              </button>
+                              <p className="text-sm text-gray-600">{lesson.name}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
-
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Срок доступа (пусто = бессрочно)</label>
-                  <div className="flex items-center gap-2">
-                    <input type="number" value={newAccessDays} onChange={e => setNewAccessDays(e.target.value)} placeholder="∞"
-                      className="w-24 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                    <span className="text-xs text-gray-500">дней</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <button onClick={addAccess} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
-                  <button onClick={() => setAddingAccess(false)} className="text-sm text-gray-500">Отмена</button>
-                </div>
               </div>
-            )}
-          </div>
+            )
+          })}
         </div>
       )}
     </div>
