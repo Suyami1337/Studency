@@ -39,6 +39,169 @@ function pluralTariff(n: number) {
   return `${n} тарифов`
 }
 
+// ─── Tariff Detail (настройки доступов) ──────────────────────────────────────
+
+type AccessRule = { id: string; tariff_id: string; course_id: string | null; module_id: string | null; lesson_id: string | null; access_days: number | null }
+type CourseOption = { id: string; name: string; modules: { id: string; name: string; lessons: { id: string; name: string }[] }[] }
+
+function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId: string; onBack: () => void }) {
+  const supabase = createClient()
+  const [accessRules, setAccessRules] = useState<AccessRule[]>([])
+  const [courses, setCourses] = useState<CourseOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [accessDays, setAccessDays] = useState<number | null>(null)
+  const [addingAccess, setAddingAccess] = useState(false)
+  const [newCourseId, setNewCourseId] = useState('')
+  const [newModuleId, setNewModuleId] = useState('')
+  const [newAccessDays, setNewAccessDays] = useState('')
+
+  async function loadData() {
+    setLoading(true)
+    const [accessRes, coursesRes] = await Promise.all([
+      supabase.from('tariff_access').select('*').eq('tariff_id', tariff.id),
+      supabase.from('courses').select('id, name').eq('project_id', projectId),
+    ])
+    setAccessRules((accessRes.data ?? []) as AccessRule[])
+
+    // Load courses with modules
+    const rawCourses = (coursesRes.data ?? []) as { id: string; name: string }[]
+    const withModules: CourseOption[] = await Promise.all(rawCourses.map(async (c) => {
+      const { data: mods } = await supabase.from('course_modules').select('id, name').eq('course_id', c.id).order('order_position')
+      const modules = await Promise.all((mods ?? []).map(async (m: { id: string; name: string }) => {
+        const { data: lessons } = await supabase.from('course_lessons').select('id, name').eq('module_id', m.id).order('order_position')
+        return { ...m, lessons: (lessons ?? []) as { id: string; name: string }[] }
+      }))
+      return { ...c, modules }
+    }))
+    setCourses(withModules)
+    setLoading(false)
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData() }, [tariff.id])
+
+  async function addAccess() {
+    if (!newCourseId) return
+    await supabase.from('tariff_access').insert({
+      tariff_id: tariff.id,
+      course_id: newCourseId,
+      module_id: newModuleId || null,
+      access_days: newAccessDays ? parseInt(newAccessDays) : null,
+    })
+    setNewCourseId(''); setNewModuleId(''); setNewAccessDays(''); setAddingAccess(false)
+    await loadData()
+  }
+
+  async function removeAccess(id: string) {
+    await supabase.from('tariff_access').delete().eq('id', id)
+    await loadData()
+  }
+
+  function getCourseName(id: string | null) { return courses.find(c => c.id === id)?.name ?? '—' }
+  function getModuleName(courseId: string | null, moduleId: string | null) {
+    if (!courseId || !moduleId) return null
+    const course = courses.find(c => c.id === courseId)
+    return course?.modules.find(m => m.id === moduleId)?.name ?? null
+  }
+
+  const selectedCourse = courses.find(c => c.id === newCourseId)
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад к тарифам</button>
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Настройки тарифа: {tariff.name}</h2>
+          <p className="text-xs text-gray-500">{tariff.price.toLocaleString('ru')} ₽</p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+      ) : (
+        <div className="space-y-4">
+          {/* Access rules */}
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Доступ к курсам и модулям</h3>
+                <p className="text-xs text-gray-500">Что открывается после оплаты этого тарифа</p>
+              </div>
+              <button onClick={() => setAddingAccess(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+                + Добавить доступ
+              </button>
+            </div>
+
+            {accessRules.length === 0 && !addingAccess ? (
+              <div className="text-center py-6 text-gray-400 text-sm">
+                Нет настроенных доступов. Добавьте курс или модуль.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {accessRules.map(rule => (
+                  <div key={rule.id} className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <span className="text-green-500">✓</span>
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          🎓 {getCourseName(rule.course_id)}
+                          {rule.module_id && <span className="text-gray-500"> → {getModuleName(rule.course_id, rule.module_id)}</span>}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {rule.access_days ? `Доступ на ${rule.access_days} дней` : 'Бессрочный доступ'}
+                        </p>
+                      </div>
+                    </div>
+                    <button onClick={() => removeAccess(rule.id)} className="text-xs text-gray-300 hover:text-red-500">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {addingAccess && (
+              <div className="mt-3 bg-[#F8F7FF] rounded-lg p-4 space-y-3 border border-[#6A55F8]/10">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Курс</label>
+                  <select value={newCourseId} onChange={e => { setNewCourseId(e.target.value); setNewModuleId('') }}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                    <option value="">Выберите курс...</option>
+                    {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+
+                {selectedCourse && selectedCourse.modules.length > 0 && (
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Модуль (необязательно — пусто = весь курс)</label>
+                    <select value={newModuleId} onChange={e => setNewModuleId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                      <option value="">Весь курс целиком</option>
+                      {selectedCourse.modules.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Срок доступа (пусто = бессрочно)</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" value={newAccessDays} onChange={e => setNewAccessDays(e.target.value)} placeholder="∞"
+                      className="w-24 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                    <span className="text-xs text-gray-500">дней</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={addAccess} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
+                  <button onClick={() => setAddingAccess(false)} className="text-sm text-gray-500">Отмена</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Product Detail ───────────────────────────────────────────────────────────
 
 function ProductDetail({
@@ -66,6 +229,9 @@ function ProductDetail({
   const [tFeatures, setTFeatures] = useState<string[]>([''])
   const [savingTariff, setSavingTariff] = useState(false)
   const [editingTariffId, setEditingTariffId] = useState<string | null>(null)
+  const [accessTariff, setAccessTariff] = useState<Tariff | null>(null)
+  const detailParams = useParams()
+  const projectId = detailParams.id as string
 
   // Settings form
   const [editName, setEditName] = useState(product.name)
@@ -170,6 +336,10 @@ function ProductDetail({
     { key: 'analytics', label: 'Аналитика' },
     { key: 'settings', label: 'Настройки' },
   ] as const
+
+  if (accessTariff) {
+    return <TariffDetail tariff={accessTariff} projectId={projectId} onBack={() => { setAccessTariff(null); loadTariffs() }} />
+  }
 
   return (
     <div className="space-y-6">
@@ -297,6 +467,9 @@ function ProductDetail({
                         <span className="text-lg font-bold text-[#6A55F8]">{formatMoney(t.price)}</span>
                       </div>
                       <div className="flex items-center gap-2">
+                        <button onClick={() => setAccessTariff(t)} className="text-xs text-green-600 font-medium border border-green-300 rounded-lg px-2.5 py-1 hover:bg-green-50">
+                          Настроить доступ
+                        </button>
                         <button onClick={() => startEditTariff(t)} className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded-lg px-2.5 py-1 hover:bg-[#F0EDFF]">
                           Редактировать
                         </button>
