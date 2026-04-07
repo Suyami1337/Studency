@@ -58,7 +58,8 @@ function SelectOrCreate({ children, placeholder, onSubmit }: { children: React.R
 }
 
 function cleanStageName(name: string) {
-  return name.replace(/^[🤖🌐📋💳🎓]\s*/, '')
+  // Remove any emoji/symbol characters from the beginning of the name
+  return name.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FEFF}\u{1F900}-\u{1F9FF}\u{2702}-\u{27B0}\u{E000}-\u{F8FF}]+\s*/u, '').trim()
 }
 
 const stageTypeIcon: Record<string, string> = {
