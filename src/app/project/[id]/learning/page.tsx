@@ -7,90 +7,479 @@ import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssista
 
 const supabase = createClient()
 
-type Course = {
-  id: string
-  project_id: string
-  name: string
-  description: string | null
-  is_published: boolean
-  created_at: string
-  module_count?: number
+type Course = { id: string; project_id: string; name: string; description: string | null; is_published: boolean; created_at: string; module_count?: number }
+type Module = { id: string; course_id: string; name: string; order_position: number }
+type Lesson = { id: string; module_id: string; name: string; content: string | null; video_url: string | null; has_homework: boolean; homework_description: string | null; order_position: number }
+
+// ═══════════════════════════════════════
+// LESSON EDITOR (блочный редактор урока)
+// ═══════════════════════════════════════
+function LessonEditor({ lesson, onBack, onUpdate }: { lesson: Lesson; onBack: () => void; onUpdate: () => void }) {
+  const [name, setName] = useState(lesson.name)
+  const [content, setContent] = useState(lesson.content || '')
+  const [videoUrl, setVideoUrl] = useState(lesson.video_url || '')
+  const [hasHomework, setHasHomework] = useState(lesson.has_homework)
+  const [hwDesc, setHwDesc] = useState(lesson.homework_description || '')
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    await supabase.from('course_lessons').update({
+      name, content: content || null, video_url: videoUrl || null,
+      has_homework: hasHomework, homework_description: hwDesc || null,
+    }).eq('id', lesson.id)
+    setSaving(false)
+    onUpdate()
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад к модулю</button>
+          <h2 className="text-lg font-bold text-gray-900">Редактирование урока</h2>
+        </div>
+        <button onClick={save} disabled={saving} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+          {saving ? 'Сохраняю...' : 'Сохранить'}
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {/* Name */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1.5">Название урока</label>
+          <input type="text" value={name} onChange={e => setName(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+        </div>
+
+        {/* Video */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1.5">🎬 Видео</label>
+          <input type="text" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="Ссылка на видео (YouTube, Vimeo...)"
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+          {videoUrl && (
+            <div className="mt-3 bg-gray-900 rounded-lg h-48 flex items-center justify-center text-white text-sm">
+              ▶ Превью видео: {videoUrl.slice(0, 50)}...
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1.5">📄 Текстовый контент</label>
+          <textarea value={content} onChange={e => setContent(e.target.value)} placeholder="Описание, материалы, ссылки..."
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-40 resize-none" />
+        </div>
+
+        {/* Homework */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-xs font-medium text-gray-700">📝 Домашнее задание</label>
+            <button onClick={() => setHasHomework(!hasHomework)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasHomework ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${hasHomework ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          {hasHomework && (
+            <textarea value={hwDesc} onChange={e => setHwDesc(e.target.value)} placeholder="Описание задания..."
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-24 resize-none" />
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
-type Module = {
-  id: string
-  course_id: string
-  name: string
-  order_position: number
-  lessons?: Lesson[]
-  expanded?: boolean
+// ═══════════════════════════════════════
+// MODULE DETAIL (уроки внутри модуля)
+// ═══════════════════════════════════════
+function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string; onBack: () => void }) {
+  const [lessons, setLessons] = useState<Lesson[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
+
+  async function loadLessons() {
+    const { data } = await supabase.from('course_lessons').select('*').eq('module_id', mod.id).order('order_position')
+    setLessons(data ?? [])
+    setLoading(false)
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadLessons() }, [mod.id])
+
+  async function addLesson() {
+    if (!newName.trim()) return
+    await supabase.from('course_lessons').insert({ module_id: mod.id, name: newName.trim(), order_position: lessons.length })
+    setNewName('')
+    setAdding(false)
+    await loadLessons()
+  }
+
+  async function deleteLesson(id: string) {
+    await supabase.from('course_lessons').delete().eq('id', id)
+    await loadLessons()
+  }
+
+  if (editingLesson) {
+    return <LessonEditor lesson={editingLesson} onBack={() => { setEditingLesson(null); loadLessons() }} onUpdate={loadLessons} />
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад к курсу</button>
+          <h2 className="text-lg font-bold text-gray-900">{mod.name}</h2>
+          <span className="text-xs text-gray-400">{lessons.length} уроков</span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+      ) : (
+        <div className="space-y-2">
+          {lessons.map((lesson, idx) => (
+            <div key={lesson.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center justify-between hover:border-[#6A55F8]/30 transition-colors cursor-pointer group"
+              onClick={() => setEditingLesson(lesson)}>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8]">{idx + 1}</div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">{lesson.name}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {lesson.video_url && <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">🎬 Видео</span>}
+                    {lesson.content && <span className="text-[10px] bg-gray-50 text-gray-500 px-1.5 py-0.5 rounded">📄 Текст</span>}
+                    {lesson.has_homework && <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">📝 ДЗ</span>}
+                    {!lesson.video_url && !lesson.content && !lesson.has_homework && <span className="text-[10px] text-gray-300">Пустой урок</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">Открыть →</span>
+                <button onClick={e => { e.stopPropagation(); deleteLesson(lesson.id) }} className="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
+              </div>
+            </div>
+          ))}
+
+          {adding ? (
+            <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 flex gap-2">
+              <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLesson()}
+                placeholder="Название урока" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
+              <button onClick={addLesson} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
+              <button onClick={() => setAdding(false)} className="text-sm text-gray-500">Отмена</button>
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)}
+              className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
+              + Добавить урок
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
-type Lesson = {
-  id: string
-  module_id: string
-  name: string
-  content: string | null
-  video_url: string | null
-  has_homework: boolean
-  homework_description: string | null
-  order_position: number
+// ═══════════════════════════════════════
+// COURSE DETAIL (модули + продукт + настройки)
+// ═══════════════════════════════════════
+function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }) {
+  const params = useParams()
+  const projectId = params.id as string
+  const [tab, setTab] = useState<'program' | 'product' | 'analytics' | 'settings'>('program')
+  const [aiOpen, setAiOpen] = useState(false)
+  const [modules, setModules] = useState<Module[]>([])
+  const [loading, setLoading] = useState(true)
+  const [addingModule, setAddingModule] = useState(false)
+  const [newModuleName, setNewModuleName] = useState('')
+  const [selectedModule, setSelectedModule] = useState<Module | null>(null)
+
+  // Product link state
+  const [products, setProducts] = useState<{id: string; name: string}[]>([])
+  const [linkedProductId, setLinkedProductId] = useState<string>('')
+  const [tariffs, setTariffs] = useState<{id: string; name: string; price: number}[]>([])
+  const [creatingProduct, setCreatingProduct] = useState(false)
+  const [newProductName, setNewProductName] = useState('')
+
+  // Settings
+  const [courseName, setCourseName] = useState(course.name)
+  const [courseDesc, setCourseDesc] = useState(course.description || '')
+  const [published, setPublished] = useState(course.is_published ?? false)
+
+  async function loadModules() {
+    const { data } = await supabase.from('course_modules').select('*').eq('course_id', course.id).order('order_position')
+    setModules(data ?? [])
+    setLoading(false)
+  }
+
+  async function loadProducts() {
+    const { data } = await supabase.from('products').select('id, name').eq('project_id', projectId)
+    setProducts(data ?? [])
+  }
+
+  async function loadTariffs(productId: string) {
+    const { data } = await supabase.from('tariffs').select('id, name, price').eq('product_id', productId)
+    setTariffs(data ?? [])
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadModules(); loadProducts() }, [course.id])
+
+  useEffect(() => { if (linkedProductId) loadTariffs(linkedProductId) }, [linkedProductId])
+
+  async function addModule() {
+    if (!newModuleName.trim()) return
+    await supabase.from('course_modules').insert({ course_id: course.id, name: newModuleName.trim(), order_position: modules.length })
+    setNewModuleName('')
+    setAddingModule(false)
+    await loadModules()
+  }
+
+  async function deleteModule(id: string) {
+    await supabase.from('course_modules').delete().eq('id', id)
+    await loadModules()
+  }
+
+  async function createProductForCourse() {
+    if (!newProductName.trim()) return
+    const { data } = await supabase.from('products').insert({ project_id: projectId, name: newProductName.trim() }).select().single()
+    if (data) {
+      setLinkedProductId(data.id)
+      await loadProducts()
+      // Create default tariffs
+      await supabase.from('tariffs').insert([
+        { product_id: data.id, name: 'Базовый', price: 2990, features: ['Доступ к курсу', 'Видеозаписи'], order_position: 0 },
+        { product_id: data.id, name: 'Стандарт', price: 29900, features: ['Доступ к курсу', 'Куратор', 'Обратная связь'], order_position: 1 },
+      ])
+      await loadTariffs(data.id)
+    }
+    setNewProductName('')
+    setCreatingProduct(false)
+  }
+
+  async function saveCourseSettings() {
+    await supabase.from('courses').update({ name: courseName, description: courseDesc || null, is_published: published }).eq('id', course.id)
+  }
+
+  async function deleteCourse() {
+    if (!confirm('Удалить курс? Все модули и уроки будут удалены.')) return
+    await supabase.from('courses').delete().eq('id', course.id)
+    onBack()
+  }
+
+  if (selectedModule) {
+    return <ModuleDetail mod={selectedModule} courseId={course.id} onBack={() => { setSelectedModule(null); loadModules() }} />
+  }
+
+  const tabs = [
+    { key: 'program' as const, label: 'Программа' },
+    { key: 'product' as const, label: 'Продукт и тарифы' },
+    { key: 'analytics' as const, label: 'Аналитика' },
+    { key: 'settings' as const, label: 'Настройки' },
+  ]
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm text-gray-500 hover:text-gray-800">← Назад</button>
+          <div className="w-9 h-9 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-lg">🎓</div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{course.name}</h1>
+            <p className="text-xs text-gray-500">{modules.length} модулей</p>
+          </div>
+        </div>
+        <AiAssistantButton isOpen={aiOpen} onClick={() => setAiOpen(!aiOpen)} />
+      </div>
+
+      <div className="flex gap-1 border-b border-gray-100">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${tab === t.key ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* TAB: Программа */}
+      {tab === 'program' && (
+        <div className="space-y-3">
+          {loading ? <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div> : (
+            <>
+              {modules.map((mod, idx) => (
+                <div key={mod.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center justify-between hover:border-[#6A55F8]/30 transition-colors cursor-pointer group"
+                  onClick={() => setSelectedModule(mod)}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-[#6A55F8] flex items-center justify-center text-sm font-bold text-white">{idx + 1}</div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{mod.name}</p>
+                      <p className="text-xs text-gray-400">Кликните чтобы настроить уроки</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">Открыть →</span>
+                    <button onClick={e => { e.stopPropagation(); deleteModule(mod.id) }} className="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
+                  </div>
+                </div>
+              ))}
+
+              {addingModule ? (
+                <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 flex gap-2">
+                  <input type="text" value={newModuleName} onChange={e => setNewModuleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addModule()}
+                    placeholder="Название модуля" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
+                  <button onClick={addModule} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
+                  <button onClick={() => setAddingModule(false)} className="text-sm text-gray-500">Отмена</button>
+                </div>
+              ) : (
+                <button onClick={() => setAddingModule(true)}
+                  className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
+                  + Добавить модуль
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB: Продукт и тарифы */}
+      {tab === 'product' && (
+        <div className="max-w-2xl space-y-4">
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Привязка к продукту</h3>
+            <p className="text-xs text-gray-500 mb-3">Выберите существующий продукт или создайте новый. После оплаты тарифа клиент получит доступ к этому курсу.</p>
+
+            <select value={linkedProductId} onChange={e => setLinkedProductId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] mb-3">
+              <option value="">Не привязан к продукту</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+
+            {!linkedProductId && !creatingProduct && (
+              <button onClick={() => setCreatingProduct(true)} className="text-xs text-[#6A55F8] font-medium hover:underline">
+                + Создать новый продукт для этого курса
+              </button>
+            )}
+
+            {creatingProduct && (
+              <div className="bg-[#F8F7FF] rounded-lg p-4 space-y-3 border border-[#6A55F8]/10">
+                <p className="text-xs font-medium text-[#6A55F8]">Новый продукт</p>
+                <input type="text" value={newProductName} onChange={e => setNewProductName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createProductForCourse()}
+                  placeholder="Название продукта" className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                <p className="text-[10px] text-gray-400">Будут созданы 2 тарифа по умолчанию (Базовый и Стандарт), которые можно изменить</p>
+                <div className="flex gap-2">
+                  <button onClick={createProductForCourse} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать</button>
+                  <button onClick={() => setCreatingProduct(false)} className="text-sm text-gray-500">Отмена</button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {linkedProductId && tariffs.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100 p-5">
+              <h3 className="text-sm font-semibold text-gray-900 mb-3">Тарифы</h3>
+              <div className="space-y-2">
+                {tariffs.map(t => (
+                  <div key={t.id} className="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{t.name}</p>
+                    </div>
+                    <span className="text-sm font-bold text-[#6A55F8]">{t.price.toLocaleString('ru')} ₽</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-2">Для детальной настройки тарифов перейдите в раздел Продукты</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: Аналитика */}
+      {tab === 'analytics' && (
+        <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-gray-400 text-sm">
+          Аналитика появится когда студенты начнут проходить курс
+        </div>
+      )}
+
+      {/* TAB: Настройки */}
+      {tab === 'settings' && (
+        <div className="max-w-2xl space-y-4">
+          <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Название курса</label>
+              <input type="text" value={courseName} onChange={e => setCourseName(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Описание</label>
+              <textarea value={courseDesc} onChange={e => setCourseDesc(e.target.value)} placeholder="О чём этот курс..."
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-24 resize-none" />
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-800">Опубликован</p>
+                <p className="text-xs text-gray-500">Студенты смогут видеть курс</p>
+              </div>
+              <button onClick={() => setPublished(!published)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${published ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${published ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            <button onClick={saveCourseSettings} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Сохранить</button>
+          </div>
+          <div className="bg-white rounded-xl border border-red-100 p-5">
+            <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-700">Удалить курс и все модули/уроки</p>
+              <button onClick={deleteCourse} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AiAssistantOverlay isOpen={aiOpen} onClose={() => setAiOpen(false)} title="AI-помощник курса"
+        placeholder="Описать программу курса..."
+        initialMessages={[{ from: 'ai' as const, text: 'Привет! Опиши курс — я создам модули, уроки и тарифы.' }]} />
+    </div>
+  )
 }
 
-type ModuleStats = {
-  module_id: string
-  module_name: string
-  total: number
-  completed: number
-}
-
-// ───────── List view ─────────
-
-function CourseList({ projectId }: { projectId: string }) {
+// ═══════════════════════════════════════
+// COURSE LIST
+// ═══════════════════════════════════════
+export default function LearningPage() {
+  const params = useParams()
+  const projectId = params.id as string
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
-  const [saving, setSaving] = useState(false)
   const [selected, setSelected] = useState<Course | null>(null)
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [projectId])
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase
-      .from('courses')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('created_at')
+    const { data } = await supabase.from('courses').select('*').eq('project_id', projectId).order('created_at')
     if (data) {
-      const withCounts = await Promise.all(
-        data.map(async (c) => {
-          const { count } = await supabase
-            .from('course_modules')
-            .select('*', { count: 'exact', head: true })
-            .eq('course_id', c.id)
-          return { ...c, module_count: count ?? 0 }
-        })
-      )
+      const withCounts = await Promise.all(data.map(async (c) => {
+        const { count } = await supabase.from('course_modules').select('*', { count: 'exact', head: true }).eq('course_id', c.id)
+        return { ...c, module_count: count ?? 0 }
+      }))
       setCourses(withCounts)
     }
     setLoading(false)
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [projectId])
+
   async function createCourse() {
     if (!newName.trim()) return
-    setSaving(true)
-    const { data } = await supabase
-      .from('courses')
-      .insert({ project_id: projectId, name: newName.trim(), is_published: false })
-      .select()
-      .single()
-    if (data) setCourses(prev => [...prev, { ...data, module_count: 0 }])
-    setNewName('')
-    setAdding(false)
-    setSaving(false)
+    const { data } = await supabase.from('courses').insert({ project_id: projectId, name: newName.trim() }).select().single()
+    if (data) {
+      setSelected({ ...data, module_count: 0 })
+      setNewName('')
+      setAdding(false)
+    }
   }
 
   if (selected) {
@@ -98,666 +487,49 @@ function CourseList({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Учебная платформа</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Курсы и учебные материалы</p>
+          <h1 className="text-xl font-bold text-gray-900">Обучение</h1>
+          <p className="text-sm text-gray-500">Курсы и учебные материалы</p>
         </div>
-        <button
-          onClick={() => setAdding(true)}
-          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          + Создать курс
-        </button>
+        <button onClick={() => setAdding(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">+ Создать курс</button>
       </div>
 
       {adding && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 shadow-sm">
-          <p className="text-sm font-medium text-gray-700 mb-2">Название курса</p>
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              type="text"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && createCourse()}
-              placeholder="Например: Курс по маркетингу"
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
-            />
-            <button
-              onClick={createCourse}
-              disabled={saving}
-              className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              {saving ? '...' : 'Создать'}
-            </button>
-            <button onClick={() => { setAdding(false); setNewName('') }} className="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm">Отмена</button>
-          </div>
+        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 shadow-sm flex gap-2">
+          <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createCourse()}
+            placeholder="Название курса" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
+          <button onClick={createCourse} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать</button>
+          <button onClick={() => setAdding(false)} className="text-sm text-gray-500">Отмена</button>
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Загрузка курсов...</div>
-      ) : courses.length === 0 ? (
-        <div className="text-center py-16">
-          <div className="text-5xl mb-3">📚</div>
-          <p className="text-gray-500 font-medium">Ещё нет курсов</p>
-          <p className="text-gray-400 text-sm mt-1">Создайте первый курс, чтобы начать</p>
+        <div className="text-center py-16 text-gray-400 text-sm">Загрузка...</div>
+      ) : courses.length === 0 && !adding ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <div className="text-4xl mb-4">📚</div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Нет курсов</h3>
+          <p className="text-sm text-gray-500">Создайте первый курс</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {courses.map(course => (
-            <div
-              key={course.id}
-              onClick={() => setSelected(course)}
-              className="bg-white rounded-xl border border-gray-100 p-5 cursor-pointer hover:shadow-md hover:border-[#6A55F8]/20 transition-all"
-            >
+            <button key={course.id} onClick={() => setSelected(course)}
+              className="bg-white rounded-xl border border-gray-100 p-5 text-left hover:border-[#6A55F8]/30 hover:shadow-sm transition-all">
               <div className="flex items-start justify-between mb-2">
-                <h3 className="font-semibold text-gray-900 text-base leading-tight">{course.name}</h3>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ml-2 flex-shrink-0 ${
-                  course.is_published ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                }`}>
+                <h3 className="font-semibold text-gray-900">{course.name}</h3>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${course.is_published ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                   {course.is_published ? 'Опубликован' : 'Черновик'}
                 </span>
               </div>
-              {course.description && (
-                <p className="text-sm text-gray-500 mb-3 line-clamp-2">{course.description}</p>
-              )}
-              <p className="text-xs text-gray-400">{course.module_count} модул{course.module_count === 1 ? 'ь' : course.module_count && course.module_count < 5 ? 'я' : 'ей'}</p>
-            </div>
+              {course.description && <p className="text-sm text-gray-500 mb-2 line-clamp-2">{course.description}</p>}
+              <p className="text-xs text-gray-400">{course.module_count} модулей</p>
+            </button>
           ))}
         </div>
       )}
     </div>
   )
-}
-
-// ───────── Course detail ─────────
-
-function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }) {
-  const [tab, setTab] = useState<'program' | 'analytics' | 'settings'>('program')
-  const [aiOpen, setAiOpen] = useState(false)
-
-  const tabs = [
-    { key: 'program' as const, label: 'Программа' },
-    { key: 'analytics' as const, label: 'Аналитика' },
-    { key: 'settings' as const, label: 'Настройки' },
-  ]
-
-  return (
-    <div className="p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={onBack} className="text-gray-400 hover:text-gray-700 transition-colors">
-          ← Назад
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-gray-900">{course.name}</h1>
-        </div>
-        <AiAssistantButton isOpen={aiOpen} onClick={() => setAiOpen(!aiOpen)} />
-      </div>
-
-      <div className="flex gap-1 border-b border-gray-100 mb-6">
-        {tabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              tab === t.key
-                ? 'border-[#6A55F8] text-[#6A55F8]'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'program' && <ProgramTab courseId={course.id} />}
-      {tab === 'analytics' && <AnalyticsTab courseId={course.id} />}
-      {tab === 'settings' && <SettingsTab course={course} onDelete={onBack} onUpdate={() => {}} />}
-
-      <AiAssistantOverlay
-        isOpen={aiOpen}
-        onClose={() => setAiOpen(false)}
-        title="AI-помощник по курсу"
-        placeholder="Спросить про курс..."
-        initialMessages={[{ from: 'ai', text: `Помогу с курсом "${course.name}". Чем могу помочь?` }]}
-      />
-    </div>
-  )
-}
-
-// ───────── Program tab ─────────
-
-function ProgramTab({ courseId }: { courseId: string }) {
-  const [modules, setModules] = useState<Module[]>([])
-  const [loading, setLoading] = useState(true)
-  const [addingModule, setAddingModule] = useState(false)
-  const [newModuleName, setNewModuleName] = useState('')
-  const [savingModule, setSavingModule] = useState(false)
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadModules() }, [courseId])
-
-  async function loadModules() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('course_modules')
-      .select('*')
-      .eq('course_id', courseId)
-      .order('order_position')
-    setModules((data ?? []).map(m => ({ ...m, lessons: [], expanded: false })))
-    setLoading(false)
-  }
-
-  async function toggleModule(mod: Module) {
-    if (!mod.expanded) {
-      const { data } = await supabase
-        .from('course_lessons')
-        .select('*')
-        .eq('module_id', mod.id)
-        .order('order_position')
-      setModules(prev => prev.map(m => m.id === mod.id ? { ...m, expanded: true, lessons: data ?? [] } : m))
-    } else {
-      setModules(prev => prev.map(m => m.id === mod.id ? { ...m, expanded: false } : m))
-    }
-  }
-
-  async function addModule() {
-    if (!newModuleName.trim()) return
-    setSavingModule(true)
-    const position = modules.length + 1
-    const { data } = await supabase
-      .from('course_modules')
-      .insert({ course_id: courseId, name: newModuleName.trim(), order_position: position })
-      .select()
-      .single()
-    if (data) setModules(prev => [...prev, { ...data, lessons: [], expanded: false }])
-    setNewModuleName('')
-    setAddingModule(false)
-    setSavingModule(false)
-  }
-
-  async function deleteModule(moduleId: string) {
-    await supabase.from('course_modules').delete().eq('id', moduleId)
-    setModules(prev => prev.filter(m => m.id !== moduleId))
-  }
-
-  async function addLesson(moduleId: string, name: string) {
-    const mod = modules.find(m => m.id === moduleId)
-    const position = (mod?.lessons?.length ?? 0) + 1
-    const { data } = await supabase
-      .from('course_lessons')
-      .insert({ module_id: moduleId, name, order_position: position, has_homework: false })
-      .select()
-      .single()
-    if (data) {
-      setModules(prev => prev.map(m =>
-        m.id === moduleId ? { ...m, lessons: [...(m.lessons ?? []), data] } : m
-      ))
-    }
-  }
-
-  async function updateLesson(lessonId: string, moduleId: string, fields: Partial<Lesson>) {
-    await supabase.from('course_lessons').update(fields).eq('id', lessonId)
-    setModules(prev => prev.map(m =>
-      m.id === moduleId
-        ? { ...m, lessons: (m.lessons ?? []).map(l => l.id === lessonId ? { ...l, ...fields } : l) }
-        : m
-    ))
-  }
-
-  async function deleteLesson(lessonId: string, moduleId: string) {
-    await supabase.from('course_lessons').delete().eq('id', lessonId)
-    setModules(prev => prev.map(m =>
-      m.id === moduleId ? { ...m, lessons: (m.lessons ?? []).filter(l => l.id !== lessonId) } : m
-    ))
-  }
-
-  if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка программы...</div>
-
-  return (
-    <div>
-      <div className="space-y-3 mb-4">
-        {modules.length === 0 && !addingModule && (
-          <div className="text-center py-10">
-            <div className="text-4xl mb-2">📂</div>
-            <p className="text-gray-500 text-sm">Нет модулей. Добавьте первый!</p>
-          </div>
-        )}
-        {modules.map((mod, idx) => (
-          <ModuleRow
-            key={mod.id}
-            mod={mod}
-            idx={idx}
-            onToggle={() => toggleModule(mod)}
-            onDelete={() => deleteModule(mod.id)}
-            onAddLesson={(name) => addLesson(mod.id, name)}
-            onUpdateLesson={(lessonId, fields) => updateLesson(lessonId, mod.id, fields)}
-            onDeleteLesson={(lessonId) => deleteLesson(lessonId, mod.id)}
-          />
-        ))}
-      </div>
-
-      {addingModule && (
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-3">
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              type="text"
-              value={newModuleName}
-              onChange={e => setNewModuleName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addModule()}
-              placeholder="Название модуля"
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]"
-            />
-            <button onClick={addModule} disabled={savingModule} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-              {savingModule ? '...' : 'Добавить'}
-            </button>
-            <button onClick={() => { setAddingModule(false); setNewModuleName('') }} className="text-gray-500 text-sm px-2">Отмена</button>
-          </div>
-        </div>
-      )}
-
-      <button
-        onClick={() => setAddingModule(true)}
-        className="border border-dashed border-[#6A55F8] text-[#6A55F8] hover:bg-[#F0EDFF] px-4 py-2.5 rounded-xl text-sm font-medium transition-colors w-full"
-      >
-        + Добавить модуль
-      </button>
-    </div>
-  )
-}
-
-function ModuleRow({
-  mod, idx, onToggle, onDelete, onAddLesson, onUpdateLesson, onDeleteLesson,
-}: {
-  mod: Module
-  idx: number
-  onToggle: () => void
-  onDelete: () => void
-  onAddLesson: (name: string) => void
-  onUpdateLesson: (lessonId: string, fields: Partial<Lesson>) => void
-  onDeleteLesson: (lessonId: string) => void
-}) {
-  const [addingLesson, setAddingLesson] = useState(false)
-  const [newLessonName, setNewLessonName] = useState('')
-
-  function handleAddLesson() {
-    if (!newLessonName.trim()) return
-    onAddLesson(newLessonName.trim())
-    setNewLessonName('')
-    setAddingLesson(false)
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-      <div className="flex items-center gap-3 px-4 py-3">
-        <button onClick={onToggle} className="text-gray-400 hover:text-gray-600 transition-colors text-sm w-5">
-          {mod.expanded ? '▾' : '▸'}
-        </button>
-        <span className="text-xs font-medium text-gray-400 w-5">{idx + 1}</span>
-        <span className="flex-1 font-medium text-gray-800 text-sm">{mod.name}</span>
-        <button onClick={onDelete} className="text-gray-300 hover:text-red-400 transition-colors text-xs">✕</button>
-      </div>
-
-      {mod.expanded && (
-        <div className="border-t border-gray-50 px-4 pb-3">
-          {(mod.lessons ?? []).length === 0 && !addingLesson && (
-            <p className="text-xs text-gray-400 py-2">Нет уроков</p>
-          )}
-          <div className="space-y-1 mt-2">
-            {(mod.lessons ?? []).map((lesson, li) => (
-              <LessonRow
-                key={lesson.id}
-                lesson={lesson}
-                idx={li}
-                onUpdate={(fields) => onUpdateLesson(lesson.id, fields)}
-                onDelete={() => onDeleteLesson(lesson.id)}
-              />
-            ))}
-          </div>
-
-          {addingLesson && (
-            <div className="flex gap-2 mt-2">
-              <input
-                autoFocus
-                type="text"
-                value={newLessonName}
-                onChange={e => setNewLessonName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleAddLesson()}
-                placeholder="Название урока"
-                className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]"
-              />
-              <button onClick={handleAddLesson} className="bg-[#6A55F8] text-white px-3 py-1.5 rounded-lg text-xs font-medium">Добавить</button>
-              <button onClick={() => { setAddingLesson(false); setNewLessonName('') }} className="text-gray-400 text-xs">Отмена</button>
-            </div>
-          )}
-
-          <button
-            onClick={() => setAddingLesson(true)}
-            className="mt-2 text-xs text-[#6A55F8] hover:underline"
-          >
-            + Добавить урок
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function LessonRow({ lesson, idx, onUpdate, onDelete }: {
-  lesson: Lesson
-  idx: number
-  onUpdate: (fields: Partial<Lesson>) => void
-  onDelete: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const [name, setName] = useState(lesson.name)
-  const [content, setContent] = useState(lesson.content ?? '')
-  const [videoUrl, setVideoUrl] = useState(lesson.video_url ?? '')
-  const [hasHomework, setHasHomework] = useState(lesson.has_homework)
-  const [homeworkDesc, setHomeworkDesc] = useState(lesson.homework_description ?? '')
-  const [saving, setSaving] = useState(false)
-
-  async function save() {
-    setSaving(true)
-    onUpdate({
-      name,
-      content: content || null,
-      video_url: videoUrl || null,
-      has_homework: hasHomework,
-      homework_description: hasHomework ? homeworkDesc || null : null,
-    })
-    setSaving(false)
-    setExpanded(false)
-  }
-
-  return (
-    <div className="rounded-lg border border-gray-50 hover:border-gray-200 transition-colors">
-      <div className="flex items-center gap-2 px-3 py-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-        <span className="text-xs text-gray-400 w-4">{idx + 1}</span>
-        <span className="flex-1 text-sm text-gray-700">{lesson.name}</span>
-        <div className="flex items-center gap-1">
-          {lesson.video_url && <span title="Видео">🎬</span>}
-          {lesson.has_homework && <span title="Домашнее задание">📝</span>}
-        </div>
-        <button onClick={e => { e.stopPropagation(); onDelete() }} className="text-gray-300 hover:text-red-400 text-xs ml-1">✕</button>
-      </div>
-
-      {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t border-gray-50 pt-3">
-          <div>
-            <label className="text-xs font-medium text-gray-600 block mb-1">Название урока</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-600 block mb-1">Контент</label>
-            <textarea
-              value={content}
-              onChange={e => setContent(e.target.value)}
-              rows={3}
-              placeholder="Описание урока, текстовый контент..."
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] resize-none"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-gray-600 block mb-1">🎬 Ссылка на видео</label>
-            <input
-              type="text"
-              value={videoUrl}
-              onChange={e => setVideoUrl(e.target.value)}
-              placeholder="https://..."
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]"
-            />
-          </div>
-          <div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={hasHomework}
-                onChange={e => setHasHomework(e.target.checked)}
-                className="w-4 h-4 accent-[#6A55F8]"
-              />
-              <span className="text-xs font-medium text-gray-600">📝 Есть домашнее задание</span>
-            </label>
-            {hasHomework && (
-              <textarea
-                value={homeworkDesc}
-                onChange={e => setHomeworkDesc(e.target.value)}
-                rows={2}
-                placeholder="Описание домашнего задания..."
-                className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] resize-none"
-              />
-            )}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={save} disabled={saving} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-              {saving ? 'Сохраняем...' : 'Сохранить'}
-            </button>
-            <button onClick={() => setExpanded(false)} className="text-gray-500 text-sm px-3 py-2">Отмена</button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ───────── Analytics tab ─────────
-
-function AnalyticsTab({ courseId }: { courseId: string }) {
-  const [totalStudents, setTotalStudents] = useState<number>(0)
-  const [moduleStats, setModuleStats] = useState<ModuleStats[]>([])
-  const [loading, setLoading] = useState(true)
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [courseId])
-
-  async function load() {
-    setLoading(true)
-
-    const { data: modules } = await supabase
-      .from('course_modules')
-      .select('id, name')
-      .eq('course_id', courseId)
-      .order('order_position')
-
-    if (!modules || modules.length === 0) {
-      setLoading(false)
-      return
-    }
-
-    const moduleIds = modules.map(m => m.id)
-
-    const { data: lessons } = await supabase
-      .from('course_lessons')
-      .select('id, module_id')
-      .in('module_id', moduleIds)
-
-    const lessonIds = (lessons ?? []).map(l => l.id)
-
-    let studentCount = 0
-    const stats: ModuleStats[] = []
-
-    if (lessonIds.length > 0) {
-      const { data: progress } = await supabase
-        .from('student_progress')
-        .select('customer_id, lesson_id, completed')
-        .in('lesson_id', lessonIds)
-
-      const distinctCustomers = new Set((progress ?? []).map(p => p.customer_id))
-      studentCount = distinctCustomers.size
-
-      for (const mod of modules) {
-        const modLessons = (lessons ?? []).filter(l => l.module_id === mod.id)
-        const total = modLessons.length
-        const modLessonIds = modLessons.map(l => l.id)
-        const completed = (progress ?? []).filter(p => modLessonIds.includes(p.lesson_id) && p.completed).length
-        stats.push({ module_id: mod.id, module_name: mod.name, total, completed })
-      }
-    } else {
-      for (const mod of modules) {
-        stats.push({ module_id: mod.id, module_name: mod.name, total: 0, completed: 0 })
-      }
-    }
-
-    setTotalStudents(studentCount)
-    setModuleStats(stats)
-    setLoading(false)
-  }
-
-  if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка аналитики...</div>
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
-        <p className="text-xs text-gray-500 mb-1">Всего студентов</p>
-        <p className="text-3xl font-bold text-gray-900">{totalStudents}</p>
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
-        <p className="text-sm font-semibold text-gray-700 mb-4">Прохождение по модулям</p>
-        {moduleStats.length === 0 ? (
-          <p className="text-sm text-gray-400">Нет модулей</p>
-        ) : (
-          <div className="space-y-4">
-            {moduleStats.map(stat => {
-              const pct = stat.total > 0 ? Math.round((stat.completed / stat.total) * 100) : 0
-              return (
-                <div key={stat.module_id}>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-sm text-gray-700">{stat.module_name}</span>
-                    <span className="text-xs text-gray-500">{stat.completed}/{stat.total} уроков • {pct}%</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-2 bg-[#6A55F8] rounded-full transition-all"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ───────── Settings tab ─────────
-
-function SettingsTab({ course, onDelete, onUpdate }: {
-  course: Course
-  onDelete: () => void
-  onUpdate: (updated: Course) => void
-}) {
-  const [name, setName] = useState(course.name)
-  const [description, setDescription] = useState(course.description ?? '')
-  const [published, setPublished] = useState(course.is_published ?? false)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  async function save() {
-    setSaving(true)
-    await supabase
-      .from('courses')
-      .update({ name, description: description || null, is_published: published })
-      .eq('id', course.id)
-    onUpdate({ ...course, name, description: description || null, is_published: published })
-    setSaving(false)
-  }
-
-  async function deleteCourse() {
-    setDeleting(true)
-    await supabase.from('courses').delete().eq('id', course.id)
-    onDelete()
-  }
-
-  return (
-    <div className="max-w-xl space-y-5">
-      <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
-        <p className="text-sm font-semibold text-gray-700">Основная информация</p>
-        <div>
-          <label className="text-xs font-medium text-gray-600 block mb-1">Название курса</label>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-600 block mb-1">Описание</label>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            rows={3}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] resize-none"
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-gray-700">Опубликован</p>
-            <p className="text-xs text-gray-400">Виден студентам</p>
-          </div>
-          <button
-            onClick={() => setPublished(!published)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${published ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${published ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
-        </div>
-        <button
-          onClick={save}
-          disabled={saving}
-          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Сохраняем...' : 'Сохранить'}
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl border border-red-100 p-5">
-        <p className="text-sm font-semibold text-red-600 mb-2">Опасная зона</p>
-        {!confirmDelete ? (
-          <button
-            onClick={() => setConfirmDelete(true)}
-            className="border border-red-200 text-red-500 hover:bg-red-50 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-          >
-            Удалить курс
-          </button>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-sm text-red-500">Вы уверены? Это действие нельзя отменить.</p>
-            <div className="flex gap-2">
-              <button
-                onClick={deleteCourse}
-                disabled={deleting}
-                className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              >
-                {deleting ? 'Удаляем...' : 'Да, удалить'}
-              </button>
-              <button onClick={() => setConfirmDelete(false)} className="text-gray-500 text-sm px-3 py-2">Отмена</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ───────── Root page ─────────
-
-export default function LearningPage() {
-  const params = useParams()
-  const projectId = params.id as string
-
-  return <CourseList projectId={projectId} />
 }
