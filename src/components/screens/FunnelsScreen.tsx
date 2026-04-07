@@ -174,24 +174,24 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     if (addType === 'bot' && selectedToolId) {
       const item = existingItems.find(i => i.id === selectedToolId)
       const msg = botMessagesList.find(m => m.id === addBotMessageId)
-      name = `🤖 ${item?.name ?? 'Чат-бот'}`
+      name = item?.name ?? 'Чат-бот'
       if (msg) name += ` → ${(msg.text || '').slice(0, 30)}`
       toolId = selectedToolId
       if (addBotMessageId) settings.message_id = addBotMessageId
     } else if (addType === 'landing' && selectedToolId) {
       const item = existingItems.find(i => i.id === selectedToolId)
-      name = `🌐 ${item?.name ?? 'Сайт'}`
+      name = item?.name ?? 'Сайт'
       toolId = selectedToolId
     } else if (addType === 'order' || addType === 'payment') {
       const prod = productsList.find(p => p.id === addProductId)
       const tariff = tariffsList.find(t => t.id === addTariffId)
-      name = addType === 'order' ? `📋 Заказ: ${prod?.name ?? 'Продукт'}` : `💳 Оплата: ${prod?.name ?? 'Продукт'}`
+      name = addType === 'order' ? `Заказ: ${prod?.name ?? 'Продукт'}` : `Оплата: ${prod?.name ?? 'Продукт'}`
       if (tariff) name += ` (${tariff.name})`
       settings.product_id = addProductId
       settings.tariff_id = addTariffId || null
     } else if (addType === 'learning' && addCourseId) {
       const course = coursesList.find(c => c.id === addCourseId)
-      name = `🎓 ${course?.name ?? 'Курс'}`
+      name = course?.name ?? 'Курс'
       toolId = addCourseId
     }
 
