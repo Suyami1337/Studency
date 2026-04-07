@@ -136,6 +136,12 @@ function ProductDetail({
   }
 
   async function deleteTariff(id: string) {
+    // Check if any orders use this tariff
+    const { count } = await supabase.from('orders').select('*', { count: 'exact', head: true }).eq('tariff_id', id)
+    if (count && count > 0) {
+      alert(`Невозможно удалить тариф: ${count} заказ(ов) привязано. Сначала удалите или переназначьте заказы.`)
+      return
+    }
     await supabase.from('tariffs').delete().eq('id', id)
     setTariffs(prev => prev.filter(t => t.id !== id))
   }
@@ -227,20 +233,31 @@ function ProductDetail({
               <div>
                 <label className="block text-xs text-gray-500 mb-2">Что входит в тариф (каждый пункт отдельно)</label>
                 <div className="space-y-2">
-                  {tFeatures.map((feat, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <span className="text-green-500 text-sm">✓</span>
-                      <input type="text" value={feat} onChange={e => {
-                        const updated = [...tFeatures]
-                        updated[idx] = e.target.value
-                        setTFeatures(updated)
-                      }} placeholder={`Пункт ${idx + 1}`}
-                        className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                      {tFeatures.length > 1 && (
-                        <button onClick={() => setTFeatures(prev => prev.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500 text-sm">✕</button>
-                      )}
-                    </div>
-                  ))}
+                  {tFeatures.map((feat, idx) => {
+                    const isStruck = feat.startsWith('~') && feat.endsWith('~') && feat.length > 2
+                    const rawText = isStruck ? feat.slice(1, -1) : feat
+                    return (
+                      <div key={idx} className="flex items-center gap-2">
+                        <button onClick={() => {
+                          const updated = [...tFeatures]
+                          if (isStruck) { updated[idx] = rawText } else { updated[idx] = `~${rawText}~` }
+                          setTFeatures(updated)
+                        }} className={`w-6 h-6 rounded flex items-center justify-center text-sm flex-shrink-0 transition-colors ${isStruck ? 'bg-red-100 text-red-500' : 'bg-green-100 text-green-600'}`}
+                          title={isStruck ? 'Включить пункт' : 'Зачеркнуть пункт'}>
+                          {isStruck ? '✗' : '✓'}
+                        </button>
+                        <input type="text" value={rawText} onChange={e => {
+                          const updated = [...tFeatures]
+                          updated[idx] = isStruck ? `~${e.target.value}~` : e.target.value
+                          setTFeatures(updated)
+                        }} placeholder={`Пункт ${idx + 1}`}
+                          className={`flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8] ${isStruck ? 'line-through text-gray-400' : ''}`} />
+                        {tFeatures.length > 1 && (
+                          <button onClick={() => setTFeatures(prev => prev.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500 text-sm">✕</button>
+                        )}
+                      </div>
+                    )
+                  })}
                   <button onClick={() => setTFeatures(prev => [...prev, ''])} className="text-xs text-[#6A55F8] font-medium hover:underline">
                     + Добавить пункт
                   </button>
