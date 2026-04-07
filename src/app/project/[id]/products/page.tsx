@@ -265,7 +265,7 @@ function ProductDetail({
                     </div>
                     {t.features && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
-                        {t.features.split(',').map((f, i) => (
+                        {(Array.isArray(t.features) ? t.features : (t.features || '').split(',')).map((f: string, i: number) => (
                           <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
                             {f.trim()}
                           </span>
