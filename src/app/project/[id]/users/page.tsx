@@ -8,7 +8,7 @@ const supabase = createClient()
 
 type Customer = {
   id: string
-  name: string
+  full_name: string | null
   email: string | null
   phone: string | null
   telegram_username: string | null
@@ -99,7 +99,7 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
 
   function startEdit() {
     setEditData({
-      name: current.name,
+      full_name: current.full_name,
       email: current.email,
       phone: current.phone,
       telegram_username: current.telegram_username,
@@ -174,18 +174,18 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
       <div className="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-lg" style={{ backgroundColor: '#6A55F8' }}>
-            {current.name.charAt(0).toUpperCase()}
+            {(current.full_name || current.email || '?').charAt(0).toUpperCase()}
           </div>
           <div>
             {editMode ? (
               <input
                 type="text"
-                value={editData.name ?? ''}
-                onChange={e => setEditData(d => ({ ...d, name: e.target.value }))}
+                value={editData.full_name ?? ''}
+                onChange={e => setEditData(d => ({ ...d, full_name: e.target.value }))}
                 className="text-xl font-semibold text-gray-900 border-b border-[#6A55F8] focus:outline-none bg-transparent"
               />
             ) : (
-              <h2 className="text-xl font-semibold text-gray-900">{current.name}</h2>
+              <h2 className="text-xl font-semibold text-gray-900">{current.full_name}</h2>
             )}
             {current.is_blocked && (
               <span className="text-xs text-red-500 font-medium">Заблокирован</span>
@@ -341,7 +341,7 @@ function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: str
     setError('')
     const { error: err } = await supabase.from('customers').insert({
       project_id: projectId,
-      name: name.trim(),
+      full_name: name.trim(),
       email: email || null,
       phone: phone || null,
       telegram_username: telegram || null,
@@ -419,7 +419,7 @@ export default function UsersPage() {
   const filtered = customers.filter(c => {
     const q = search.toLowerCase()
     return !q
-      || c.name.toLowerCase().includes(q)
+      || (c.full_name || '').toLowerCase().includes(q)
       || (c.email ?? '').toLowerCase().includes(q)
       || (c.telegram_username ?? '').toLowerCase().includes(q)
   })
@@ -508,10 +508,10 @@ export default function UsersPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0" style={{ backgroundColor: '#6A55F8' }}>
-                        {c.name.charAt(0).toUpperCase()}
+                        {(c.full_name || c.email || '?').charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div className="font-medium text-gray-900">{c.name}</div>
+                        <div className="font-medium text-gray-900">{c.full_name || 'Без имени'}</div>
                         {c.is_blocked && <div className="text-xs text-red-500">Заблокирован</div>}
                       </div>
                     </div>
