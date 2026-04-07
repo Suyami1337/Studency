@@ -417,9 +417,9 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); loadBotMessages(data.id) }
                             }} />
                           </div>
-                          {selectedToolId && botMessagesList.length > 0 && (
+                          {selectedToolId && (
                             <div>
-                              <label className="block text-xs text-gray-500 mb-1">Конкретный этап/сообщение (необязательно)</label>
+                              <label className="block text-xs text-gray-500 mb-1">Конкретный этап/сообщение</label>
                               <select value={addBotMessageId} onChange={e => setAddBotMessageId(e.target.value)}
                                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
                                 <option value="">Весь сценарий целиком</option>
@@ -429,6 +429,9 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                                   </option>
                                 ))}
                               </select>
+                              {botMessagesList.length === 0 && (
+                                <p className="text-[10px] text-gray-400 mt-1">Сообщений пока нет — будет отслеживаться весь сценарий. Добавьте сообщения в разделе Чат-боты.</p>
+                              )}
                             </div>
                           )}
                         </div>
