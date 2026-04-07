@@ -7,7 +7,7 @@ import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssista
 import { SkeletonList } from '@/components/ui/Skeleton'
 
 type Funnel = { id: string; name: string; project_id: string; status: string; created_at: string }
-type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number }
+type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number; tool_id: string | null; settings: Record<string, unknown> }
 type Customer = { id: string; name: string; email: string | null; telegram: string | null }
 
 const stageTypeIcon: Record<string, string> = {
@@ -31,6 +31,16 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const [stageCustomers, setStageCustomers] = useState<Customer[]>([])
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const [addStep, setAddStep] = useState<'type' | 'select' | null>(null)
+  const [addType, setAddType] = useState('')
+  const [existingItems, setExistingItems] = useState<{id: string; name: string}[]>([])
+  const [selectedToolId, setSelectedToolId] = useState('')
+  const [addProductId, setAddProductId] = useState('')
+  const [addTariffId, setAddTariffId] = useState('')
+  const [addCourseId, setAddCourseId] = useState('')
+  const [productsList, setProductsList] = useState<{id: string; name: string}[]>([])
+  const [tariffsList, setTariffsList] = useState<{id: string; name: string}[]>([])
+  const [coursesList, setCoursesList] = useState<{id: string; name: string}[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
   const [showAI, setShowAI] = useState(false)
@@ -66,17 +76,79 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadStages() }, [funnel.id])
 
-  async function addStage(type: string) {
+  async function startAddStage(type: string) {
     setShowAddMenu(false)
-    const label = stageTypeLabel[type] ?? type
-    const { data, error } = await supabase
-      .from('funnel_stages')
-      .insert({ funnel_id: funnel.id, name: label, stage_type: type, order_position: stages.length })
-      .select()
-      .single()
-    if (!error && data) {
-      setStages(prev => [...prev, data])
-      setStageCounts(prev => ({ ...prev, [data.id]: 0 }))
+    setAddType(type)
+    setSelectedToolId('')
+    setAddProductId('')
+    setAddTariffId('')
+    setAddCourseId('')
+
+    // Load existing items for this type
+    if (type === 'bot') {
+      const { data } = await supabase.from('chatbot_scenarios').select('id, name').eq('project_id', funnel.project_id)
+      setExistingItems((data ?? []) as {id: string; name: string}[])
+    } else if (type === 'landing') {
+      const { data } = await supabase.from('landings').select('id, name').eq('project_id', funnel.project_id)
+      setExistingItems((data ?? []) as {id: string; name: string}[])
+    } else if (type === 'order' || type === 'payment') {
+      const { data } = await supabase.from('products').select('id, name').eq('project_id', funnel.project_id)
+      setProductsList((data ?? []) as {id: string; name: string}[])
+      setExistingItems([])
+    } else if (type === 'learning') {
+      const { data } = await supabase.from('courses').select('id, name').eq('project_id', funnel.project_id)
+      setCoursesList((data ?? []) as {id: string; name: string}[])
+      setExistingItems([])
+    }
+    setAddStep('select')
+  }
+
+  async function loadTariffsForProduct(productId: string) {
+    setAddProductId(productId)
+    const { data } = await supabase.from('tariffs').select('id, name').eq('product_id', productId)
+    setTariffsList((data ?? []) as {id: string; name: string}[])
+  }
+
+  async function confirmAddStage() {
+    let name = stageTypeLabel[addType] ?? addType
+    let toolId: string | null = null
+    const settings: Record<string, unknown> = {}
+
+    if (addType === 'bot' && selectedToolId) {
+      const item = existingItems.find(i => i.id === selectedToolId)
+      name = `🤖 ${item?.name ?? 'Чат-бот'}`
+      toolId = selectedToolId
+    } else if (addType === 'landing' && selectedToolId) {
+      const item = existingItems.find(i => i.id === selectedToolId)
+      name = `🌐 ${item?.name ?? 'Сайт'}`
+      toolId = selectedToolId
+    } else if (addType === 'order' || addType === 'payment') {
+      const prod = productsList.find(p => p.id === addProductId)
+      const tariff = tariffsList.find(t => t.id === addTariffId)
+      name = addType === 'order' ? `📋 Заказ: ${prod?.name ?? 'Продукт'}` : `💳 Оплата: ${prod?.name ?? 'Продукт'}`
+      if (tariff) name += ` (${tariff.name})`
+      settings.product_id = addProductId
+      settings.tariff_id = addTariffId || null
+    } else if (addType === 'learning' && addCourseId) {
+      const course = coursesList.find(c => c.id === addCourseId)
+      name = `🎓 ${course?.name ?? 'Курс'}`
+      toolId = addCourseId
+    }
+
+    const tempStage: FunnelStage = {
+      id: 'temp-' + Date.now(), funnel_id: funnel.id, name, stage_type: addType,
+      order_position: stages.length, tool_id: toolId, settings,
+    }
+    setStages(prev => [...prev, tempStage])
+    setStageCounts(prev => ({ ...prev, [tempStage.id]: 0 }))
+    setAddStep(null)
+
+    const { data } = await supabase.from('funnel_stages').insert({
+      funnel_id: funnel.id, name, stage_type: addType, order_position: stages.length,
+      tool_id: toolId, settings,
+    }).select().single()
+    if (data) {
+      setStages(prev => prev.map(s => s.id === tempStage.id ? data : s))
     }
   }
 
@@ -247,25 +319,107 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
 
                 {/* Add stage */}
                 <div className="relative mt-3">
-                  <button
-                    onClick={() => setShowAddMenu(!showAddMenu)}
-                    className="w-full py-3.5 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors font-medium"
-                  >
-                    + Добавить этап
-                  </button>
-                  {showAddMenu && (
+                  {!addStep && (
+                    <button
+                      onClick={() => setShowAddMenu(!showAddMenu)}
+                      className="w-full py-3.5 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors font-medium"
+                    >
+                      + Добавить этап
+                    </button>
+                  )}
+                  {showAddMenu && !addStep && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 p-2">
                       <p className="text-xs text-gray-400 px-3 py-1.5 font-medium">Выберите тип этапа:</p>
                       {stageTypes.map(st => (
-                        <button
-                          key={st.type}
-                          onClick={() => addStage(st.type)}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#F0EDFF] transition-colors text-left"
-                        >
+                        <button key={st.type} onClick={() => startAddStage(st.type)}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#F0EDFF] transition-colors text-left">
                           <span className="text-lg">{st.icon}</span>
                           <span className="text-sm font-medium text-gray-800">{st.label}</span>
                         </button>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Step 2: Select existing or configure */}
+                  {addStep === 'select' && (
+                    <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-gray-900">
+                          {stageTypeIcon[addType]} Настройка этапа: {stageTypeLabel[addType]}
+                        </h4>
+                        <button onClick={() => setAddStep(null)} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </div>
+
+                      {/* Bot / Landing: select existing or create new */}
+                      {(addType === 'bot' || addType === 'landing') && (
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">
+                            {addType === 'bot' ? 'Выберите сценарий' : 'Выберите сайт'}
+                          </label>
+                          <select value={selectedToolId} onChange={e => setSelectedToolId(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                            <option value="">Выберите...</option>
+                            {existingItems.map(item => (
+                              <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                          </select>
+                          {existingItems.length === 0 && (
+                            <p className="text-xs text-amber-600 mt-2">
+                              Нет {addType === 'bot' ? 'сценариев' : 'сайтов'}. Создайте в соответствующем разделе.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Order / Payment: select product + tariff */}
+                      {(addType === 'order' || addType === 'payment') && (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Продукт</label>
+                            <select value={addProductId} onChange={e => loadTariffsForProduct(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                              <option value="">Выберите продукт...</option>
+                              {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          </div>
+                          {addProductId && (
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Тариф (необязательно — пусто = все тарифы)</label>
+                              <select value={addTariffId} onChange={e => setAddTariffId(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                <option value="">Все тарифы</option>
+                                {tariffsList.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Learning: select course */}
+                      {addType === 'learning' && (
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Курс</label>
+                          <select value={addCourseId} onChange={e => setAddCourseId(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                            <option value="">Выберите курс...</option>
+                            {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 pt-2">
+                        <button onClick={confirmAddStage}
+                          disabled={
+                            (addType === 'bot' && !selectedToolId) ||
+                            (addType === 'landing' && !selectedToolId) ||
+                            ((addType === 'order' || addType === 'payment') && !addProductId) ||
+                            (addType === 'learning' && !addCourseId)
+                          }
+                          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                          Добавить этап
+                        </button>
+                        <button onClick={() => setAddStep(null)} className="text-sm text-gray-500 hover:text-gray-700">Отмена</button>
+                      </div>
                     </div>
                   )}
                 </div>
