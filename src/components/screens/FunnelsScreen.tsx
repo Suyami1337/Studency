@@ -24,7 +24,7 @@ const stageTypes = [
   { type: 'learning', icon: '🎓', label: 'Обучение' },
 ]
 
-function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }) {
+function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Funnel; onBack: () => void; onDeleted: (id: string) => void; onDuplicated: (newFunnel: Funnel) => void }) {
   const [activeTab, setActiveTab] = useState<'settings' | 'analytics' | 'users' | 'config'>('settings')
   const [stages, setStages] = useState<FunnelStage[]>([])
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({})
@@ -124,15 +124,24 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
     { id: 'config' as const, label: 'Настройки' },
   ]
 
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
   async function deleteFunnel() {
-    if (!confirm('Удалить воронку? Все этапы будут удалены.')) return
-    await supabase.from('funnels').delete().eq('id', funnel.id)
+    onDeleted(funnel.id) // instant remove from list
     onBack()
+    await supabase.from('funnels').delete().eq('id', funnel.id) // background
   }
 
   async function duplicateFunnel() {
+    const tempFunnel: Funnel = {
+      id: 'temp-' + Date.now(), name: `${funnel.name} (копия)`,
+      project_id: funnel.project_id, status: 'draft', created_at: new Date().toISOString(),
+    }
+    onDuplicated(tempFunnel) // instant add to list
+    onBack()
+    // Background: create in DB
     const { data: newFunnel } = await supabase.from('funnels').insert({
-      project_id: funnel.project_id, name: `${funnel.name} (копия)`, status: 'draft',
+      project_id: funnel.project_id, name: tempFunnel.name, status: 'draft',
     }).select().single()
     if (newFunnel) {
       for (const stage of stages) {
@@ -140,7 +149,6 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
           funnel_id: newFunnel.id, name: stage.name, stage_type: stage.stage_type, order_position: stage.order_position,
         })
       }
-      onBack()
     }
   }
 
@@ -301,7 +309,14 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
                 <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-gray-700">Удалить воронку и все этапы</p>
-                  <button onClick={deleteFunnel} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+                  {!confirmDelete ? (
+                    <button onClick={() => setConfirmDelete(true)} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button onClick={deleteFunnel} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Да, удалить</button>
+                      <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -541,7 +556,10 @@ export default function FunnelsScreen() {
   }
 
   if (selectedFunnel) {
-    return <FunnelDetail funnel={selectedFunnel} onBack={clearSelection} />
+    return <FunnelDetail funnel={selectedFunnel} onBack={clearSelection}
+      onDeleted={(id) => setFunnels(prev => prev.filter(f => f.id !== id))}
+      onDuplicated={(newF) => setFunnels(prev => [...prev, newF])}
+    />
   }
 
   return (
