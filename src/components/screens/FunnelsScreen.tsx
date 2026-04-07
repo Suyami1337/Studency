@@ -224,6 +224,26 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     setStageCounts(prev => { const n = { ...prev }; delete n[stageId]; return n })
   }
 
+  async function moveStage(stageId: string, direction: 'up' | 'down') {
+    const idx = stages.findIndex(s => s.id === stageId)
+    if (idx < 0) return
+    if (direction === 'up' && idx === 0) return
+    if (direction === 'down' && idx === stages.length - 1) return
+
+    const newStages = [...stages]
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1
+    ;[newStages[idx], newStages[swapIdx]] = [newStages[swapIdx], newStages[idx]]
+    // Update order_position
+    const updated = newStages.map((s, i) => ({ ...s, order_position: i }))
+    setStages(updated)
+
+    // Save to DB in background
+    await Promise.all([
+      supabase.from('funnel_stages').update({ order_position: swapIdx }).eq('id', stages[idx].id),
+      supabase.from('funnel_stages').update({ order_position: idx }).eq('id', stages[swapIdx].id),
+    ])
+  }
+
   async function loadCustomersForStage(stageId: string) {
     setLoadingCustomers(true)
     const { data } = await supabase
@@ -381,10 +401,18 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <span className="text-sm font-bold text-[#6A55F8]">{count}</span>
                             <span className="text-xs text-gray-400">чел.</span>
                           </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">{isEditing ? '▲' : '✏'}</span>
+                          <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {idx > 0 && (
+                              <button onClick={e => { e.stopPropagation(); moveStage(stage.id, 'up') }}
+                                className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:bg-gray-200 hover:text-gray-700 text-xs" title="Вверх">↑</button>
+                            )}
+                            {idx < stages.length - 1 && (
+                              <button onClick={e => { e.stopPropagation(); moveStage(stage.id, 'down') }}
+                                className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:bg-gray-200 hover:text-gray-700 text-xs" title="Вниз">↓</button>
+                            )}
+                            <span className="text-xs text-[#6A55F8] ml-1">{isEditing ? '▲' : '✏'}</span>
                             <button onClick={e => { e.stopPropagation(); removeStage(stage.id) }}
-                              className="text-xs text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
+                              className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-red-500 text-xs" title="Удалить">✕</button>
                           </div>
                         </div>
                         {/* Inline edit: renders between this stage and the next */}
