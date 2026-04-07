@@ -290,23 +290,25 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     await supabase.from('funnels').delete().eq('id', funnel.id) // background
   }
 
+  const [duplicating, setDuplicating] = useState(false)
+
   async function duplicateFunnel() {
+    if (duplicating) return
+    setDuplicating(true)
     const tempFunnel: Funnel = {
       id: 'temp-' + Date.now(), name: `${funnel.name} (копия)`,
       project_id: funnel.project_id, status: 'draft', created_at: new Date().toISOString(),
     }
-    onDuplicated(tempFunnel) // instant add to list
+    onDuplicated(tempFunnel)
     onBack()
-    // Background: create in DB
+    // Background
     const { data: newFunnel } = await supabase.from('funnels').insert({
       project_id: funnel.project_id, name: tempFunnel.name, status: 'draft',
     }).select().single()
-    if (newFunnel) {
-      for (const stage of stages) {
-        await supabase.from('funnel_stages').insert({
-          funnel_id: newFunnel.id, name: stage.name, stage_type: stage.stage_type, order_position: stage.order_position,
-        })
-      }
+    if (newFunnel && stages.length > 0) {
+      await supabase.from('funnel_stages').insert(
+        stages.map(s => ({ funnel_id: newFunnel.id, name: s.name, stage_type: s.stage_type, order_position: s.order_position }))
+      )
     }
   }
 
@@ -659,8 +661,8 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
               <div className="bg-white rounded-xl border border-gray-100 p-5">
                 <h3 className="text-sm font-semibold text-gray-900 mb-2">Дублировать воронку</h3>
                 <p className="text-xs text-gray-500 mb-3">Создаст копию воронки со всеми этапами.</p>
-                <button onClick={duplicateFunnel} className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF]">
-                  📋 Дублировать воронку
+                <button onClick={duplicateFunnel} disabled={duplicating} className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF] disabled:opacity-50">
+                  {duplicating ? 'Дублирую...' : '📋 Дублировать воронку'}
                 </button>
               </div>
 
