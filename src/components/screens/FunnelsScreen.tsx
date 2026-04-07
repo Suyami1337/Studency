@@ -83,6 +83,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null)
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [addStep, setAddStep] = useState<'type' | 'select' | null>(null)
+  const [editingStageId, setEditingStageId] = useState<string | null>(null)
   const [addType, setAddType] = useState('')
   const [existingItems, setExistingItems] = useState<{id: string; name: string}[]>([])
   const [selectedToolId, setSelectedToolId] = useState('')
@@ -349,36 +350,101 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                     const prevCount = idx === 0 ? count : (stageCounts[stages[idx - 1].id] ?? 0)
                     const convPct = idx === 0 ? null : (prevCount > 0 ? Math.round((count / prevCount) * 100) : 0)
 
+                    const isEditing = editingStageId === stage.id
+
                     return (
-                      <div key={stage.id} onClick={() => {
-                        startAddStage(stage.stage_type)
-                        if (stage.tool_id) setSelectedToolId(stage.tool_id)
-                      }} className="flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors cursor-pointer group">
-                        <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-sm font-bold text-[#6A55F8] flex-shrink-0">
-                          {idx + 1}
+                      <div key={stage.id}>
+                        <div onClick={() => {
+                          if (isEditing) { setEditingStageId(null) } else {
+                            setEditingStageId(stage.id)
+                            startAddStage(stage.stage_type)
+                            if (stage.tool_id) setTimeout(() => setSelectedToolId(stage.tool_id!), 100)
+                          }
+                        }} className={`flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors cursor-pointer group ${isEditing ? 'bg-[#F8F7FF] border-[#6A55F8]/20' : ''}`}>
+                          <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-sm font-bold text-[#6A55F8] flex-shrink-0">
+                            {idx + 1}
+                          </div>
+                          <div className="text-lg flex-shrink-0">{stageTypeIcon[stage.stage_type] ?? '📌'}</div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-gray-900">{cleanStageName(stage.name)}</p>
+                            <p className="text-xs text-gray-400">{stageTypeLabel[stage.stage_type] ?? stage.stage_type}</p>
+                          </div>
+                          <div className="flex items-center gap-4 flex-shrink-0">
+                            {convPct !== null && (
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                convPct >= 70 ? 'bg-green-100 text-green-700' : convPct >= 40 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600'
+                              }`}>
+                                {convPct}%
+                              </span>
+                            )}
+                            <span className="text-sm font-bold text-[#6A55F8]">{count}</span>
+                            <span className="text-xs text-gray-400">чел.</span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">{isEditing ? '▲' : '✏'}</span>
+                            <button onClick={e => { e.stopPropagation(); removeStage(stage.id) }}
+                              className="text-xs text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
+                          </div>
                         </div>
-                        <div className="text-lg flex-shrink-0">{stageTypeIcon[stage.stage_type] ?? '📌'}</div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-900">{cleanStageName(stage.name)}</p>
-                          <p className="text-xs text-gray-400">{stageTypeLabel[stage.stage_type] ?? stage.stage_type}</p>
-                        </div>
-                        <div className="flex items-center gap-4 flex-shrink-0">
-                          {convPct !== null && (
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                              convPct >= 70 ? 'bg-green-100 text-green-700' : convPct >= 40 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-600'
-                            }`}>
-                              {convPct}%
-                            </span>
-                          )}
-                          <span className="text-sm font-bold text-[#6A55F8]">{count}</span>
-                          <span className="text-xs text-gray-400">чел.</span>
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                          <button
-                            onClick={() => removeStage(stage.id)}
-                            className="text-xs text-gray-400 hover:text-red-500 px-1"
-                          >✕</button>
-                        </div>
+                        {/* Inline edit: renders between this stage and the next */}
+                        {isEditing && addStep === 'select' && (
+                          <div className="px-5 py-4 bg-[#F8F7FF] border-b border-[#6A55F8]/20" onClick={e => e.stopPropagation()}>
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <h4 className="text-xs font-semibold text-[#6A55F8]">Редактирование: {stageTypeLabel[addType]}</h4>
+                                <button onClick={() => { setEditingStageId(null); setAddStep(null) }} className="text-xs text-gray-400">✕</button>
+                              </div>
+                              {addType === 'bot' && (
+                                <SelectOrCreate placeholder="Название сценария" onSubmit={async (name) => {
+                                  const { data } = await supabase.from('chatbot_scenarios').insert({ project_id: funnel.project_id, name }).select().single()
+                                  if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); loadBotMessages(data.id) }
+                                }}>
+                                  <select value={selectedToolId} onChange={e => loadBotMessages(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                    <option value="">Выберите сценарий...</option>
+                                    {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                  </select>
+                                </SelectOrCreate>
+                              )}
+                              {addType === 'landing' && (
+                                <SelectOrCreate placeholder="Название сайта" onSubmit={async (name) => {
+                                  const { data } = await supabase.from('landings').insert({ project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-') }).select().single()
+                                  if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); setSelectedToolId(data.id) }
+                                }}>
+                                  <select value={selectedToolId} onChange={e => setSelectedToolId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                    <option value="">Выберите сайт...</option>
+                                    {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                  </select>
+                                </SelectOrCreate>
+                              )}
+                              {(addType === 'order' || addType === 'payment') && (
+                                <SelectOrCreate placeholder="Название продукта" onSubmit={async (name) => {
+                                  const { data } = await supabase.from('products').insert({ project_id: funnel.project_id, name }).select().single()
+                                  if (data) { setProductsList(prev => [...prev, { id: data.id, name: data.name }]); loadTariffsForProduct(data.id) }
+                                }}>
+                                  <select value={addProductId} onChange={e => loadTariffsForProduct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                    <option value="">Выберите продукт...</option>
+                                    {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                  </select>
+                                </SelectOrCreate>
+                              )}
+                              {addType === 'learning' && (
+                                <SelectOrCreate placeholder="Название курса" onSubmit={async (name) => {
+                                  const { data } = await supabase.from('courses').insert({ project_id: funnel.project_id, name }).select().single()
+                                  if (data) { setCoursesList(prev => [...prev, { id: data.id, name: data.name }]); setAddCourseId(data.id) }
+                                }}>
+                                  <select value={addCourseId} onChange={e => setAddCourseId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                    <option value="">Выберите курс...</option>
+                                    {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                  </select>
+                                </SelectOrCreate>
+                              )}
+                              <button onClick={() => { confirmAddStage(); setEditingStageId(null) }}
+                                className="bg-[#6A55F8] text-white px-3 py-1.5 rounded-lg text-xs font-medium">
+                                Сохранить
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -407,8 +473,8 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                     </div>
                   )}
 
-                  {/* Step 2: Select existing or configure */}
-                  {addStep === 'select' && (
+                  {/* Step 2: Select existing or configure — only for NEW stages (not editing) */}
+                  {addStep === 'select' && !editingStageId && (
                     <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-semibold text-gray-900">
