@@ -10,8 +10,8 @@ type Funnel = { id: string; name: string; project_id: string; status: string; cr
 type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number; tool_id: string | null; settings: Record<string, unknown> }
 type Customer = { id: string; name: string; email: string | null; telegram: string | null }
 
-function InlineCreateBtn({ placeholder, onSubmit }: { placeholder: string; onSubmit: (name: string) => Promise<void> }) {
-  const [open, setOpen] = useState(false)
+function SelectOrCreate({ children, placeholder, onSubmit }: { children: React.ReactNode; placeholder: string; onSubmit: (name: string) => Promise<void> }) {
+  const [mode, setMode] = useState<'select' | 'create'>('select')
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -20,31 +20,39 @@ function InlineCreateBtn({ placeholder, onSubmit }: { placeholder: string; onSub
     setSaving(true)
     await onSubmit(name.trim())
     setName('')
-    setOpen(false)
+    setMode('select')
     setSaving(false)
   }
 
-  if (!open) {
+  if (mode === 'create') {
     return (
-      <button onClick={() => setOpen(true)} className="mt-2 text-xs text-[#6A55F8] font-medium hover:underline flex items-center gap-1">
-        + Или создать новый
-      </button>
+      <div className="space-y-2">
+        <div className="bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/10 space-y-2">
+          <input type="text" value={name} onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCreate()}
+            placeholder={placeholder} autoFocus
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] bg-white" />
+          <div className="flex gap-2">
+            <button onClick={handleCreate} disabled={saving || !name.trim()}
+              className="bg-[#6A55F8] text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">
+              {saving ? 'Создаю...' : 'Создать'}
+            </button>
+            <button onClick={() => { setMode('select'); setName('') }} className="text-xs text-gray-500">Отмена</button>
+          </div>
+        </div>
+        <button onClick={() => setMode('select')} className="text-xs text-[#6A55F8] font-medium hover:underline">
+          ← Выбрать из имеющихся
+        </button>
+      </div>
     )
   }
 
   return (
-    <div className="mt-2 bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/10 space-y-2">
-      <input type="text" value={name} onChange={e => setName(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && handleCreate()}
-        placeholder={placeholder} autoFocus
-        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] bg-white" />
-      <div className="flex gap-2">
-        <button onClick={handleCreate} disabled={saving || !name.trim()}
-          className="bg-[#6A55F8] text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">
-          {saving ? 'Создаю...' : 'Создать'}
-        </button>
-        <button onClick={() => { setOpen(false); setName('') }} className="text-xs text-gray-500">Отмена</button>
-      </div>
+    <div className="space-y-2">
+      {children}
+      <button onClick={() => setMode('create')} className="text-xs text-[#6A55F8] font-medium hover:underline">
+        + Или создать новый
+      </button>
     </div>
   )
 }
@@ -338,7 +346,10 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                     const convPct = idx === 0 ? null : (prevCount > 0 ? Math.round((count / prevCount) * 100) : 0)
 
                     return (
-                      <div key={stage.id} className="flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors cursor-pointer group">
+                      <div key={stage.id} onClick={() => {
+                        startAddStage(stage.stage_type)
+                        if (stage.tool_id) setSelectedToolId(stage.tool_id)
+                      }} className="flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50/50 transition-colors cursor-pointer group">
                         <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-sm font-bold text-[#6A55F8] flex-shrink-0">
                           {idx + 1}
                         </div>
@@ -405,18 +416,19 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                       {/* Bot: select scenario + message */}
                       {addType === 'bot' && (
                         <div className="space-y-3">
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-1">Сценарий чат-бота</label>
-                            <select value={selectedToolId} onChange={e => loadBotMessages(e.target.value)}
-                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                              <option value="">Выберите сценарий...</option>
-                              {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                            </select>
-                            <InlineCreateBtn placeholder="Название сценария" onSubmit={async (name) => {
-                              const { data } = await supabase.from('chatbot_scenarios').insert({ project_id: funnel.project_id, name }).select().single()
-                              if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); loadBotMessages(data.id) }
-                            }} />
-                          </div>
+                          <SelectOrCreate placeholder="Название сценария" onSubmit={async (name) => {
+                            const { data } = await supabase.from('chatbot_scenarios').insert({ project_id: funnel.project_id, name }).select().single()
+                            if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); loadBotMessages(data.id) }
+                          }}>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Сценарий чат-бота</label>
+                              <select value={selectedToolId} onChange={e => loadBotMessages(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                <option value="">Выберите сценарий...</option>
+                                {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                              </select>
+                            </div>
+                          </SelectOrCreate>
                           {selectedToolId && (
                             <div>
                               <label className="block text-xs text-gray-500 mb-1">Конкретный этап/сообщение</label>
@@ -439,35 +451,37 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
 
                       {/* Landing: select existing or create */}
                       {addType === 'landing' && (
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Сайт/Лендинг</label>
-                          <select value={selectedToolId} onChange={e => setSelectedToolId(e.target.value)}
-                            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                            <option value="">Выберите сайт...</option>
-                            {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                          </select>
-                          <InlineCreateBtn placeholder="Название сайта" onSubmit={async (name) => {
-                            const { data } = await supabase.from('landings').insert({ project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-') }).select().single()
-                            if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); setSelectedToolId(data.id) }
-                          }} />
-                        </div>
+                        <SelectOrCreate placeholder="Название сайта" onSubmit={async (name) => {
+                          const { data } = await supabase.from('landings').insert({ project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-') }).select().single()
+                          if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); setSelectedToolId(data.id) }
+                        }}>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Сайт/Лендинг</label>
+                            <select value={selectedToolId} onChange={e => setSelectedToolId(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                              <option value="">Выберите сайт...</option>
+                              {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                            </select>
+                          </div>
+                        </SelectOrCreate>
                       )}
 
                       {/* Order / Payment: select product + tariff */}
                       {(addType === 'order' || addType === 'payment') && (
                         <div className="space-y-3">
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-1">Продукт</label>
-                            <select value={addProductId} onChange={e => loadTariffsForProduct(e.target.value)}
-                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                              <option value="">Выберите продукт...</option>
-                              {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                            </select>
-                            <InlineCreateBtn placeholder="Название продукта" onSubmit={async (name) => {
-                              const { data } = await supabase.from('products').insert({ project_id: funnel.project_id, name }).select().single()
-                              if (data) { setProductsList(prev => [...prev, { id: data.id, name: data.name }]); loadTariffsForProduct(data.id) }
-                            }} />
-                          </div>
+                          <SelectOrCreate placeholder="Название продукта" onSubmit={async (name) => {
+                            const { data } = await supabase.from('products').insert({ project_id: funnel.project_id, name }).select().single()
+                            if (data) { setProductsList(prev => [...prev, { id: data.id, name: data.name }]); loadTariffsForProduct(data.id) }
+                          }}>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Продукт</label>
+                              <select value={addProductId} onChange={e => loadTariffsForProduct(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                <option value="">Выберите продукт...</option>
+                                {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                            </div>
+                          </SelectOrCreate>
                           {addProductId && (
                             <div>
                               <label className="block text-xs text-gray-500 mb-1">Тариф (необязательно — пусто = все тарифы)</label>
@@ -483,18 +497,19 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
 
                       {/* Learning: select course */}
                       {addType === 'learning' && (
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">Курс</label>
-                          <select value={addCourseId} onChange={e => setAddCourseId(e.target.value)}
-                            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                            <option value="">Выберите курс...</option>
-                            {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                          </select>
-                          <InlineCreateBtn placeholder="Название курса" onSubmit={async (name) => {
-                            const { data } = await supabase.from('courses').insert({ project_id: funnel.project_id, name }).select().single()
-                            if (data) { setCoursesList(prev => [...prev, { id: data.id, name: data.name }]); setAddCourseId(data.id) }
-                          }} />
-                        </div>
+                        <SelectOrCreate placeholder="Название курса" onSubmit={async (name) => {
+                          const { data } = await supabase.from('courses').insert({ project_id: funnel.project_id, name }).select().single()
+                          if (data) { setCoursesList(prev => [...prev, { id: data.id, name: data.name }]); setAddCourseId(data.id) }
+                        }}>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Курс</label>
+                            <select value={addCourseId} onChange={e => setAddCourseId(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                              <option value="">Выберите курс...</option>
+                              {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                          </div>
+                        </SelectOrCreate>
                       )}
 
                       <div className="flex gap-2 pt-2">
