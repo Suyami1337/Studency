@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 type Scenario = { id: string; name: string; status: string; telegram_bot_id: string | null; created_at: string }
 type TelegramBot = { id: string; name: string; bot_username: string }
@@ -340,7 +341,7 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
       {activeTab === 'scenario' && (
         <div className="space-y-3">
           {loading ? (
-            <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+            <SkeletonList count={3} />
           ) : messages.length === 0 ? (
             <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
               <div className="text-3xl mb-3">💬</div>
@@ -562,7 +563,7 @@ export default function ChatbotsPage() {
       )}
 
       {loading ? (
-        <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : scenarios.length === 0 && !creating ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">💬</div>

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 const supabase = createClient()
 
@@ -174,7 +175,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : (
         <div className="space-y-2">
           {lessons.map((lesson, idx) => (
@@ -416,7 +417,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
       {/* TAB: Программа */}
       {tab === 'program' && (
         <div className="space-y-3">
-          {loading ? <div className="text-center py-8 text-gray-400 text-sm">Загрузка...</div> : (
+          {loading ? <SkeletonList count={3} /> : (
             <>
               {modules.map((mod, idx) => (
                 <div key={mod.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center justify-between hover:border-[#6A55F8]/30 transition-colors cursor-pointer group"
@@ -661,7 +662,7 @@ export default function LearningPage() {
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : courses.length === 0 && !adding ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">📚</div>

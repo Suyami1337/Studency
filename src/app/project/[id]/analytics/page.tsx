@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 const supabase = createClient()
 
@@ -146,8 +147,8 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-[#6A55F8] border-t-transparent rounded-full animate-spin" />
+      <div className="p-6">
+        <SkeletonList count={3} />
       </div>
     )
   }

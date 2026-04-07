@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 const supabase = createClient()
 
@@ -464,7 +465,7 @@ function LandingDetail({
           </div>
 
           {loadingVisits ? (
-            <div className="py-10 text-center text-sm text-gray-400">Загрузка...</div>
+            <SkeletonList count={3} />
           ) : visits.length === 0 ? (
             <div className="py-14 text-center">
               <div className="text-4xl mb-3">👤</div>

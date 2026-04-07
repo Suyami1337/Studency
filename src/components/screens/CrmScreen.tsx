@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 const tagColors = ['bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-blue-100 text-blue-700', 'bg-green-100 text-green-700']
 
@@ -145,7 +146,7 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : (
         <>
           {/* Kanban */}
@@ -431,7 +432,7 @@ export default function CrmScreen() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : boards.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">📊</div>

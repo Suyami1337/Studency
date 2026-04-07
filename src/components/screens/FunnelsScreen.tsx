@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 type Funnel = { id: string; name: string; project_id: string; status: string; created_at: string }
 type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number }
@@ -187,7 +188,7 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : (
         <>
           {/* TAB: Настройка воронки */}
@@ -419,7 +420,7 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
                   {/* User list */}
                   {selectedStageId ? (
                     loadingCustomers ? (
-                      <div className="flex items-center justify-center py-8 text-gray-400 text-sm">Загрузка...</div>
+                      <SkeletonList count={3} />
                     ) : stageCustomers.length === 0 ? (
                       <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-400 text-sm">
                         На этом этапе нет клиентов
@@ -590,7 +591,7 @@ export default function FunnelsScreen() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-16 text-gray-400 text-sm">Загрузка...</div>
+        <SkeletonList count={3} />
       ) : funnels.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">🔀</div>

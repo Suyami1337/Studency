@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { SkeletonList } from '@/components/ui/Skeleton'
 
 type Order = {
   id: string
@@ -625,9 +626,7 @@ export default function OrdersPage() {
 
       {/* Table */}
       {loading ? (
-        <div className="flex items-center justify-center h-40">
-          <div className="w-8 h-8 border-4 border-[#6A55F8] border-t-transparent rounded-full animate-spin" />
-        </div>
+        <SkeletonList count={3} />
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-3">🧾</div>
