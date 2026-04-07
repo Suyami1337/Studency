@@ -43,6 +43,8 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const [tariffsList, setTariffsList] = useState<{id: string; name: string}[]>([])
   const [coursesList, setCoursesList] = useState<{id: string; name: string}[]>([])
   const [botMessagesList, setBotMessagesList] = useState<{id: string; text: string; is_start: boolean; trigger_word: string | null}[]>([])
+  const [inlineCreateName, setInlineCreateName] = useState('')
+  const [inlineCreating, setInlineCreating] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
   const [showAI, setShowAI] = useState(false)
@@ -111,6 +113,49 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     setAddBotMessageId('')
     const { data } = await supabase.from('scenario_messages').select('id, text, is_start, trigger_word').eq('scenario_id', scenarioId).order('order_position')
     setBotMessagesList((data ?? []) as {id: string; text: string; is_start: boolean; trigger_word: string | null}[])
+  }
+
+  async function inlineCreateEntity() {
+    if (!inlineCreateName.trim()) return
+    setInlineCreating(true)
+    const name = inlineCreateName.trim()
+
+    if (addType === 'bot') {
+      const { data } = await supabase.from('chatbot_scenarios').insert({
+        project_id: funnel.project_id, name,
+      }).select().single()
+      if (data) {
+        setExistingItems(prev => [...prev, { id: data.id, name: data.name }])
+        loadBotMessages(data.id)
+      }
+    } else if (addType === 'landing') {
+      const { data } = await supabase.from('landings').insert({
+        project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-'),
+      }).select().single()
+      if (data) {
+        setExistingItems(prev => [...prev, { id: data.id, name: data.name }])
+        setSelectedToolId(data.id)
+      }
+    } else if (addType === 'order' || addType === 'payment') {
+      const { data } = await supabase.from('products').insert({
+        project_id: funnel.project_id, name,
+      }).select().single()
+      if (data) {
+        setProductsList(prev => [...prev, { id: data.id, name: data.name }])
+        loadTariffsForProduct(data.id)
+      }
+    } else if (addType === 'learning') {
+      const { data } = await supabase.from('courses').insert({
+        project_id: funnel.project_id, name,
+      }).select().single()
+      if (data) {
+        setCoursesList(prev => [...prev, { id: data.id, name: data.name }])
+        setAddCourseId(data.id)
+      }
+    }
+
+    setInlineCreateName('')
+    setInlineCreating(false)
   }
 
   async function loadTariffsForProduct(productId: string) {
@@ -373,9 +418,15 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               <option value="">Выберите сценарий...</option>
                               {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                             </select>
-                            <a href={`/project/${params.id}/chatbots`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
-                              + Создать новый сценарий →
-                            </a>
+                            <div className="flex items-center gap-2 mt-2">
+                              <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
+                                placeholder="Название нового сценария" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                              <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
+                                className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
+                                {inlineCreating ? '...' : '+ Создать'}
+                              </button>
+                            </div>
                           </div>
                           {selectedToolId && botMessagesList.length > 0 && (
                             <div>
@@ -403,9 +454,15 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <option value="">Выберите сайт...</option>
                             {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                           </select>
-                          <a href={`/project/${params.id}/sites`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
-                            + Создать новый сайт →
-                          </a>
+                          <div className="flex items-center gap-2 mt-2">
+                            <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
+                              placeholder="Название нового сайта" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                            <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
+                              className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
+                              {inlineCreating ? '...' : '+ Создать'}
+                            </button>
+                          </div>
                         </div>
                       )}
 
@@ -419,9 +476,15 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               <option value="">Выберите продукт...</option>
                               {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
-                            <a href={`/project/${params.id}/products`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
-                              + Создать новый продукт →
-                            </a>
+                            <div className="flex items-center gap-2 mt-2">
+                              <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
+                                placeholder="Название нового продукта" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                              <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
+                                className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
+                                {inlineCreating ? '...' : '+ Создать'}
+                              </button>
+                            </div>
                           </div>
                           {addProductId && (
                             <div>
@@ -445,9 +508,15 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <option value="">Выберите курс...</option>
                             {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
-                          <a href={`/project/${params.id}/learning`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
-                            + Создать новый курс →
-                          </a>
+                          <div className="flex items-center gap-2 mt-2">
+                            <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
+                              onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
+                              placeholder="Название нового курса" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                            <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
+                              className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
+                              {inlineCreating ? '...' : '+ Создать'}
+                            </button>
+                          </div>
                         </div>
                       )}
 
