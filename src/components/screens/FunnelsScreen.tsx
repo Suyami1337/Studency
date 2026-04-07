@@ -10,6 +10,45 @@ type Funnel = { id: string; name: string; project_id: string; status: string; cr
 type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number; tool_id: string | null; settings: Record<string, unknown> }
 type Customer = { id: string; name: string; email: string | null; telegram: string | null }
 
+function InlineCreateBtn({ placeholder, onSubmit }: { placeholder: string; onSubmit: (name: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function handleCreate() {
+    if (!name.trim()) return
+    setSaving(true)
+    await onSubmit(name.trim())
+    setName('')
+    setOpen(false)
+    setSaving(false)
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="mt-2 text-xs text-[#6A55F8] font-medium hover:underline flex items-center gap-1">
+        + Или создать новый
+      </button>
+    )
+  }
+
+  return (
+    <div className="mt-2 bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/10 space-y-2">
+      <input type="text" value={name} onChange={e => setName(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && handleCreate()}
+        placeholder={placeholder} autoFocus
+        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] bg-white" />
+      <div className="flex gap-2">
+        <button onClick={handleCreate} disabled={saving || !name.trim()}
+          className="bg-[#6A55F8] text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">
+          {saving ? 'Создаю...' : 'Создать'}
+        </button>
+        <button onClick={() => { setOpen(false); setName('') }} className="text-xs text-gray-500">Отмена</button>
+      </div>
+    </div>
+  )
+}
+
 const stageTypeIcon: Record<string, string> = {
   bot: '🤖', landing: '🌐', order: '📋', payment: '💳', learning: '🎓',
 }
@@ -43,8 +82,6 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const [tariffsList, setTariffsList] = useState<{id: string; name: string}[]>([])
   const [coursesList, setCoursesList] = useState<{id: string; name: string}[]>([])
   const [botMessagesList, setBotMessagesList] = useState<{id: string; text: string; is_start: boolean; trigger_word: string | null}[]>([])
-  const [inlineCreateName, setInlineCreateName] = useState('')
-  const [inlineCreating, setInlineCreating] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
   const [showAI, setShowAI] = useState(false)
@@ -113,49 +150,6 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     setAddBotMessageId('')
     const { data } = await supabase.from('scenario_messages').select('id, text, is_start, trigger_word').eq('scenario_id', scenarioId).order('order_position')
     setBotMessagesList((data ?? []) as {id: string; text: string; is_start: boolean; trigger_word: string | null}[])
-  }
-
-  async function inlineCreateEntity() {
-    if (!inlineCreateName.trim()) return
-    setInlineCreating(true)
-    const name = inlineCreateName.trim()
-
-    if (addType === 'bot') {
-      const { data } = await supabase.from('chatbot_scenarios').insert({
-        project_id: funnel.project_id, name,
-      }).select().single()
-      if (data) {
-        setExistingItems(prev => [...prev, { id: data.id, name: data.name }])
-        loadBotMessages(data.id)
-      }
-    } else if (addType === 'landing') {
-      const { data } = await supabase.from('landings').insert({
-        project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-'),
-      }).select().single()
-      if (data) {
-        setExistingItems(prev => [...prev, { id: data.id, name: data.name }])
-        setSelectedToolId(data.id)
-      }
-    } else if (addType === 'order' || addType === 'payment') {
-      const { data } = await supabase.from('products').insert({
-        project_id: funnel.project_id, name,
-      }).select().single()
-      if (data) {
-        setProductsList(prev => [...prev, { id: data.id, name: data.name }])
-        loadTariffsForProduct(data.id)
-      }
-    } else if (addType === 'learning') {
-      const { data } = await supabase.from('courses').insert({
-        project_id: funnel.project_id, name,
-      }).select().single()
-      if (data) {
-        setCoursesList(prev => [...prev, { id: data.id, name: data.name }])
-        setAddCourseId(data.id)
-      }
-    }
-
-    setInlineCreateName('')
-    setInlineCreating(false)
   }
 
   async function loadTariffsForProduct(productId: string) {
@@ -418,15 +412,10 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               <option value="">Выберите сценарий...</option>
                               {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                             </select>
-                            <div className="flex items-center gap-2 mt-2">
-                              <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
-                                placeholder="Название нового сценария" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
-                              <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
-                                className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
-                                {inlineCreating ? '...' : '+ Создать'}
-                              </button>
-                            </div>
+                            <InlineCreateBtn placeholder="Название сценария" onSubmit={async (name) => {
+                              const { data } = await supabase.from('chatbot_scenarios').insert({ project_id: funnel.project_id, name }).select().single()
+                              if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); loadBotMessages(data.id) }
+                            }} />
                           </div>
                           {selectedToolId && botMessagesList.length > 0 && (
                             <div>
@@ -454,15 +443,10 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <option value="">Выберите сайт...</option>
                             {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                           </select>
-                          <div className="flex items-center gap-2 mt-2">
-                            <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
-                              placeholder="Название нового сайта" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
-                            <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
-                              className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
-                              {inlineCreating ? '...' : '+ Создать'}
-                            </button>
-                          </div>
+                          <InlineCreateBtn placeholder="Название сайта" onSubmit={async (name) => {
+                            const { data } = await supabase.from('landings').insert({ project_id: funnel.project_id, name, slug: name.toLowerCase().replace(/\s+/g, '-') }).select().single()
+                            if (data) { setExistingItems(prev => [...prev, { id: data.id, name: data.name }]); setSelectedToolId(data.id) }
+                          }} />
                         </div>
                       )}
 
@@ -476,15 +460,10 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               <option value="">Выберите продукт...</option>
                               {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
-                            <div className="flex items-center gap-2 mt-2">
-                              <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
-                                placeholder="Название нового продукта" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
-                              <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
-                                className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
-                                {inlineCreating ? '...' : '+ Создать'}
-                              </button>
-                            </div>
+                            <InlineCreateBtn placeholder="Название продукта" onSubmit={async (name) => {
+                              const { data } = await supabase.from('products').insert({ project_id: funnel.project_id, name }).select().single()
+                              if (data) { setProductsList(prev => [...prev, { id: data.id, name: data.name }]); loadTariffsForProduct(data.id) }
+                            }} />
                           </div>
                           {addProductId && (
                             <div>
@@ -508,15 +487,10 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <option value="">Выберите курс...</option>
                             {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
-                          <div className="flex items-center gap-2 mt-2">
-                            <input type="text" value={inlineCreateName} onChange={e => setInlineCreateName(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && inlineCreateEntity()}
-                              placeholder="Название нового курса" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
-                            <button onClick={inlineCreateEntity} disabled={inlineCreating || !inlineCreateName.trim()}
-                              className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded px-2 py-1.5 hover:bg-[#F0EDFF] disabled:opacity-50">
-                              {inlineCreating ? '...' : '+ Создать'}
-                            </button>
-                          </div>
+                          <InlineCreateBtn placeholder="Название курса" onSubmit={async (name) => {
+                            const { data } = await supabase.from('courses').insert({ project_id: funnel.project_id, name }).select().single()
+                            if (data) { setCoursesList(prev => [...prev, { id: data.id, name: data.name }]); setAddCourseId(data.id) }
+                          }} />
                         </div>
                       )}
 
