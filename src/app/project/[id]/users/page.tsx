@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 const supabase = createClient()
@@ -389,13 +389,28 @@ function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: str
 
 export default function UsersPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [selected, setSelected] = useState<Customer | null>(null)
+
+  const openCustomerId = searchParams.get('open')
+  const selected = openCustomerId ? customers.find(c => c.id === openCustomerId) ?? null : null
+
+  function selectCustomer(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function loadCustomers() {
     setLoading(true)
@@ -413,7 +428,6 @@ export default function UsersPage() {
 
   function updateCustomer(updated: Customer) {
     setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c))
-    setSelected(updated)
   }
 
   const filtered = customers.filter(c => {
@@ -427,7 +441,7 @@ export default function UsersPage() {
   if (selected) {
     return (
       <div className="p-6 max-w-3xl mx-auto">
-        <CustomerDetail customer={selected} onBack={() => setSelected(null)} onUpdated={updateCustomer} />
+        <CustomerDetail customer={selected} onBack={clearSelection} onUpdated={updateCustomer} />
       </div>
     )
   }
@@ -502,7 +516,7 @@ export default function UsersPage() {
               {filtered.map(c => (
                 <tr
                   key={c.id}
-                  onClick={() => setSelected(c)}
+                  onClick={() => selectCustomer(c.id)}
                   className="border-b border-gray-50 last:border-0 hover:bg-[#F0EDFF] cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-3">

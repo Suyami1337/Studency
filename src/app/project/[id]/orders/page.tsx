@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 type Order = {
@@ -465,6 +465,8 @@ function CreateOrderForm({
 
 export default function OrdersPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
   const supabase = createClient()
 
@@ -476,7 +478,20 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [showCreate, setShowCreate] = useState(false)
-  const [selected, setSelected] = useState<Order | null>(null)
+
+  const openOrderId = searchParams.get('open')
+  const selected = openOrderId ? orders.find(o => o.id === openOrderId) ?? null : null
+
+  function selectOrder(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function loadAll() {
     setLoading(true)
@@ -502,7 +517,6 @@ export default function OrdersPage() {
 
   function updateOrder(updated: Order) {
     setOrders(prev => prev.map(o => o.id === updated.id ? updated : o))
-    setSelected(updated)
   }
 
   const filtered = orders.filter(o => {
@@ -515,7 +529,7 @@ export default function OrdersPage() {
   if (selected) {
     return (
       <div className="p-6 max-w-3xl mx-auto">
-        <OrderDetail order={selected} onBack={() => setSelected(null)} onUpdated={updateOrder} />
+        <OrderDetail order={selected} onBack={clearSelection} onUpdated={updateOrder} />
       </div>
     )
   }
@@ -617,7 +631,7 @@ export default function OrdersPage() {
               {filtered.map((o, i) => (
                 <tr
                   key={o.id}
-                  onClick={() => setSelected(o)}
+                  onClick={() => selectOrder(o.id)}
                   className="border-b border-gray-50 last:border-0 hover:bg-[#F0EDFF] cursor-pointer transition-colors"
                 >
                   <td className="px-4 py-3 text-gray-400">{filtered.length - i}</td>

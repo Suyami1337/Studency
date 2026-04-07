@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 
@@ -442,16 +442,30 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
 // =============================================
 export default function ChatbotsPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
   const supabase = createClient()
 
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [bots, setBots] = useState<TelegramBot[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newBotId, setNewBotId] = useState('')
+
+  const selectedScenarioId = searchParams.get('open') || null
+
+  function selectScenario(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function load() {
     const [scenariosRes, botsRes] = await Promise.all([
@@ -482,7 +496,7 @@ export default function ChatbotsPage() {
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId)
 
   if (selectedScenario) {
-    return <ScenarioDetail scenario={selectedScenario} onBack={() => setSelectedScenarioId(null)} />
+    return <ScenarioDetail scenario={selectedScenario} onBack={clearSelection} />
   }
 
   return (
@@ -532,7 +546,7 @@ export default function ChatbotsPage() {
       ) : (
         <div className="space-y-3">
           {scenarios.map(s => (
-            <button key={s.id} onClick={() => setSelectedScenarioId(s.id)}
+            <button key={s.id} onClick={() => selectScenario(s.id)}
               className="w-full bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/30 hover:shadow-sm transition-all text-left">
               <div className="flex items-center gap-4">
                 <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">🤖</div>

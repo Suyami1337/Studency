@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 type Product = {
@@ -621,6 +621,7 @@ function ProductDetail({
 export default function ProductsPage() {
   const params = useParams()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
   const supabase = createClient()
   const openProductId = searchParams.get('open')
@@ -631,7 +632,19 @@ export default function ProductsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
-  const [selected, setSelected] = useState<Product | null>(null)
+
+  const selected = openProductId ? products.find(p => p.id === openProductId) ?? null : null
+
+  function selectProduct(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function loadProducts() {
     setLoading(true)
@@ -659,15 +672,6 @@ export default function ProductsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadProducts() }, [projectId])
 
-  // Auto-open product from URL param
-  useEffect(() => {
-    if (openProductId && products.length > 0 && !selected) {
-      const prod = products.find(p => p.id === openProductId)
-      if (prod) setSelected(prod)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openProductId, products])
-
   async function createProduct() {
     if (!newName.trim()) return
     setCreating(true)
@@ -685,12 +689,11 @@ export default function ProductsPage() {
 
   function handleUpdated(updated: Product) {
     setProducts(prev => prev.map(p => p.id === updated.id ? updated : p))
-    setSelected(updated)
   }
 
   function handleDeleted() {
     setProducts(prev => prev.filter(p => p.id !== selected?.id))
-    setSelected(null)
+    clearSelection()
   }
 
   if (selected) {
@@ -698,7 +701,7 @@ export default function ProductsPage() {
       <div className="p-6 max-w-3xl mx-auto">
         <ProductDetail
           product={selected}
-          onBack={() => setSelected(null)}
+          onBack={clearSelection}
           onDeleted={handleDeleted}
           onUpdated={handleUpdated}
         />
@@ -768,7 +771,7 @@ export default function ProductsPage() {
           {products.map(p => (
             <button
               key={p.id}
-              onClick={() => setSelected(p)}
+              onClick={() => selectProduct(p.id)}
               className="text-left bg-white rounded-xl border border-gray-100 p-5 hover:border-[#8B7BFA] hover:shadow-md transition-all group"
             >
               <div className="flex items-start justify-between mb-3">

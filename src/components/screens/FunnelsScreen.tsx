@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 
@@ -408,6 +408,8 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
 
 export default function FunnelsScreen() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params?.id as string
 
   const [funnels, setFunnels] = useState<Funnel[]>([])
@@ -415,7 +417,20 @@ export default function FunnelsScreen() {
   const [creating, setCreating] = useState(false)
   const [newFunnelName, setNewFunnelName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [selectedFunnel, setSelectedFunnel] = useState<Funnel | null>(null)
+
+  const openFunnelId = searchParams.get('open')
+  const selectedFunnel = openFunnelId ? funnels.find(f => f.id === openFunnelId) ?? null : null
+
+  function selectFunnel(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   const supabase = createClient()
 
@@ -450,7 +465,7 @@ export default function FunnelsScreen() {
   }
 
   if (selectedFunnel) {
-    return <FunnelDetail funnel={selectedFunnel} onBack={() => setSelectedFunnel(null)} />
+    return <FunnelDetail funnel={selectedFunnel} onBack={clearSelection} />
   }
 
   return (
@@ -518,7 +533,7 @@ export default function FunnelsScreen() {
           {funnels.map(funnel => (
             <button
               key={funnel.id}
-              onClick={() => setSelectedFunnel(funnel)}
+              onClick={() => selectFunnel(funnel.id)}
               className="w-full bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/30 hover:shadow-sm transition-all text-left"
             >
               <div className="flex items-center gap-3">

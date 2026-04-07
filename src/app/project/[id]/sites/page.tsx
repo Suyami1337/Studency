@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 
@@ -658,9 +658,11 @@ function LandingDetail({
 function LandingsList({
   projectId,
   onSelect,
+  onLandingsLoaded,
 }: {
   projectId: string
   onSelect: (l: Landing) => void
+  onLandingsLoaded?: (landings: Landing[]) => void
 }) {
   const [landings, setLandings] = useState<Landing[]>([])
   const [loading, setLoading] = useState(true)
@@ -681,7 +683,9 @@ function LandingsList({
       .select('*')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false })
-    setLandings((data ?? []) as Landing[])
+    const loaded = (data ?? []) as Landing[]
+    setLandings(loaded)
+    onLandingsLoaded?.(loaded)
     setLoading(false)
   }
 
@@ -882,16 +886,31 @@ function LandingsList({
 // ═══════════════════════════════════════════════════════════════════════════
 export default function SitesPage() {
   const { id: projectId } = useParams<{ id: string }>()
-  const [selectedLanding, setSelectedLanding] = useState<Landing | null>(null)
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [landingsList, setLandingsList] = useState<Landing[]>([])
+
+  const openLandingId = searchParams.get('open')
+  const selectedLanding = openLandingId ? landingsList.find(l => l.id === openLandingId) ?? null : null
+
+  function selectLanding(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   function handleBack(updated: Landing) {
     if (updated.id === '__deleted__') {
-      setSelectedLanding(null)
+      clearSelection()
       setLandingsList((prev) => prev.filter((l) => l.id !== updated.id))
     } else {
       setLandingsList((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
-      setSelectedLanding(null)
+      clearSelection()
     }
   }
 
@@ -911,7 +930,8 @@ export default function SitesPage() {
     <div className="p-6">
       <LandingsList
         projectId={projectId}
-        onSelect={(l) => setSelectedLanding(l)}
+        onSelect={(l) => selectLanding(l.id)}
+        onLandingsLoaded={setLandingsList}
       />
     </div>
   )

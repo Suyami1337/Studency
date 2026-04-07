@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 
@@ -94,11 +94,26 @@ function LessonEditor({ lesson, onBack, onUpdate }: { lesson: Lesson; onBack: ()
 // MODULE DETAIL (уроки внутри модуля)
 // ═══════════════════════════════════════
 function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string; onBack: () => void }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [lessons, setLessons] = useState<Lesson[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
-  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
+
+  const lessonId = searchParams.get('lesson')
+  const editingLesson = lessonId ? lessons.find(l => l.id === lessonId) ?? null : null
+
+  function selectLesson(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('lesson', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearLesson() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('lesson')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function loadLessons() {
     const { data } = await supabase.from('course_lessons').select('*').eq('module_id', mod.id).order('order_position')
@@ -123,7 +138,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
   }
 
   if (editingLesson) {
-    return <LessonEditor lesson={editingLesson} onBack={() => { setEditingLesson(null); loadLessons() }} onUpdate={loadLessons} />
+    return <LessonEditor lesson={editingLesson} onBack={() => { clearLesson(); loadLessons() }} onUpdate={loadLessons} />
   }
 
   return (
@@ -142,7 +157,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
         <div className="space-y-2">
           {lessons.map((lesson, idx) => (
             <div key={lesson.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center justify-between hover:border-[#6A55F8]/30 transition-colors cursor-pointer group"
-              onClick={() => setEditingLesson(lesson)}>
+              onClick={() => selectLesson(lesson.id)}>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8]">{idx + 1}</div>
                 <div>
@@ -186,6 +201,8 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
 // ═══════════════════════════════════════
 function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }) {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
   const [tab, setTab] = useState<'program' | 'product' | 'analytics' | 'settings'>('program')
   const [aiOpen, setAiOpen] = useState(false)
@@ -193,7 +210,22 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
   const [loading, setLoading] = useState(true)
   const [addingModule, setAddingModule] = useState(false)
   const [newModuleName, setNewModuleName] = useState('')
-  const [selectedModule, setSelectedModule] = useState<Module | null>(null)
+
+  const moduleId = searchParams.get('module')
+  const selectedModule = moduleId ? modules.find(m => m.id === moduleId) ?? null : null
+
+  function selectModule(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('module', id)
+    p.delete('lesson')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearModule() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('module')
+    p.delete('lesson')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   // Product link state
   const [products, setProducts] = useState<{id: string; name: string}[]>([])
@@ -270,7 +302,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
   }
 
   if (selectedModule) {
-    return <ModuleDetail mod={selectedModule} courseId={course.id} onBack={() => { setSelectedModule(null); loadModules() }} />
+    return <ModuleDetail mod={selectedModule} courseId={course.id} onBack={() => { clearModule(); loadModules() }} />
   }
 
   const tabs = [
@@ -310,7 +342,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
             <>
               {modules.map((mod, idx) => (
                 <div key={mod.id} className="bg-white rounded-xl border border-gray-100 px-5 py-4 flex items-center justify-between hover:border-[#6A55F8]/30 transition-colors cursor-pointer group"
-                  onClick={() => setSelectedModule(mod)}>
+                  onClick={() => selectModule(mod.id)}>
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-[#6A55F8] flex items-center justify-center text-sm font-bold text-white">{idx + 1}</div>
                     <div>
@@ -457,12 +489,29 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
 // ═══════════════════════════════════════
 export default function LearningPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params.id as string
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
-  const [selected, setSelected] = useState<Course | null>(null)
+
+  const openCourseId = searchParams.get('open')
+  const selected = openCourseId ? courses.find(c => c.id === openCourseId) ?? null : null
+
+  function selectCourse(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    p.delete('module')
+    p.delete('lesson')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   async function load() {
     setLoading(true)
@@ -484,14 +533,14 @@ export default function LearningPage() {
     if (!newName.trim()) return
     const { data } = await supabase.from('courses').insert({ project_id: projectId, name: newName.trim() }).select().single()
     if (data) {
-      setSelected({ ...data, module_count: 0 })
+      selectCourse(data.id)
       setNewName('')
       setAdding(false)
     }
   }
 
   if (selected) {
-    return <CourseDetail course={selected} onBack={() => { setSelected(null); load() }} />
+    return <CourseDetail course={selected} onBack={() => { clearSelection(); load() }} />
   }
 
   return (
@@ -524,7 +573,7 @@ export default function LearningPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {courses.map(course => (
-            <button key={course.id} onClick={() => setSelected(course)}
+            <button key={course.id} onClick={() => selectCourse(course.id)}
               className="bg-white rounded-xl border border-gray-100 p-5 text-left hover:border-[#6A55F8]/30 hover:shadow-sm transition-all">
               <div className="flex items-start justify-between mb-2">
                 <h3 className="font-semibold text-gray-900">{course.name}</h3>

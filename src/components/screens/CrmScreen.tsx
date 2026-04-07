@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 const tagColors = ['bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-blue-100 text-blue-700', 'bg-green-100 text-green-700']
@@ -302,6 +302,8 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
 
 export default function CrmScreen() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const projectId = params?.id as string
 
   const [boards, setBoards] = useState<Board[]>([])
@@ -309,7 +311,20 @@ export default function CrmScreen() {
   const [creating, setCreating] = useState(false)
   const [newBoardName, setNewBoardName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
-  const [selectedBoard, setSelectedBoard] = useState<Board | null>(null)
+
+  const openBoardId = searchParams.get('open')
+  const selectedBoard = openBoardId ? boards.find(b => b.id === openBoardId) ?? null : null
+
+  function selectBoard(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('open', id)
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
+  function clearSelection() {
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('open')
+    router.push(`?${p.toString()}`, { scroll: false })
+  }
 
   const supabase = createClient()
 
@@ -352,7 +367,7 @@ export default function CrmScreen() {
   }
 
   if (selectedBoard) {
-    return <CrmDetail board={selectedBoard} onBack={() => setSelectedBoard(null)} />
+    return <CrmDetail board={selectedBoard} onBack={clearSelection} />
   }
 
   return (
@@ -420,7 +435,7 @@ export default function CrmScreen() {
           {boards.map(board => (
             <button
               key={board.id}
-              onClick={() => setSelectedBoard(board)}
+              onClick={() => selectBoard(board.id)}
               className="w-full bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/30 hover:shadow-sm transition-all text-left"
             >
               <div className="flex items-center gap-4">
