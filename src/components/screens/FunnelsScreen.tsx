@@ -57,6 +57,10 @@ function SelectOrCreate({ children, placeholder, onSubmit }: { children: React.R
   )
 }
 
+function cleanStageName(name: string) {
+  return name.replace(/^[🤖🌐📋💳🎓]\s*/, '')
+}
+
 const stageTypeIcon: Record<string, string> = {
   bot: '🤖', landing: '🌐', order: '📋', payment: '💳', learning: '🎓',
 }
@@ -355,7 +359,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                         </div>
                         <div className="text-lg flex-shrink-0">{stageTypeIcon[stage.stage_type] ?? '📌'}</div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-gray-900">{stage.name}</p>
+                          <p className="text-sm font-semibold text-gray-900">{cleanStageName(stage.name)}</p>
                           <p className="text-xs text-gray-400">{stageTypeLabel[stage.stage_type] ?? stage.stage_type}</p>
                         </div>
                         <div className="flex items-center gap-4 flex-shrink-0">
@@ -631,7 +635,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             {stageTypeIcon[stage.stage_type] ?? '📌'}
                           </div>
                           <div className="w-32 flex-shrink-0">
-                            <p className="text-xs font-medium text-gray-800 truncate">{stage.name}</p>
+                            <p className="text-xs font-medium text-gray-800 truncate">{cleanStageName(stage.name)}</p>
                           </div>
                           <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
                             <div
@@ -683,7 +687,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                           selectedStageId === stage.id ? 'bg-[#6A55F8] text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
                         }`}
                       >
-                        {stageTypeIcon[stage.stage_type] ?? '📌'} {stage.name}
+                        {stageTypeIcon[stage.stage_type] ?? '📌'} {cleanStageName(stage.name)}
                         <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${selectedStageId === stage.id ? 'bg-white/20' : 'bg-gray-100'}`}>
                           {stageCounts[stage.id] ?? 0}
                         </span>
@@ -703,7 +707,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                       <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
                         <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
                           <p className="text-sm font-semibold text-gray-700">
-                            {stageTypeIcon[stages.find(s => s.id === selectedStageId)?.stage_type ?? ''] ?? '📌'} {stages.find(s => s.id === selectedStageId)?.name} — {stageCustomers.length} человек
+                            {stageTypeIcon[stages.find(s => s.id === selectedStageId)?.stage_type ?? ''] ?? '📌'} {cleanStageName(stages.find(s => s.id === selectedStageId)?.name ?? '')} — {stageCustomers.length} человек
                           </p>
                         </div>
                         <table className="w-full text-sm">
