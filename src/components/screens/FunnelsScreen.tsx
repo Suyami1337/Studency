@@ -401,18 +401,19 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <span className="text-sm font-bold text-[#6A55F8]">{count}</span>
                             <span className="text-xs text-gray-400">чел.</span>
                           </div>
-                          <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                             {idx > 0 && (
                               <button onClick={e => { e.stopPropagation(); moveStage(stage.id, 'up') }}
-                                className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:bg-gray-200 hover:text-gray-700 text-xs" title="Вверх">↑</button>
+                                className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-[#F0EDFF] hover:border-[#6A55F8]/30 hover:text-[#6A55F8] text-sm transition-colors" title="Вверх">↑</button>
                             )}
                             {idx < stages.length - 1 && (
                               <button onClick={e => { e.stopPropagation(); moveStage(stage.id, 'down') }}
-                                className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:bg-gray-200 hover:text-gray-700 text-xs" title="Вниз">↓</button>
+                                className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-[#F0EDFF] hover:border-[#6A55F8]/30 hover:text-[#6A55F8] text-sm transition-colors" title="Вниз">↓</button>
                             )}
-                            <span className="text-xs text-[#6A55F8] ml-1">{isEditing ? '▲' : '✏'}</span>
+                            <button onClick={e => e.stopPropagation()}
+                              className="w-8 h-8 rounded-lg border border-[#6A55F8]/30 flex items-center justify-center text-[#6A55F8] hover:bg-[#F0EDFF] text-sm transition-colors" title="Редактировать">{isEditing ? '▲' : '✏'}</button>
                             <button onClick={e => { e.stopPropagation(); removeStage(stage.id) }}
-                              className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-red-500 text-xs" title="Удалить">✕</button>
+                              className="w-8 h-8 rounded-lg border border-red-200 flex items-center justify-center text-red-400 hover:bg-red-50 hover:text-red-600 text-sm transition-colors" title="Удалить">✕</button>
                           </div>
                         </div>
                         {/* Inline edit: renders between this stage and the next */}
