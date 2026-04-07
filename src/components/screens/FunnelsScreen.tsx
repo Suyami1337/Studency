@@ -24,7 +24,7 @@ const stageTypes = [
 ]
 
 function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<'settings' | 'analytics' | 'users'>('settings')
+  const [activeTab, setActiveTab] = useState<'settings' | 'analytics' | 'users' | 'config'>('settings')
   const [stages, setStages] = useState<FunnelStage[]>([])
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({})
   const [stageCustomers, setStageCustomers] = useState<Customer[]>([])
@@ -117,10 +117,35 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
   // AI assistant is now an overlay component
 
   const tabs = [
-    { id: 'settings' as const, label: 'Настройка воронки' },
+    { id: 'settings' as const, label: 'Воронка' },
     { id: 'analytics' as const, label: 'Аналитика' },
     { id: 'users' as const, label: 'Пользователи' },
+    { id: 'config' as const, label: 'Настройки' },
   ]
+
+  async function deleteFunnel() {
+    if (!confirm('Удалить воронку? Все этапы будут удалены.')) return
+    await supabase.from('funnels').delete().eq('id', funnel.id)
+    onBack()
+  }
+
+  async function duplicateFunnel() {
+    const { data: newFunnel } = await supabase.from('funnels').insert({
+      project_id: funnel.project_id, name: `${funnel.name} (копия)`, status: 'draft',
+    }).select().single()
+    if (newFunnel) {
+      for (const stage of stages) {
+        await supabase.from('funnel_stages').insert({
+          funnel_id: newFunnel.id, name: stage.name, stage_type: stage.stage_type, order_position: stage.order_position,
+        })
+      }
+      onBack()
+    }
+  }
+
+  async function updateFunnelStatus(status: string) {
+    await supabase.from('funnels').update({ status }).eq('id', funnel.id)
+  }
 
   const totalCustomers = stages.length > 0 ? (stageCounts[stages[0]?.id] ?? 0) : 0
   const lastStageCount = stages.length > 0 ? (stageCounts[stages[stages.length - 1]?.id] ?? 0) : 0
@@ -234,6 +259,48 @@ function FunnelDetail({ funnel, onBack }: { funnel: Funnel; onBack: () => void }
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: Настройки */}
+          {activeTab === 'config' && (
+            <div className="max-w-2xl space-y-4">
+              <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
+                <h3 className="text-sm font-semibold text-gray-900">Основные</h3>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Название воронки</label>
+                  <input type="text" defaultValue={funnel.name} onBlur={e => {
+                    if (e.target.value.trim() && e.target.value !== funnel.name) {
+                      supabase.from('funnels').update({ name: e.target.value.trim() }).eq('id', funnel.id)
+                    }
+                  }} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Статус</label>
+                  <select defaultValue={funnel.status} onChange={e => updateFunnelStatus(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                    <option value="draft">Черновик</option>
+                    <option value="active">Активна</option>
+                    <option value="archived">Архив</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-100 p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">Дублировать воронку</h3>
+                <p className="text-xs text-gray-500 mb-3">Создаст копию воронки со всеми этапами.</p>
+                <button onClick={duplicateFunnel} className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF]">
+                  📋 Дублировать воронку
+                </button>
+              </div>
+
+              <div className="bg-white rounded-xl border border-red-100 p-5">
+                <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-700">Удалить воронку и все этапы</p>
+                  <button onClick={deleteFunnel} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
                 </div>
               </div>
             </div>
