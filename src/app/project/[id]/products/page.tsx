@@ -63,8 +63,9 @@ function ProductDetail({
   const [showTariffForm, setShowTariffForm] = useState(false)
   const [tName, setTName] = useState('')
   const [tPrice, setTPrice] = useState('')
-  const [tFeatures, setTFeatures] = useState('')
+  const [tFeatures, setTFeatures] = useState<string[]>([''])
   const [savingTariff, setSavingTariff] = useState(false)
+  const [editingTariffId, setEditingTariffId] = useState<string | null>(null)
 
   // Settings form
   const [editName, setEditName] = useState(product.name)
@@ -111,18 +112,27 @@ function ProductDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
-  async function addTariff() {
+  async function saveTariff() {
     if (!tName.trim() || !tPrice) return
     setSavingTariff(true)
-    await supabase.from('tariffs').insert({
-      product_id: product.id,
-      name: tName.trim(),
-      price: parseFloat(tPrice),
-      features: tFeatures.trim() || null,
-    })
-    setTName(''); setTPrice(''); setTFeatures(''); setShowTariffForm(false)
+    const features = tFeatures.filter(f => f.trim()).map(f => f.trim())
+    if (editingTariffId) {
+      await supabase.from('tariffs').update({ name: tName.trim(), price: parseFloat(tPrice), features }).eq('id', editingTariffId)
+    } else {
+      await supabase.from('tariffs').insert({ product_id: product.id, name: tName.trim(), price: parseFloat(tPrice), features })
+    }
+    setTName(''); setTPrice(''); setTFeatures(['']); setShowTariffForm(false); setEditingTariffId(null)
     await loadTariffs()
     setSavingTariff(false)
+  }
+
+  function startEditTariff(t: Tariff) {
+    setEditingTariffId(t.id)
+    setTName(t.name)
+    setTPrice(String(t.price))
+    const feats = Array.isArray(t.features) ? t.features : []
+    setTFeatures(feats.length > 0 ? feats : [''])
+    setShowTariffForm(true)
   }
 
   async function deleteTariff(id: string) {
@@ -199,42 +209,51 @@ function ProductDetail({
           </div>
 
           {showTariffForm && (
-            <div className="bg-[#F0EDFF] rounded-xl p-4 space-y-3">
+            <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-4">
+              <h4 className="text-sm font-semibold text-gray-900">{editingTariffId ? 'Редактировать тариф' : 'Новый тариф'}</h4>
               <div className="flex gap-3">
-                <input
-                  type="text"
-                  placeholder="Название тарифа"
-                  value={tName}
-                  onChange={e => setTName(e.target.value)}
-                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-                />
-                <input
-                  type="number"
-                  placeholder="Цена, ₽"
-                  value={tPrice}
-                  onChange={e => setTPrice(e.target.value)}
-                  className="w-36 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-                />
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">Название</label>
+                  <input type="text" placeholder="Например: Базовый" value={tName} onChange={e => setTName(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                </div>
+                <div className="w-40">
+                  <label className="block text-xs text-gray-500 mb-1">Цена, ₽</label>
+                  <input type="number" placeholder="2990" value={tPrice} onChange={e => setTPrice(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                </div>
               </div>
-              <input
-                type="text"
-                placeholder="Функции через запятую: модуль 1, модуль 2..."
-                value={tFeatures}
-                onChange={e => setTFeatures(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={addTariff}
-                  disabled={savingTariff || !tName.trim() || !tPrice}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-                  style={{ backgroundColor: '#6A55F8' }}
-                >
-                  {savingTariff ? 'Сохраняю...' : 'Сохранить'}
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-2">Что входит в тариф (каждый пункт отдельно)</label>
+                <div className="space-y-2">
+                  {tFeatures.map((feat, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="text-green-500 text-sm">✓</span>
+                      <input type="text" value={feat} onChange={e => {
+                        const updated = [...tFeatures]
+                        updated[idx] = e.target.value
+                        setTFeatures(updated)
+                      }} placeholder={`Пункт ${idx + 1}`}
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                      {tFeatures.length > 1 && (
+                        <button onClick={() => setTFeatures(prev => prev.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500 text-sm">✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={() => setTFeatures(prev => [...prev, ''])} className="text-xs text-[#6A55F8] font-medium hover:underline">
+                    + Добавить пункт
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button onClick={saveTariff} disabled={savingTariff || !tName.trim() || !tPrice}
+                  className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                  {savingTariff ? 'Сохраняю...' : editingTariffId ? 'Сохранить изменения' : 'Создать тариф'}
                 </button>
-                <button onClick={() => setShowTariffForm(false)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">
-                  Отмена
-                </button>
+                <button onClick={() => { setShowTariffForm(false); setEditingTariffId(null); setTName(''); setTPrice(''); setTFeatures(['']) }}
+                  className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Отмена</button>
               </div>
             </div>
           )}
@@ -251,37 +270,48 @@ function ProductDetail({
             </div>
           ) : (
             <div className="space-y-3">
-              {tariffs.map(t => (
-                <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-4 flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <span className="font-medium text-gray-900">{t.name}</span>
-                      <span
-                        className="text-sm font-semibold px-2 py-0.5 rounded-lg"
-                        style={{ backgroundColor: '#EDE9FF', color: '#6A55F8' }}
-                      >
-                        {formatMoney(t.price)}
-                      </span>
+              {tariffs.map(t => {
+                const feats = Array.isArray(t.features) ? t.features : []
+                return (
+                  <div key={t.id} className="bg-white rounded-xl border border-gray-100 p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <h4 className="font-semibold text-gray-900">{t.name}</h4>
+                        <span className="text-lg font-bold text-[#6A55F8]">{formatMoney(t.price)}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => startEditTariff(t)} className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded-lg px-2.5 py-1 hover:bg-[#F0EDFF]">
+                          Редактировать
+                        </button>
+                        <button onClick={() => deleteTariff(t.id)} className="text-xs text-gray-300 hover:text-red-500">✕</button>
+                      </div>
                     </div>
-                    {t.features && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {(Array.isArray(t.features) ? t.features : (t.features || '').split(',')).map((f: string, i: number) => (
-                          <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                            {f.trim()}
-                          </span>
-                        ))}
+                    {feats.length > 0 && (
+                      <div className="space-y-1.5">
+                        {feats.map((f: string, i: number) => {
+                          const isStrikethrough = f.startsWith('~') && f.endsWith('~')
+                          const text = isStrikethrough ? f.slice(1, -1) : f
+                          return (
+                            <div key={i} className="flex items-center gap-2">
+                              {isStrikethrough ? (
+                                <>
+                                  <span className="text-red-400 text-sm">✗</span>
+                                  <span className="text-sm text-gray-400 line-through">{text}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-green-500 text-sm">✓</span>
+                                  <span className="text-sm text-gray-700">{f}</span>
+                                </>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
-                  <button
-                    onClick={() => deleteTariff(t.id)}
-                    className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none mt-0.5"
-                    title="Удалить тариф"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
