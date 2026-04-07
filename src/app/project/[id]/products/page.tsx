@@ -17,7 +17,8 @@ type Tariff = {
   product_id: string
   name: string
   price: number
-  features: string | null
+  features: string | string[] | null
+  order_position?: number
 }
 
 type OrderStat = {
@@ -284,11 +285,13 @@ function ProductDetail({
   onBack,
   onDeleted,
   onUpdated,
+  onDuplicate,
 }: {
   product: Product
   onBack: () => void
   onDeleted: () => void
   onUpdated: (p: Product) => void
+  onDuplicate?: () => void
 }) {
   const supabase = createClient()
   const [tab, setTab] = useState<'tariffs' | 'analytics' | 'settings'>('tariffs')
@@ -374,6 +377,34 @@ function ProductDetail({
     const feats = Array.isArray(t.features) ? t.features : []
     setTFeatures(feats.length > 0 ? feats : [''])
     setShowTariffForm(true)
+  }
+
+  async function duplicateTariff(t: Tariff) {
+    const features = Array.isArray(t.features) ? t.features : []
+    const { data: newTariff } = await supabase.from('tariffs').insert({
+      product_id: product.id,
+      name: `${t.name} (копия)`,
+      price: t.price,
+      features,
+      order_position: tariffs.length,
+    }).select().single()
+
+    // Copy access rules
+    if (newTariff) {
+      const { data: accessRules } = await supabase.from('tariff_access').select('*').eq('tariff_id', t.id)
+      if (accessRules && accessRules.length > 0) {
+        await supabase.from('tariff_access').insert(
+          accessRules.map((r: Record<string, unknown>) => ({
+            tariff_id: newTariff.id,
+            course_id: r.course_id,
+            module_id: r.module_id,
+            lesson_id: r.lesson_id,
+            access_days: r.access_days,
+          }))
+        )
+      }
+    }
+    await loadTariffs()
   }
 
   async function deleteTariff(id: string) {
@@ -548,6 +579,9 @@ function ProductDetail({
                         <button onClick={() => startEditTariff(t)} className="text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded-lg px-2.5 py-1 hover:bg-[#F0EDFF]">
                           Редактировать
                         </button>
+                        <button onClick={() => duplicateTariff(t)} className="text-xs text-gray-500 font-medium border border-gray-200 rounded-lg px-2.5 py-1 hover:bg-gray-50">
+                          Дублировать
+                        </button>
                         <button onClick={() => deleteTariff(t.id)} className="text-xs text-gray-300 hover:text-red-500">✕</button>
                       </div>
                     </div>
@@ -662,6 +696,17 @@ function ProductDetail({
             </button>
           </div>
 
+          {/* Duplicate */}
+          {onDuplicate && (
+            <div className="bg-white rounded-xl border border-gray-100 p-6">
+              <h3 className="font-semibold text-gray-900 mb-2">Дублировать продукт</h3>
+              <p className="text-sm text-gray-500 mb-4">Создаст копию продукта со всеми тарифами и настройками доступа.</p>
+              <button onClick={onDuplicate} className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF]">
+                📋 Дублировать продукт
+              </button>
+            </div>
+          )}
+
           {/* Danger zone */}
           <div className="bg-white rounded-xl border border-red-100 p-6">
             <h3 className="font-semibold text-red-600 mb-2">Удалить продукт</h3>
@@ -771,6 +816,49 @@ export default function ProductsPage() {
     clearSelection()
   }
 
+  async function duplicateProduct(product: Product) {
+    // Create product copy
+    const { data: newProduct } = await supabase.from('products').insert({
+      project_id: projectId,
+      name: `${product.name} (копия)`,
+      description: product.description,
+    }).select().single()
+
+    if (newProduct) {
+      // Copy tariffs
+      const { data: oldTariffs } = await supabase.from('tariffs').select('*').eq('product_id', product.id)
+      if (oldTariffs) {
+        for (const t of oldTariffs as Tariff[]) {
+          const { data: newTariff } = await supabase.from('tariffs').insert({
+            product_id: newProduct.id,
+            name: t.name,
+            price: t.price,
+            features: t.features,
+            order_position: t.order_position,
+          }).select().single()
+
+          // Copy access rules for each tariff
+          if (newTariff) {
+            const { data: accessRules } = await supabase.from('tariff_access').select('*').eq('tariff_id', t.id)
+            if (accessRules && accessRules.length > 0) {
+              await supabase.from('tariff_access').insert(
+                accessRules.map((r: Record<string, unknown>) => ({
+                  tariff_id: newTariff.id,
+                  course_id: r.course_id,
+                  module_id: r.module_id,
+                  lesson_id: r.lesson_id,
+                  access_days: r.access_days,
+                }))
+              )
+            }
+          }
+        }
+      }
+      await loadProducts()
+      selectProduct(newProduct.id)
+    }
+  }
+
   if (selected) {
     return (
       <div className="p-6 max-w-3xl mx-auto">
@@ -779,6 +867,7 @@ export default function ProductsPage() {
           onBack={clearSelection}
           onDeleted={handleDeleted}
           onUpdated={handleUpdated}
+          onDuplicate={() => duplicateProduct(selected)}
         />
       </div>
     )
