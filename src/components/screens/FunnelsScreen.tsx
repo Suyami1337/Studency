@@ -38,14 +38,17 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const [addProductId, setAddProductId] = useState('')
   const [addTariffId, setAddTariffId] = useState('')
   const [addCourseId, setAddCourseId] = useState('')
+  const [addBotMessageId, setAddBotMessageId] = useState('')
   const [productsList, setProductsList] = useState<{id: string; name: string}[]>([])
   const [tariffsList, setTariffsList] = useState<{id: string; name: string}[]>([])
   const [coursesList, setCoursesList] = useState<{id: string; name: string}[]>([])
+  const [botMessagesList, setBotMessagesList] = useState<{id: string; text: string; is_start: boolean; trigger_word: string | null}[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingCustomers, setLoadingCustomers] = useState(false)
   const [showAI, setShowAI] = useState(false)
 
   const supabase = createClient()
+  const params = useParams()
 
   async function loadStages() {
     setLoading(true)
@@ -103,6 +106,13 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
     setAddStep('select')
   }
 
+  async function loadBotMessages(scenarioId: string) {
+    setSelectedToolId(scenarioId)
+    setAddBotMessageId('')
+    const { data } = await supabase.from('scenario_messages').select('id, text, is_start, trigger_word').eq('scenario_id', scenarioId).order('order_position')
+    setBotMessagesList((data ?? []) as {id: string; text: string; is_start: boolean; trigger_word: string | null}[])
+  }
+
   async function loadTariffsForProduct(productId: string) {
     setAddProductId(productId)
     const { data } = await supabase.from('tariffs').select('id, name').eq('product_id', productId)
@@ -116,8 +126,11 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
 
     if (addType === 'bot' && selectedToolId) {
       const item = existingItems.find(i => i.id === selectedToolId)
+      const msg = botMessagesList.find(m => m.id === addBotMessageId)
       name = `🤖 ${item?.name ?? 'Чат-бот'}`
+      if (msg) name += ` → ${(msg.text || '').slice(0, 30)}`
       toolId = selectedToolId
+      if (addBotMessageId) settings.message_id = addBotMessageId
     } else if (addType === 'landing' && selectedToolId) {
       const item = existingItems.find(i => i.id === selectedToolId)
       name = `🌐 ${item?.name ?? 'Сайт'}`
@@ -350,24 +363,49 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                         <button onClick={() => setAddStep(null)} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
                       </div>
 
-                      {/* Bot / Landing: select existing or create new */}
-                      {(addType === 'bot' || addType === 'landing') && (
+                      {/* Bot: select scenario + message */}
+                      {addType === 'bot' && (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Сценарий чат-бота</label>
+                            <select value={selectedToolId} onChange={e => loadBotMessages(e.target.value)}
+                              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                              <option value="">Выберите сценарий...</option>
+                              {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                            </select>
+                            <a href={`/project/${params.id}/chatbots`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
+                              + Создать новый сценарий →
+                            </a>
+                          </div>
+                          {selectedToolId && botMessagesList.length > 0 && (
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Конкретный этап/сообщение (необязательно)</label>
+                              <select value={addBotMessageId} onChange={e => setAddBotMessageId(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                <option value="">Весь сценарий целиком</option>
+                                {botMessagesList.map((m, idx) => (
+                                  <option key={m.id} value={m.id}>
+                                    #{idx + 1}: {m.is_start ? '⭐' : '💬'} {(m.text || 'Пустое').slice(0, 50)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Landing: select existing or create */}
+                      {addType === 'landing' && (
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">
-                            {addType === 'bot' ? 'Выберите сценарий' : 'Выберите сайт'}
-                          </label>
+                          <label className="block text-xs text-gray-500 mb-1">Сайт/Лендинг</label>
                           <select value={selectedToolId} onChange={e => setSelectedToolId(e.target.value)}
                             className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                            <option value="">Выберите...</option>
-                            {existingItems.map(item => (
-                              <option key={item.id} value={item.id}>{item.name}</option>
-                            ))}
+                            <option value="">Выберите сайт...</option>
+                            {existingItems.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                           </select>
-                          {existingItems.length === 0 && (
-                            <p className="text-xs text-amber-600 mt-2">
-                              Нет {addType === 'bot' ? 'сценариев' : 'сайтов'}. Создайте в соответствующем разделе.
-                            </p>
-                          )}
+                          <a href={`/project/${params.id}/sites`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
+                            + Создать новый сайт →
+                          </a>
                         </div>
                       )}
 
@@ -381,6 +419,9 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                               <option value="">Выберите продукт...</option>
                               {productsList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
+                            <a href={`/project/${params.id}/products`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
+                              + Создать новый продукт →
+                            </a>
                           </div>
                           {addProductId && (
                             <div>
@@ -404,6 +445,9 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <option value="">Выберите курс...</option>
                             {coursesList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
+                          <a href={`/project/${params.id}/learning`} className="text-xs text-[#6A55F8] font-medium hover:underline mt-1 inline-block">
+                            + Создать новый курс →
+                          </a>
                         </div>
                       )}
 
