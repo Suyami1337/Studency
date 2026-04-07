@@ -7,7 +7,7 @@ import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssista
 
 const supabase = createClient()
 
-type Course = { id: string; project_id: string; name: string; description: string | null; is_published: boolean; created_at: string; module_count?: number }
+type Course = { id: string; project_id: string; name: string; description: string | null; is_published: boolean; product_id: string | null; created_at: string; module_count?: number }
 type Module = { id: string; course_id: string; name: string; order_position: number }
 type Lesson = { id: string; module_id: string; name: string; content: string | null; video_url: string | null; has_homework: boolean; homework_description: string | null; order_position: number }
 
@@ -197,7 +197,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
 
   // Product link state
   const [products, setProducts] = useState<{id: string; name: string}[]>([])
-  const [linkedProductId, setLinkedProductId] = useState<string>('')
+  const [linkedProductId, setLinkedProductId] = useState<string>(course.product_id || '')
   const [tariffs, setTariffs] = useState<{id: string; name: string; price: number}[]>([])
   const [creatingProduct, setCreatingProduct] = useState(false)
   const [newProductName, setNewProductName] = useState('')
@@ -246,6 +246,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
     const { data } = await supabase.from('products').insert({ project_id: projectId, name: newProductName.trim() }).select().single()
     if (data) {
       setLinkedProductId(data.id)
+      await supabase.from('courses').update({ product_id: data.id }).eq('id', course.id)
       await loadProducts()
       // Create default tariffs
       await supabase.from('tariffs').insert([
@@ -349,7 +350,11 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Привязка к продукту</h3>
             <p className="text-xs text-gray-500 mb-3">Выберите существующий продукт или создайте новый. После оплаты тарифа клиент получит доступ к этому курсу.</p>
 
-            <select value={linkedProductId} onChange={e => setLinkedProductId(e.target.value)}
+            <select value={linkedProductId} onChange={async e => {
+              const val = e.target.value
+              setLinkedProductId(val)
+              await supabase.from('courses').update({ product_id: val || null }).eq('id', course.id)
+            }}
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] mb-3">
               <option value="">Не привязан к продукту</option>
               {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -388,7 +393,10 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
                   </div>
                 ))}
               </div>
-              <p className="text-[10px] text-gray-400 mt-2">Для детальной настройки тарифов перейдите в раздел Продукты</p>
+              <a href={`/project/${projectId}/products`}
+                className="mt-3 inline-flex items-center gap-1.5 text-xs text-[#6A55F8] font-medium border border-[#6A55F8]/30 rounded-lg px-3 py-2 hover:bg-[#F0EDFF] transition-colors">
+                📦 Перейти в продукт для настройки тарифов →
+              </a>
             </div>
           )}
         </div>
