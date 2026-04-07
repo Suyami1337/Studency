@@ -12,7 +12,7 @@ type Course = {
   project_id: string
   name: string
   description: string | null
-  published: boolean
+  is_published: boolean
   created_at: string
   module_count?: number
 }
@@ -84,7 +84,7 @@ function CourseList({ projectId }: { projectId: string }) {
     setSaving(true)
     const { data } = await supabase
       .from('courses')
-      .insert({ project_id: projectId, name: newName.trim(), published: false })
+      .insert({ project_id: projectId, name: newName.trim(), is_published: false })
       .select()
       .single()
     if (data) setCourses(prev => [...prev, { ...data, module_count: 0 }])
@@ -156,9 +156,9 @@ function CourseList({ projectId }: { projectId: string }) {
               <div className="flex items-start justify-between mb-2">
                 <h3 className="font-semibold text-gray-900 text-base leading-tight">{course.name}</h3>
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ml-2 flex-shrink-0 ${
-                  course.published ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  course.is_published ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                 }`}>
-                  {course.published ? 'Опубликован' : 'Черновик'}
+                  {course.is_published ? 'Опубликован' : 'Черновик'}
                 </span>
               </div>
               {course.description && (
@@ -660,7 +660,7 @@ function SettingsTab({ course, onDelete, onUpdate }: {
 }) {
   const [name, setName] = useState(course.name)
   const [description, setDescription] = useState(course.description ?? '')
-  const [published, setPublished] = useState(course.published)
+  const [published, setPublished] = useState(course.is_published ?? false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -669,9 +669,9 @@ function SettingsTab({ course, onDelete, onUpdate }: {
     setSaving(true)
     await supabase
       .from('courses')
-      .update({ name, description: description || null, published })
+      .update({ name, description: description || null, is_published: published })
       .eq('id', course.id)
-    onUpdate({ ...course, name, description: description || null, published })
+    onUpdate({ ...course, name, description: description || null, is_published: published })
     setSaving(false)
   }
 
