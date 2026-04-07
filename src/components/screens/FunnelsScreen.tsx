@@ -401,7 +401,7 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
                             <span className="text-sm font-bold text-[#6A55F8]">{count}</span>
                             <span className="text-xs text-gray-400">чел.</span>
                           </div>
-                          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
                             {idx > 0 && (
                               <button onClick={e => { e.stopPropagation(); moveStage(stage.id, 'up') }}
                                 className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-[#F0EDFF] hover:border-[#6A55F8]/30 hover:text-[#6A55F8] text-sm transition-colors" title="Вверх">↑</button>
