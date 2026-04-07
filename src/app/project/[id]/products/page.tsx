@@ -84,15 +84,16 @@ function ProductDetail({
     setLoadingStats(true)
     const { data } = await supabase
       .from('orders')
-      .select('tariff_id, tariff_name, amount')
+      .select('tariff_id, amount')
       .eq('product_id', product.id)
       .not('tariff_id', 'is', null)
 
     if (data) {
       const map: Record<string, OrderStat> = {}
-      for (const row of data as { tariff_id: string; tariff_name: string | null; amount: number }[]) {
+      for (const row of data as { tariff_id: string; amount: number }[]) {
         if (!map[row.tariff_id]) {
-          map[row.tariff_id] = { tariff_id: row.tariff_id, tariff_name: row.tariff_name, count: 0, revenue: 0 }
+          const t = tariffs.find(t => t.id === row.tariff_id)
+          map[row.tariff_id] = { tariff_id: row.tariff_id, tariff_name: t?.name ?? null, count: 0, revenue: 0 }
         }
         map[row.tariff_id].count++
         map[row.tariff_id].revenue += row.amount
