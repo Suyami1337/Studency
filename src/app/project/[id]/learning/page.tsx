@@ -137,6 +137,15 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
     await loadLessons()
   }
 
+  async function duplicateLesson(lesson: Lesson) {
+    await supabase.from('course_lessons').insert({
+      module_id: mod.id, name: `${lesson.name} (копия)`, content: lesson.content,
+      video_url: lesson.video_url, has_homework: lesson.has_homework,
+      homework_description: lesson.homework_description, order_position: lessons.length,
+    })
+    await loadLessons()
+  }
+
   if (editingLesson) {
     return <LessonEditor lesson={editingLesson} onBack={() => { clearLesson(); loadLessons() }} onUpdate={loadLessons} />
   }
@@ -170,9 +179,10 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">Открыть →</span>
-                <button onClick={e => { e.stopPropagation(); deleteLesson(lesson.id) }} className="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
+              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
+                <button onClick={e => { e.stopPropagation(); duplicateLesson(lesson) }} className="text-xs text-gray-400 hover:text-[#6A55F8]" title="Дублировать">📋</button>
+                <button onClick={e => { e.stopPropagation(); deleteLesson(lesson.id) }} className="text-xs text-gray-300 hover:text-red-500">✕</button>
+                <span className="text-xs text-[#6A55F8]">Открыть →</span>
               </div>
             </div>
           ))}
@@ -273,6 +283,26 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
     await loadModules()
   }
 
+  async function duplicateModule(mod: Module) {
+    // Create module copy
+    const { data: newMod } = await supabase.from('course_modules').insert({
+      course_id: course.id, name: `${mod.name} (копия)`, order_position: modules.length,
+    }).select().single()
+    if (newMod) {
+      // Copy lessons
+      const { data: lessons } = await supabase.from('course_lessons').select('*').eq('module_id', mod.id)
+      if (lessons && lessons.length > 0) {
+        await supabase.from('course_lessons').insert(
+          lessons.map((l: Record<string, unknown>, i: number) => ({
+            module_id: newMod.id, name: l.name, content: l.content, video_url: l.video_url,
+            has_homework: l.has_homework, homework_description: l.homework_description, order_position: i,
+          }))
+        )
+      }
+    }
+    await loadModules()
+  }
+
   async function createProductForCourse() {
     if (!newProductName.trim()) return
     const { data } = await supabase.from('products').insert({ project_id: projectId, name: newProductName.trim() }).select().single()
@@ -299,6 +329,32 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
     if (!confirm('Удалить курс? Все модули и уроки будут удалены.')) return
     await supabase.from('courses').delete().eq('id', course.id)
     onBack()
+  }
+
+  async function duplicateCourse() {
+    const { data: newCourse } = await supabase.from('courses').insert({
+      project_id: projectId, name: `${course.name} (копия)`, description: course.description,
+    }).select().single()
+    if (newCourse) {
+      // Copy modules with lessons
+      for (const mod of modules) {
+        const { data: newMod } = await supabase.from('course_modules').insert({
+          course_id: newCourse.id, name: mod.name, order_position: mod.order_position,
+        }).select().single()
+        if (newMod) {
+          const { data: lessons } = await supabase.from('course_lessons').select('*').eq('module_id', mod.id)
+          if (lessons && lessons.length > 0) {
+            await supabase.from('course_lessons').insert(
+              lessons.map((l: Record<string, unknown>, i: number) => ({
+                module_id: newMod.id, name: l.name, content: l.content, video_url: l.video_url,
+                has_homework: l.has_homework, homework_description: l.homework_description, order_position: i,
+              }))
+            )
+          }
+        }
+      }
+      onBack()
+    }
   }
 
   if (selectedModule) {
@@ -352,6 +408,7 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-[#6A55F8] opacity-0 group-hover:opacity-100">Открыть →</span>
+                    <button onClick={e => { e.stopPropagation(); duplicateModule(mod) }} className="text-xs text-gray-400 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100" title="Дублировать">📋</button>
                     <button onClick={e => { e.stopPropagation(); deleteModule(mod.id) }} className="text-xs text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100">✕</button>
                   </div>
                 </div>
@@ -466,6 +523,13 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
               </button>
             </div>
             <button onClick={saveCourseSettings} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Сохранить</button>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">Дублировать курс</h3>
+            <p className="text-xs text-gray-500 mb-3">Создаст копию курса со всеми модулями и уроками.</p>
+            <button onClick={duplicateCourse} className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF]">
+              📋 Дублировать курс
+            </button>
           </div>
           <div className="bg-white rounded-xl border border-red-100 p-5">
             <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
