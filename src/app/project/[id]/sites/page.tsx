@@ -157,16 +157,22 @@ function LandingDetail({
   const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Listen for visual edits from iframe
-  useEffect(() => {
-    function handleMessage(e: MessageEvent) {
-      if (e.data?.type === 'htmlUpdate' && typeof e.data.html === 'string') {
-        setHtml(e.data.html)
+  // Sync visual edits from iframe into html state (called on save/tab switch)
+  function syncFromIframe() {
+    try {
+      const doc = iframeRef.current?.contentDocument
+      if (doc) {
+        // Remove our injected script/style before saving
+        doc.querySelectorAll('script, style:last-of-type').forEach(el => {
+          if (el.textContent?.includes('contenteditable') || el.textContent?.includes('htmlUpdate')) el.remove()
+        })
+        doc.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'))
+        setHtml(doc.documentElement.outerHTML)
+        return doc.documentElement.outerHTML
       }
-    }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [])
+    } catch { /* cross-origin */ }
+    return html
+  }
 
   // Analytics state
   const [buttons, setButtons] = useState<LandingButton[]>([])
@@ -226,11 +232,12 @@ function LandingDetail({
   }
 
   async function handlePublish() {
+    const currentHtml = editorMode === 'visual' ? (syncFromIframe() || html) : html
     setSaving(true)
     const newStatus = landing.status === 'published' ? 'draft' : 'published'
     const { data } = await supabase
       .from('landings')
-      .update({ status: newStatus, html_content: html })
+      .update({ status: newStatus, html_content: currentHtml })
       .eq('id', landing.id)
       .select()
       .single()
@@ -239,14 +246,15 @@ function LandingDetail({
   }
 
   async function handleSaveHtml() {
+    const currentHtml = editorMode === 'visual' ? (syncFromIframe() || html) : html
     setSaving(true)
     const { data } = await supabase
       .from('landings')
-      .update({ html_content: html })
+      .update({ html_content: currentHtml })
       .eq('id', landing.id)
       .select()
       .single()
-    if (data) setLanding(data as Landing)
+    if (data) { setLanding(data as Landing); setHtml(currentHtml) }
     setSaving(false)
   }
 
@@ -324,7 +332,7 @@ function LandingDetail({
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'visual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
                 Визуальный
               </button>
-              <button onClick={() => setEditorMode('code')}
+              <button onClick={() => { if (editorMode === 'visual') syncFromIframe(); setEditorMode('code') }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'code' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
                 HTML код
               </button>
@@ -374,9 +382,6 @@ function LandingDetail({
                       if (el.textContent.trim() && el.children.length === 0) {
                         el.setAttribute('contenteditable', 'true');
                       }
-                    });
-                    document.addEventListener('input', () => {
-                      window.parent.postMessage({ type: 'htmlUpdate', html: document.documentElement.outerHTML }, '*');
                     });
                   </script>`}
                 className="w-full h-[600px] border-0"
