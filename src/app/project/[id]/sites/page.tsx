@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
@@ -154,6 +154,19 @@ function LandingDetail({
 
   // Editor state
   const [html, setHtml] = useState(landing.html_content ?? '')
+  const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  // Listen for visual edits from iframe
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === 'htmlUpdate' && typeof e.data.html === 'string') {
+        setHtml(e.data.html)
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [])
 
   // Analytics state
   const [buttons, setButtons] = useState<LandingButton[]>([])
@@ -306,33 +319,74 @@ function LandingDetail({
       {activeTab === 'editor' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">
-              HTML-редактор · в будущем здесь будет визуальный конструктор с AI
-            </p>
+            <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+              <button onClick={() => setEditorMode('visual')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'visual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                Визуальный
+              </button>
+              <button onClick={() => setEditorMode('code')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'code' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                HTML код
+              </button>
+            </div>
             <div className="flex gap-2">
-              <button
-                onClick={handleSaveHtml}
-                disabled={saving}
-                className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-              >
+              <button onClick={handleSaveHtml} disabled={saving}
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50">
                 {saving ? 'Сохранение...' : 'Сохранить'}
               </button>
-              <button
-                onClick={handlePublish}
-                disabled={saving}
+              <button onClick={handlePublish} disabled={saving}
                 className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors disabled:opacity-50 ${
-                  landing.status === 'published'
-                    ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    : 'bg-[#6A55F8] text-white hover:bg-[#5040D6]'
-                }`}
-              >
+                  landing.status === 'published' ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-[#6A55F8] text-white hover:bg-[#5040D6]'
+                }`}>
                 {landing.status === 'published' ? 'Снять с публикации' : 'Опубликовать'}
               </button>
+              {landing.status === 'published' && (
+                <a href={`/s/${landing.slug}`} target="_blank" rel="noopener noreferrer"
+                  className="px-4 py-2 text-sm rounded-lg font-medium border border-[#6A55F8]/30 text-[#6A55F8] hover:bg-[#F0EDFF] flex items-center gap-1.5">
+                  Открыть сайт ↗
+                </a>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            {/* Editor pane */}
+          {/* Visual editor — editable iframe */}
+          {editorMode === 'visual' && (
+            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
+                <div className="flex gap-1">
+                  <span className="w-3 h-3 rounded-full bg-red-400" />
+                  <span className="w-3 h-3 rounded-full bg-yellow-400" />
+                  <span className="w-3 h-3 rounded-full bg-green-400" />
+                </div>
+                <span className="text-xs text-gray-400 flex-1 text-center">studency.app/{landing.slug}</span>
+                <span className="text-xs text-[#6A55F8] font-medium">Кликай на текст чтобы редактировать</span>
+              </div>
+              <iframe
+                ref={iframeRef}
+                srcDoc={`${html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
+                  <style>
+                    [contenteditable]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
+                    [contenteditable]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
+                    a[contenteditable]:hover { outline-color: #F59E0B; }
+                  </style>
+                  <script>
+                    document.querySelectorAll('h1,h2,h3,h4,p,span,a,button,li,td,th,label,div:not(:has(*))').forEach(el => {
+                      if (el.textContent.trim() && el.children.length === 0) {
+                        el.setAttribute('contenteditable', 'true');
+                      }
+                    });
+                    document.addEventListener('input', () => {
+                      window.parent.postMessage({ type: 'htmlUpdate', html: document.documentElement.outerHTML }, '*');
+                    });
+                  </script>`}
+                className="w-full h-[600px] border-0"
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
+          )}
+
+          {/* Code editor */}
+          {editorMode === 'code' && (
             <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
                 <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">HTML</span>
@@ -341,32 +395,13 @@ function LandingDetail({
               <textarea
                 value={html}
                 onChange={(e) => setHtml(e.target.value)}
-                className="w-full h-[500px] p-4 text-sm font-mono text-gray-800 resize-none focus:outline-none leading-relaxed"
-                placeholder="<!DOCTYPE html>&#10;<html>&#10;  <head>&#10;    <title>Мой лендинг</title>&#10;  </head>&#10;  <body>&#10;    <h1>Привет!</h1>&#10;  </body>&#10;</html>"
+                className="w-full h-[600px] p-4 text-sm font-mono text-gray-800 resize-none focus:outline-none leading-relaxed"
+                placeholder="<!DOCTYPE html>..."
                 spellCheck={false}
               />
             </div>
+          )}
 
-            {/* Preview pane */}
-            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
-                <div className="flex gap-1">
-                  <span className="w-3 h-3 rounded-full bg-red-400" />
-                  <span className="w-3 h-3 rounded-full bg-yellow-400" />
-                  <span className="w-3 h-3 rounded-full bg-green-400" />
-                </div>
-                <span className="text-xs text-gray-400 flex-1 text-center">
-                  studency.app/{landing.slug}
-                </span>
-              </div>
-              <iframe
-                srcDoc={html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Предпросмотр появится здесь</div>'}
-                className="w-full h-[500px] border-0"
-                sandbox="allow-scripts"
-                title="Предпросмотр"
-              />
-            </div>
-          </div>
         </div>
       )}
 
