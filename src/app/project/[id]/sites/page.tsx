@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { landingTemplates } from '@/lib/landing-templates'
 
 const supabase = createClient()
 
@@ -694,6 +695,7 @@ function LandingsList({
   const [newName, setNewName] = useState('')
   const [newSlug, setNewSlug] = useState('')
   const [saving, setSaving] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
 
   useEffect(() => {
     loadLandings()
@@ -731,12 +733,14 @@ function LandingsList({
   async function handleCreate() {
     if (!newName.trim()) return
     const slug = newSlug.trim() || autoSlug(newName)
+    const template = selectedTemplate ? landingTemplates.find(t => t.id === selectedTemplate) : null
+    const htmlContent = template?.html || null
     const tempLanding: Landing = {
       id: 'temp-' + Date.now(),
       name: newName.trim(),
       slug,
       status: 'draft',
-      html_content: null,
+      html_content: htmlContent,
       meta_title: null,
       meta_description: null,
       funnel_id: null,
@@ -748,6 +752,7 @@ function LandingsList({
     setLandings((prev) => [tempLanding, ...prev])
     setNewName('')
     setNewSlug('')
+    setSelectedTemplate(null)
     setCreating(false)
     setSaving(true)
     const { data } = await supabase
@@ -757,6 +762,7 @@ function LandingsList({
         name: tempLanding.name,
         slug,
         status: 'draft',
+        html_content: htmlContent,
       })
       .select()
       .single()
@@ -806,6 +812,25 @@ function LandingsList({
       {creating && (
         <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 mb-5 shadow-sm">
           <p className="text-sm font-semibold text-gray-800 mb-4">Новый лендинг</p>
+
+          {/* Template selector */}
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-600 mb-2">Шаблон (необязательно)</label>
+            <div className="grid grid-cols-3 gap-3">
+              {landingTemplates.map(t => (
+                <button key={t.id} onClick={() => setSelectedTemplate(selectedTemplate === t.id ? null : t.id)}
+                  className={`p-4 rounded-xl border-2 text-left transition-all ${
+                    selectedTemplate === t.id ? 'border-[#6A55F8] bg-[#F8F7FF]' : 'border-gray-100 hover:border-gray-200'
+                  }`}>
+                  <div className="text-2xl mb-2">{t.icon}</div>
+                  <p className="text-sm font-semibold text-gray-900">{t.name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>
+                </button>
+              ))}
+            </div>
+            {!selectedTemplate && <p className="text-xs text-gray-400 mt-2">Или создайте пустой лендинг</p>}
+          </div>
+
           <div className="grid grid-cols-2 gap-3 mb-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Название</label>
