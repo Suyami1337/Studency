@@ -155,6 +155,8 @@ function LandingDetail({
   // Editor state
   const [html, setHtml] = useState(landing.html_content ?? '')
   const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
+  const [fullscreen, setFullscreen] = useState(false)
+  const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop')
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // Sync visual edits from iframe into html state (called on save/tab switch)
@@ -327,15 +329,35 @@ function LandingDetail({
       {activeTab === 'editor' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-              <button onClick={() => setEditorMode('visual')}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'visual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
-                Визуальный
-              </button>
-              <button onClick={() => { if (editorMode === 'visual') syncFromIframe(); setEditorMode('code') }}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'code' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
-                HTML код
-              </button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                <button onClick={() => setEditorMode('visual')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'visual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                  Визуальный
+                </button>
+                <button onClick={() => { if (editorMode === 'visual') syncFromIframe(); setEditorMode('code') }}
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${editorMode === 'code' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                  HTML код
+                </button>
+              </div>
+              {editorMode === 'visual' && (
+                <>
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                    <button onClick={() => setViewport('desktop')}
+                      className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${viewport === 'desktop' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                      🖥 Desktop
+                    </button>
+                    <button onClick={() => setViewport('mobile')}
+                      className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${viewport === 'mobile' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                      📱 Mobile
+                    </button>
+                  </div>
+                  <button onClick={() => setFullscreen(!fullscreen)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${fullscreen ? 'bg-[#6A55F8] text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {fullscreen ? '✕ Свернуть' : '⛶ На весь экран'}
+                  </button>
+                </>
+              )}
             </div>
             <div className="flex gap-2">
               <button onClick={handleSaveHtml} disabled={saving}
@@ -359,34 +381,62 @@ function LandingDetail({
 
           {/* Visual editor — editable iframe */}
           {editorMode === 'visual' && (
-            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
-                <div className="flex gap-1">
-                  <span className="w-3 h-3 rounded-full bg-red-400" />
-                  <span className="w-3 h-3 rounded-full bg-yellow-400" />
-                  <span className="w-3 h-3 rounded-full bg-green-400" />
+            <div className={fullscreen ? 'fixed inset-0 z-50 bg-gray-100 flex flex-col' : ''}>
+              {fullscreen && (
+                <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                      <button onClick={() => setViewport('desktop')}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'desktop' ? 'bg-white shadow-sm' : 'text-gray-500'}`}>🖥 Desktop</button>
+                      <button onClick={() => setViewport('mobile')}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'mobile' ? 'bg-white shadow-sm' : 'text-gray-500'}`}>📱 Mobile</button>
+                    </div>
+                    <span className="text-xs text-gray-400">studency.app/{landing.slug}</span>
+                    <span className="text-xs text-[#6A55F8]">Кликай на текст чтобы редактировать</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { syncFromIframe(); handleSaveHtml() }} className="px-3 py-1.5 text-xs bg-[#6A55F8] text-white rounded-lg font-medium">Сохранить</button>
+                    <button onClick={() => setFullscreen(false)} className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600">✕ Закрыть</button>
+                  </div>
                 </div>
-                <span className="text-xs text-gray-400 flex-1 text-center">studency.app/{landing.slug}</span>
-                <span className="text-xs text-[#6A55F8] font-medium">Кликай на текст чтобы редактировать</span>
+              )}
+              <div className={`${fullscreen ? 'flex-1 flex items-start justify-center p-4 overflow-auto' : ''}`}>
+                <div className={`bg-white ${fullscreen ? 'shadow-2xl' : 'rounded-xl border border-gray-100'} overflow-hidden transition-all ${
+                  fullscreen
+                    ? viewport === 'mobile' ? 'w-[375px] h-[812px]' : 'w-full max-w-[1280px] h-[calc(100vh-80px)]'
+                    : 'w-full'
+                }`}>
+                  {!fullscreen && (
+                    <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
+                      <div className="flex gap-1">
+                        <span className="w-3 h-3 rounded-full bg-red-400" />
+                        <span className="w-3 h-3 rounded-full bg-yellow-400" />
+                        <span className="w-3 h-3 rounded-full bg-green-400" />
+                      </div>
+                      <span className="text-xs text-gray-400 flex-1 text-center">studency.app/{landing.slug}</span>
+                      <span className="text-xs text-[#6A55F8] font-medium">Кликай на текст</span>
+                    </div>
+                  )}
+                  <iframe
+                    ref={iframeRef}
+                    srcDoc={`${html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
+                      <style>
+                        [contenteditable]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
+                        [contenteditable]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
+                        a[contenteditable]:hover { outline-color: #F59E0B; }
+                      </style>
+                      <script>
+                        document.querySelectorAll('h1,h2,h3,h4,p,span,a,button,li,td,th,label,div:not(:has(*))').forEach(el => {
+                          if (el.textContent.trim() && el.children.length === 0) {
+                            el.setAttribute('contenteditable', 'true');
+                          }
+                        });
+                      </script>`}
+                    className={`w-full border-0 ${fullscreen ? 'h-full' : 'h-[600px]'}`}
+                    sandbox="allow-scripts allow-same-origin"
+                  />
+                </div>
               </div>
-              <iframe
-                ref={iframeRef}
-                srcDoc={`${html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
-                  <style>
-                    [contenteditable]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
-                    [contenteditable]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
-                    a[contenteditable]:hover { outline-color: #F59E0B; }
-                  </style>
-                  <script>
-                    document.querySelectorAll('h1,h2,h3,h4,p,span,a,button,li,td,th,label,div:not(:has(*))').forEach(el => {
-                      if (el.textContent.trim() && el.children.length === 0) {
-                        el.setAttribute('contenteditable', 'true');
-                      }
-                    });
-                  </script>`}
-                className="w-full h-[600px] border-0"
-                sandbox="allow-scripts allow-same-origin"
-              />
             </div>
           )}
 

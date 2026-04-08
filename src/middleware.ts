@@ -4,8 +4,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Skip for static/api
-  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname === '/favicon.ico') {
+  // Skip for static/api/public pages
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname.startsWith('/s/') || pathname === '/favicon.ico') {
     return NextResponse.next()
   }
 
