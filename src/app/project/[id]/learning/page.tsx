@@ -223,7 +223,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
 // ═══════════════════════════════════════
 // COURSE DETAIL (модули + продукт + настройки)
 // ═══════════════════════════════════════
-function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }) {
+function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: () => void; onDeleted?: (id: string) => void }) {
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -348,10 +348,12 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
     await supabase.from('courses').update({ name: courseName, description: courseDesc || null, is_published: published }).eq('id', course.id)
   }
 
+  const [confirmDeleteCourse, setConfirmDeleteCourse] = useState(false)
+
   async function deleteCourse() {
-    if (!confirm('Удалить курс? Все модули и уроки будут удалены.')) return
-    await supabase.from('courses').delete().eq('id', course.id)
-    onBack()
+    if (onDeleted) onDeleted(course.id) // instant remove from list
+    onBack() // instant navigate back
+    supabase.from('courses').delete().eq('id', course.id) // background
   }
 
   async function duplicateCourse() {
@@ -558,7 +560,14 @@ function CourseDetail({ course, onBack }: { course: Course; onBack: () => void }
             <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
             <div className="flex items-center justify-between">
               <p className="text-sm text-gray-700">Удалить курс и все модули/уроки</p>
-              <button onClick={deleteCourse} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+              {!confirmDeleteCourse ? (
+                <button onClick={() => setConfirmDeleteCourse(true)} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+              ) : (
+                <div className="flex gap-2">
+                  <button onClick={deleteCourse} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Да, удалить</button>
+                  <button onClick={() => setConfirmDeleteCourse(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -639,7 +648,7 @@ export default function LearningPage() {
   }
 
   if (selected) {
-    return <CourseDetail course={selected} onBack={() => { clearSelection(); load() }} />
+    return <CourseDetail course={selected} onBack={() => { clearSelection() }} onDeleted={(id) => setCourses(prev => prev.filter(c => c.id !== id))} />
   }
 
   return (
