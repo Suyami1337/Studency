@@ -568,17 +568,21 @@ export default function ChatbotsPage() {
   const [newName, setNewName] = useState('')
   const [newBotId, setNewBotId] = useState('')
 
-  const selectedScenarioId = searchParams.get('open') || null
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlSelectedId = searchParams.get('open') || null
+  const selectedScenarioId = localSelectedId ?? urlSelectedId
 
   function selectScenario(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function load() {

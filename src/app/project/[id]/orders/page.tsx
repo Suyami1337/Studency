@@ -496,18 +496,22 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [showCreate, setShowCreate] = useState(false)
 
-  const openOrderId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlOrderId = searchParams.get('open')
+  const openOrderId = localSelectedId ?? urlOrderId
   const selected = openOrderId ? orders.find(o => o.id === openOrderId) ?? null : null
 
   function selectOrder(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function loadAll() {

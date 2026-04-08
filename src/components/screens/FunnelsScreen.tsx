@@ -860,18 +860,22 @@ export default function FunnelsScreen() {
   const [newFunnelName, setNewFunnelName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
 
-  const openFunnelId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlFunnelId = searchParams.get('open')
+  const openFunnelId = localSelectedId ?? urlFunnelId
   const selectedFunnel = openFunnelId ? funnels.find(f => f.id === openFunnelId) ?? null : null
 
   function selectFunnel(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   const supabase = createClient()

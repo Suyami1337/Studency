@@ -757,7 +757,9 @@ export default function ProductsPage() {
   const router = useRouter()
   const projectId = params.id as string
   const supabase = createClient()
-  const openProductId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlProductId = searchParams.get('open')
+  const openProductId = localSelectedId ?? urlProductId
 
   const [products, setProducts] = useState<Product[]>([])
   const [tariffCounts, setTariffCounts] = useState<Record<string, number>>({})
@@ -769,14 +771,16 @@ export default function ProductsPage() {
   const selected = openProductId ? products.find(p => p.id === openProductId) ?? null : null
 
   function selectProduct(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function loadProducts() {

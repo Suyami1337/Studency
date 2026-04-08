@@ -102,18 +102,22 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
 
-  const lessonId = searchParams.get('lesson')
+  const [localLessonId, setLocalLessonId] = useState<string | null>(null)
+  const urlLessonId = searchParams.get('lesson')
+  const lessonId = localLessonId ?? urlLessonId
   const editingLesson = lessonId ? lessons.find(l => l.id === lessonId) ?? null : null
 
   function selectLesson(id: string) {
+    setLocalLessonId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('lesson', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearLesson() {
+    setLocalLessonId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('lesson')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function loadLessons() {
@@ -236,20 +240,24 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
   const [addingModule, setAddingModule] = useState(false)
   const [newModuleName, setNewModuleName] = useState('')
 
-  const moduleId = searchParams.get('module')
+  const [localModuleId, setLocalModuleId] = useState<string | null>(null)
+  const urlModuleId = searchParams.get('module')
+  const moduleId = localModuleId ?? urlModuleId
   const selectedModule = moduleId ? modules.find(m => m.id === moduleId) ?? null : null
 
   function selectModule(id: string) {
+    setLocalModuleId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('module', id)
     p.delete('lesson')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearModule() {
+    setLocalModuleId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('module')
     p.delete('lesson')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   // Product link state
@@ -594,20 +602,24 @@ export default function LearningPage() {
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
 
-  const openCourseId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlCourseId = searchParams.get('open')
+  const openCourseId = localSelectedId ?? urlCourseId
   const selected = openCourseId ? courses.find(c => c.id === openCourseId) ?? null : null
 
   function selectCourse(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
     p.delete('module')
     p.delete('lesson')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function load() {

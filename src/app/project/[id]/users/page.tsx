@@ -401,18 +401,22 @@ export default function UsersPage() {
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
 
-  const openCustomerId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlCustomerId = searchParams.get('open')
+  const openCustomerId = localSelectedId ?? urlCustomerId
   const selected = openCustomerId ? customers.find(c => c.id === openCustomerId) ?? null : null
 
   function selectCustomer(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   async function loadCustomers() {

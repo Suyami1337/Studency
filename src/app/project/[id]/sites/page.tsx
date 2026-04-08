@@ -1040,18 +1040,22 @@ export default function SitesPage() {
   const router = useRouter()
   const [landingsList, setLandingsList] = useState<Landing[]>([])
 
-  const openLandingId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlLandingId = searchParams.get('open')
+  const openLandingId = localSelectedId ?? urlLandingId
   const selectedLanding = openLandingId ? landingsList.find(l => l.id === openLandingId) ?? null : null
 
   function selectLanding(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   function handleBack(updated: Landing) {

@@ -319,18 +319,22 @@ export default function CrmScreen() {
   const [newBoardName, setNewBoardName] = useState('')
   const [showCreate, setShowCreate] = useState(false)
 
-  const openBoardId = searchParams.get('open')
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const urlBoardId = searchParams.get('open')
+  const openBoardId = localSelectedId ?? urlBoardId
   const selectedBoard = openBoardId ? boards.find(b => b.id === openBoardId) ?? null : null
 
   function selectBoard(id: string) {
+    setLocalSelectedId(id)
     const p = new URLSearchParams(searchParams.toString())
     p.set('open', id)
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
   function clearSelection() {
+    setLocalSelectedId(null)
     const p = new URLSearchParams(searchParams.toString())
     p.delete('open')
-    router.push(`?${p.toString()}`, { scroll: false })
+    router.replace(`?${p.toString()}`, { scroll: false })
   }
 
   const supabase = createClient()
