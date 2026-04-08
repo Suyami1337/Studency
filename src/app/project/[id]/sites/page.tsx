@@ -400,11 +400,11 @@ function LandingDetail({
                   </div>
                 </div>
               )}
-              <div className={`${fullscreen ? 'flex-1 flex items-start justify-center p-4 overflow-auto' : ''}`}>
-                <div className={`bg-white ${fullscreen ? 'shadow-2xl' : 'rounded-xl border border-gray-100'} overflow-hidden transition-all ${
-                  fullscreen
-                    ? viewport === 'mobile' ? 'w-[375px] h-[812px]' : 'w-full max-w-[1280px] h-[calc(100vh-80px)]'
-                    : 'w-full'
+              <div className={`${fullscreen ? 'flex-1 flex items-start justify-center p-4 overflow-auto' : viewport === 'mobile' ? 'flex justify-center py-4' : ''}`}>
+                <div className={`bg-white ${fullscreen ? 'shadow-2xl' : viewport === 'mobile' ? 'shadow-xl rounded-[2rem] border-[8px] border-gray-800' : 'rounded-xl border border-gray-100'} overflow-hidden transition-all ${
+                  viewport === 'mobile'
+                    ? fullscreen ? 'w-[375px] h-[812px]' : 'w-[375px] h-[700px]'
+                    : fullscreen ? 'w-full max-w-[1280px] h-[calc(100vh-80px)]' : 'w-full'
                 }`}>
                   {!fullscreen && (
                     <div className="px-4 py-2.5 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
