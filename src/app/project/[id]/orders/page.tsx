@@ -106,7 +106,7 @@ function OrderDetail({ order, onBack, onUpdated }: { order: Order; onBack: () =>
     setAddingPay(true)
     await supabase.from('payments').insert({ order_id: order.id, amount: amt, note: newPayNote || null })
     setNewPayAmount(''); setNewPayNote(''); setShowPayForm(false)
-    await load()
+    load()
     setAddingPay(false)
   }
 
@@ -115,7 +115,7 @@ function OrderDetail({ order, onBack, onUpdated }: { order: Order; onBack: () =>
     setAddingNote(true)
     await supabase.from('order_notes').insert({ order_id: order.id, text: newNote.trim() })
     setNewNote('')
-    await load()
+    load()
     setAddingNote(false)
   }
 

@@ -5,8 +5,6 @@ import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
 
-const supabase = createClient()
-
 type Funnel = {
   id: string
   name: string
@@ -53,6 +51,7 @@ function StatCard({ label, value, sub, icon }: { label: string; value: string | 
 }
 
 export default function AnalyticsPage() {
+  const supabase = createClient()
   const params = useParams()
   const projectId = params.id as string
 

@@ -172,7 +172,7 @@ function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId
       await supabase.from('tariff_access').insert(rules)
     }
     setSaving(false)
-    await loadData()
+    loadData()
   }
 
   const totalChecked = checkedLessons.size
@@ -308,6 +308,7 @@ function ProductDetail({
   const [savingTariff, setSavingTariff] = useState(false)
   const [editingTariffId, setEditingTariffId] = useState<string | null>(null)
   const [accessTariff, setAccessTariff] = useState<Tariff | null>(null)
+  const [deleteError, setDeleteError] = useState('')
   const detailParams = useParams()
   const projectId = detailParams.id as string
 
@@ -415,14 +416,15 @@ function ProductDetail({
         )
       }
     }
-    await loadTariffs()
+    loadTariffs()
   }
 
   async function deleteTariff(id: string) {
     // Check if any orders use this tariff
     const { count } = await supabase.from('orders').select('*', { count: 'exact', head: true }).eq('tariff_id', id)
     if (count && count > 0) {
-      alert(`Невозможно удалить тариф: ${count} заказ(ов) привязано. Сначала удалите или переназначьте заказы.`)
+      setDeleteError(`Невозможно удалить тариф: ${count} заказ(ов) привязано. Сначала удалите или переназначьте заказы.`)
+      setTimeout(() => setDeleteError(''), 3000)
       return
     }
     await supabase.from('tariffs').delete().eq('id', id)
@@ -560,6 +562,10 @@ function ProductDetail({
                   className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Отмена</button>
               </div>
             </div>
+          )}
+
+          {deleteError && (
+            <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-4 py-2.5">{deleteError}</p>
           )}
 
           {loadingTariffs ? (
@@ -868,7 +874,7 @@ export default function ProductsPage() {
           }
         }
       }
-      await loadProducts()
+      loadProducts()
       selectProduct(newProduct.id)
     }
   }

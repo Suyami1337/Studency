@@ -17,6 +17,7 @@ export default function ProjectsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState('')
   const router = useRouter()
   const supabase = createClient()
 
@@ -49,7 +50,7 @@ export default function ProjectsPage() {
 
     if (error) {
       console.error('Create project error:', error)
-      alert('Ошибка: ' + error.message)
+      setCreateError('Ошибка: ' + error.message)
       setCreating(false)
       return
     }
@@ -129,11 +130,14 @@ export default function ProjectsPage() {
               <input
                 type="text"
                 value={newName}
-                onChange={e => setNewName(e.target.value)}
+                onChange={e => { setNewName(e.target.value); setCreateError('') }}
                 placeholder="Название проекта"
                 autoFocus
                 className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8] mb-3"
               />
+              {createError && (
+                <p className="text-sm text-red-500 mb-3">{createError}</p>
+              )}
               <div className="flex items-center gap-2">
                 <button type="submit" disabled={creating}
                   className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">

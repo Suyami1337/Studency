@@ -5,8 +5,6 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
 
-const supabase = createClient()
-
 type Customer = {
   id: string
   full_name: string | null
@@ -73,6 +71,7 @@ function StatusBadge({ status }: { status: string }) {
 // ─── Customer Detail ──────────────────────────────────────────────────────────
 
 function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; onBack: () => void; onUpdated: (c: Customer) => void }) {
+  const supabase = createClient()
   const [current, setCurrent] = useState<Customer>(customer)
   const [orders, setOrders] = useState<Order[]>([])
   const [actions, setActions] = useState<CustomerAction[]>([])
@@ -330,6 +329,7 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
 // ─── Create Customer Form ─────────────────────────────────────────────────────
 
 function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: string; onCreated: () => void; onCancel: () => void }) {
+  const supabase = createClient()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
@@ -390,6 +390,7 @@ function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: str
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
+  const supabase = createClient()
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()

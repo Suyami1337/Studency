@@ -7,8 +7,6 @@ import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssista
 import { SkeletonList } from '@/components/ui/Skeleton'
 import { landingTemplates } from '@/lib/landing-templates'
 
-const supabase = createClient()
-
 type Landing = {
   id: string
   name: string
@@ -147,6 +145,7 @@ function LandingDetail({
   onBack: (updated: Landing) => void
   projectId: string
 }) {
+  const supabase = createClient()
   const [landing, setLanding] = useState<Landing>(initialLanding)
   const [activeTab, setActiveTab] = useState<Tab>('editor')
   const [aiOpen, setAiOpen] = useState(false)
@@ -779,6 +778,7 @@ function LandingsList({
   onSelect: (l: Landing) => void
   onLandingsLoaded?: (landings: Landing[]) => void
 }) {
+  const supabase = createClient()
   const [landings, setLandings] = useState<Landing[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)

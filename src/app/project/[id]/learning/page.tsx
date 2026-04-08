@@ -6,8 +6,6 @@ import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
 
-const supabase = createClient()
-
 type Course = { id: string; project_id: string; name: string; description: string | null; is_published: boolean; product_id: string | null; created_at: string; module_count?: number }
 type Module = { id: string; course_id: string; name: string; order_position: number }
 type Lesson = { id: string; module_id: string; name: string; content: string | null; video_url: string | null; has_homework: boolean; homework_description: string | null; order_position: number }
@@ -16,6 +14,7 @@ type Lesson = { id: string; module_id: string; name: string; content: string | n
 // LESSON EDITOR (блочный редактор урока)
 // ═══════════════════════════════════════
 function LessonEditor({ lesson, onBack, onUpdate }: { lesson: Lesson; onBack: () => void; onUpdate: () => void }) {
+  const supabase = createClient()
   const [name, setName] = useState(lesson.name)
   const [content, setContent] = useState(lesson.content || '')
   const [videoUrl, setVideoUrl] = useState(lesson.video_url || '')
@@ -95,6 +94,7 @@ function LessonEditor({ lesson, onBack, onUpdate }: { lesson: Lesson; onBack: ()
 // MODULE DETAIL (уроки внутри модуля)
 // ═══════════════════════════════════════
 function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string; onBack: () => void }) {
+  const supabase = createClient()
   const searchParams = useSearchParams()
   const router = useRouter()
   const [lessons, setLessons] = useState<Lesson[]>([])
@@ -157,7 +157,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
       video_url: lesson.video_url, has_homework: lesson.has_homework,
       homework_description: lesson.homework_description, order_position: lessons.length,
     })
-    await loadLessons()
+    loadLessons()
   }
 
   if (editingLesson) {
@@ -224,6 +224,7 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
 // COURSE DETAIL (модули + продукт + настройки)
 // ═══════════════════════════════════════
 function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: () => void; onDeleted?: (id: string) => void }) {
+  const supabase = createClient()
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -323,7 +324,7 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
         )
       }
     }
-    await loadModules()
+    loadModules()
   }
 
   async function createProductForCourse() {
@@ -332,13 +333,12 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
     if (data) {
       setLinkedProductId(data.id)
       await supabase.from('courses').update({ product_id: data.id }).eq('id', course.id)
-      await loadProducts()
-      // Create default tariffs
-      await supabase.from('tariffs').insert([
+      loadProducts()
+      // Create default tariffs in background
+      supabase.from('tariffs').insert([
         { product_id: data.id, name: 'Базовый', price: 2990, features: ['Доступ к курсу', 'Видеозаписи'], order_position: 0 },
         { product_id: data.id, name: 'Стандарт', price: 29900, features: ['Доступ к курсу', 'Куратор', 'Обратная связь'], order_position: 1 },
-      ])
-      await loadTariffs(data.id)
+      ]).then(() => loadTariffs(data.id))
     }
     setNewProductName('')
     setCreatingProduct(false)
@@ -584,6 +584,7 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
 // COURSE LIST
 // ═══════════════════════════════════════
 export default function LearningPage() {
+  const supabase = createClient()
   const params = useParams()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -610,13 +611,14 @@ export default function LearningPage() {
   }
 
   async function load() {
-    setLoading(true)
     const { data } = await supabase.from('courses').select('*').eq('project_id', projectId).order('created_at')
     if (data) {
-      const withCounts = await Promise.all(data.map(async (c) => {
-        const { count } = await supabase.from('course_modules').select('*', { count: 'exact', head: true }).eq('course_id', c.id)
-        return { ...c, module_count: count ?? 0 }
-      }))
+      const { data: allModules } = await supabase.from('course_modules').select('course_id').in('course_id', data.map(c => c.id))
+      const moduleCounts: Record<string, number> = {}
+      for (const m of (allModules ?? []) as { course_id: string }[]) {
+        moduleCounts[m.course_id] = (moduleCounts[m.course_id] ?? 0) + 1
+      }
+      const withCounts = data.map(c => ({ ...c, module_count: moduleCounts[c.id] ?? 0 }))
       setCourses(withCounts)
     }
     setLoading(false)
