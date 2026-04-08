@@ -877,7 +877,6 @@ export default function FunnelsScreen() {
   const supabase = createClient()
 
   async function loadFunnels() {
-    setLoading(true)
     const { data } = await supabase
       .from('funnels')
       .select('*')

@@ -70,8 +70,6 @@ export default function AnalyticsPage() {
   useEffect(() => { loadAll() }, [projectId])
 
   async function loadAll() {
-    setLoading(true)
-
     const [
       customersRes,
       ordersRes,
@@ -108,22 +106,28 @@ export default function AnalyticsPage() {
     const visits = (visitsRes.data ?? []).reduce((s, l) => s + (l.visits ?? 0), 0)
     setTotalVisits(visits)
 
-    // Funnels with customer counts
+    // Funnels with customer counts — O(n) with Map
     if (funnelsRes.data) {
-      const positions = funnelPositionsRes.data ?? []
+      const positionMap = new Map<string, number>()
+      for (const p of (funnelPositionsRes.data ?? [])) {
+        positionMap.set(p.funnel_id, (positionMap.get(p.funnel_id) ?? 0) + 1)
+      }
       const counted = funnelsRes.data.map(f => ({
         ...f,
-        customer_count: positions.filter(p => p.funnel_id === f.id).length,
+        customer_count: positionMap.get(f.id) ?? 0,
       }))
       setFunnels(counted)
     }
 
-    // Bots with scenario counts
+    // Bots with scenario counts — O(n) with Map
     if (botsRes.data) {
-      const scenarios = scenariosRes.data ?? []
+      const scenarioMap = new Map<string, number>()
+      for (const s of (scenariosRes.data ?? [])) {
+        scenarioMap.set(s.bot_id, (scenarioMap.get(s.bot_id) ?? 0) + 1)
+      }
       const counted = botsRes.data.map(b => ({
         ...b,
-        scenario_count: scenarios.filter(s => s.bot_id === b.id).length,
+        scenario_count: scenarioMap.get(b.id) ?? 0,
       }))
       setBots(counted)
     }
@@ -131,13 +135,21 @@ export default function AnalyticsPage() {
     // Landings
     if (landingsRes.data) setLandings(landingsRes.data as Landing[])
 
-    // Products with order counts + revenue
+    // Products with order counts + revenue — O(n) with Map
     if (productsRes.data) {
-      const allOrders = ordersDetailRes.data ?? []
+      const orderCountMap = new Map<string, number>()
+      const revenueMap = new Map<string, number>()
+      for (const o of (ordersDetailRes.data ?? [])) {
+        if (!o.product_id) continue
+        orderCountMap.set(o.product_id, (orderCountMap.get(o.product_id) ?? 0) + 1)
+        if (o.status === 'paid') {
+          revenueMap.set(o.product_id, (revenueMap.get(o.product_id) ?? 0) + (o.paid_amount ?? 0))
+        }
+      }
       const counted = productsRes.data.map(p => ({
         ...p,
-        order_count: allOrders.filter(o => o.product_id === p.id).length,
-        revenue: allOrders.filter(o => o.product_id === p.id && o.status === 'paid').reduce((s, o) => s + (o.paid_amount ?? 0), 0),
+        order_count: orderCountMap.get(p.id) ?? 0,
+        revenue: revenueMap.get(p.id) ?? 0,
       }))
       setProducts(counted)
     }

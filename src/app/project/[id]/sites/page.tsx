@@ -172,6 +172,7 @@ function LandingDetail({
   const [settingFunnelId, setSettingFunnelId] = useState(landing.funnel_id ?? '')
   const [funnels, setFunnels] = useState<Funnel[]>([])
   const [deletingLanding, setDeletingLanding] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   // Load buttons when analytics tab opened
   useEffect(() => {
@@ -268,7 +269,10 @@ function LandingDetail({
   }
 
   async function handleDeleteLanding() {
-    if (!confirm('Удалить лендинг? Это действие необратимо.')) return
+    if (!confirmDelete) {
+      setConfirmDelete(true)
+      return
+    }
     setDeletingLanding(true)
     await supabase.from('landings').delete().eq('id', landing.id)
     onBack({ ...landing, id: '__deleted__' })
@@ -626,13 +630,32 @@ function LandingDetail({
             >
               {saving ? 'Сохранение...' : 'Сохранить настройки'}
             </button>
-            <button
-              onClick={handleDeleteLanding}
-              disabled={deletingLanding}
-              className="px-4 py-2.5 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {deletingLanding ? 'Удаление...' : 'Удалить лендинг'}
-            </button>
+            {confirmDelete ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-red-600 font-medium">Точно удалить?</span>
+                <button
+                  onClick={handleDeleteLanding}
+                  disabled={deletingLanding}
+                  className="px-3 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 transition-colors"
+                >
+                  {deletingLanding ? 'Удаляю...' : 'Да, удалить'}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 rounded-lg transition-colors"
+                >
+                  Отмена
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleDeleteLanding}
+                disabled={deletingLanding}
+                className="px-4 py-2.5 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Удалить лендинг
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -678,7 +701,6 @@ function LandingsList({
   }, [])
 
   async function loadLandings() {
-    setLoading(true)
     const { data } = await supabase
       .from('landings')
       .select('*')

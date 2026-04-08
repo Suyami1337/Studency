@@ -289,18 +289,18 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
 
   async function addButton(messageId: string) {
     const msgButtons = buttons.filter(b => b.message_id === messageId)
-    await supabase.from('scenario_buttons').insert({
+    const { data } = await supabase.from('scenario_buttons').insert({
       message_id: messageId,
       order_position: msgButtons.length,
       text: 'Кнопка',
       action_type: 'url',
-    })
-    await loadData()
+    }).select().single()
+    if (data) setButtons(prev => [...prev, data as Button])
   }
 
   async function deleteButton(id: string) {
+    setButtons(prev => prev.filter(b => b.id !== id))
     await supabase.from('scenario_buttons').delete().eq('id', id)
-    await loadData()
   }
 
   async function updateButton(id: string, data: Partial<Button>) {

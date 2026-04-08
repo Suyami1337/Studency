@@ -48,7 +48,6 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
   const supabase = createClient()
 
   async function loadBoardData() {
-    setLoading(true)
     const [stagesRes, customersRes] = await Promise.all([
       supabase
         .from('crm_board_stages')
@@ -337,7 +336,6 @@ export default function CrmScreen() {
   const supabase = createClient()
 
   async function loadBoards() {
-    setLoading(true)
     const { data } = await supabase
       .from('crm_boards')
       .select('*')

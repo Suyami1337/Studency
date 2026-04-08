@@ -129,9 +129,10 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
   async function addNote() {
     if (!newNote.trim()) return
     setAddingNote(true)
-    await supabase.from('customer_notes').insert({ customer_id: current.id, text: newNote.trim() })
+    const text = newNote.trim()
     setNewNote('')
-    await load()
+    const { data } = await supabase.from('customer_notes').insert({ customer_id: current.id, text }).select().single()
+    if (data) setNotes(prev => [data as CustomerNote, ...prev])
     setAddingNote(false)
   }
 
@@ -414,7 +415,6 @@ export default function UsersPage() {
   }
 
   async function loadCustomers() {
-    setLoading(true)
     const { data } = await supabase
       .from('customers')
       .select('*')

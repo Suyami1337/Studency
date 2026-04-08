@@ -59,7 +59,6 @@ function TariffDetail({ tariff, projectId, onBack }: { tariff: Tariff; projectId
   const [checkedLessons, setCheckedLessons] = useState<Set<string>>(new Set())
 
   async function loadData() {
-    setLoading(true)
     const [accessRes, coursesRes] = await Promise.all([
       supabase.from('tariff_access').select('*').eq('tariff_id', tariff.id),
       supabase.from('courses').select('id, name').eq('project_id', projectId),
@@ -320,14 +319,12 @@ function ProductDetail({
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   async function loadTariffs() {
-    setLoadingTariffs(true)
     const { data } = await supabase.from('tariffs').select('*').eq('product_id', product.id).order('price')
     if (data) setTariffs(data as Tariff[])
     setLoadingTariffs(false)
   }
 
   async function loadStats() {
-    setLoadingStats(true)
     const { data } = await supabase
       .from('orders')
       .select('tariff_id, amount')
@@ -777,7 +774,6 @@ export default function ProductsPage() {
   }
 
   async function loadProducts() {
-    setLoading(true)
     const { data } = await supabase.from('products').select('*').eq('project_id', projectId).order('created_at')
     if (data) {
       const prods = data as Product[]

@@ -511,7 +511,6 @@ export default function OrdersPage() {
   }
 
   async function loadAll() {
-    setLoading(true)
     const [oRes, cRes, pRes, tRes] = await Promise.all([
       supabase.from('orders').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
       supabase.from('customers').select('id, name, email').eq('project_id', projectId).order('name'),

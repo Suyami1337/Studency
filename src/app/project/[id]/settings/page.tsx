@@ -63,7 +63,8 @@ export default function SettingsPage() {
       setNewToken('')
       setNewName('')
       setAdding(false)
-      await loadBots()
+      // Refresh list to pick up newly inserted bot with server-filled fields
+      loadBots()
     } catch {
       setError('Ошибка сети')
     }
