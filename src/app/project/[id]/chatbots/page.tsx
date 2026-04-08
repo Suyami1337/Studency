@@ -219,7 +219,113 @@ function MessageCard({
 // =============================================
 // SCENARIO DETAIL
 // =============================================
-function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () => void }) {
+function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
+  scenario: Scenario; supabase: ReturnType<typeof createClient>; onBack: () => void
+  onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void
+}) {
+  const params = useParams()
+  const projectId = params.id as string
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [duplicating, setDuplicating] = useState(false)
+  const [bots, setBots] = useState<TelegramBot[]>([])
+  const [selectedBotId, setSelectedBotId] = useState(scenario.telegram_bot_id || '')
+
+  useEffect(() => {
+    supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId).then(({ data }) => setBots((data ?? []) as TelegramBot[]))
+  }, [projectId, supabase])
+
+  async function updateName(name: string) {
+    if (name.trim()) await supabase.from('chatbot_scenarios').update({ name: name.trim() }).eq('id', scenario.id)
+  }
+  async function updateStatus(status: string) {
+    await supabase.from('chatbot_scenarios').update({ status }).eq('id', scenario.id)
+  }
+  async function updateBot(botId: string) {
+    setSelectedBotId(botId)
+    await supabase.from('chatbot_scenarios').update({ telegram_bot_id: botId || null }).eq('id', scenario.id)
+  }
+  async function deleteScenario() {
+    if (onDeleted) onDeleted(scenario.id)
+    onBack()
+    await supabase.from('chatbot_scenarios').delete().eq('id', scenario.id)
+  }
+  async function duplicateScenario() {
+    if (duplicating) return
+    setDuplicating(true)
+    const temp: Scenario = { ...scenario, id: 'temp-' + Date.now(), name: `${scenario.name} (копия)`, status: 'draft', created_at: new Date().toISOString() }
+    if (onDuplicated) onDuplicated(temp)
+    onBack()
+    const { data: newS } = await supabase.from('chatbot_scenarios').insert({
+      project_id: projectId, name: temp.name, telegram_bot_id: scenario.telegram_bot_id, status: 'draft',
+    }).select().single()
+    if (newS) {
+      // Copy messages
+      const { data: msgs } = await supabase.from('scenario_messages').select('*').eq('scenario_id', scenario.id)
+      if (msgs && msgs.length > 0) {
+        await supabase.from('scenario_messages').insert(
+          msgs.map((m: Record<string, unknown>) => ({ ...m, id: undefined, scenario_id: newS.id }))
+        )
+      }
+    }
+  }
+
+  return (
+    <div className="max-w-xl space-y-4">
+      <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-900">Основные</h3>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Название сценария</label>
+          <input type="text" defaultValue={scenario.name} onBlur={e => updateName(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Статус</label>
+          <select defaultValue={scenario.status} onChange={e => updateStatus(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+            <option value="draft">Черновик</option>
+            <option value="active">Активен</option>
+            <option value="paused">Пауза</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Привязка к Telegram-боту</label>
+          <select value={selectedBotId} onChange={e => updateBot(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+            <option value="">Не привязан</option>
+            {bots.map(b => <option key={b.id} value={b.id}>@{b.bot_username} — {b.name}</option>)}
+          </select>
+          {bots.length === 0 && <p className="text-xs text-amber-600 mt-1">Подключите бота в Настройки → Интеграции</p>}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-2">Дублировать сценарий</h3>
+        <p className="text-xs text-gray-500 mb-3">Создаст копию со всеми сообщениями.</p>
+        <button onClick={duplicateScenario} disabled={duplicating}
+          className="px-4 py-2 rounded-lg text-sm font-medium text-[#6A55F8] border border-[#6A55F8]/30 hover:bg-[#F0EDFF] disabled:opacity-50">
+          {duplicating ? 'Дублирую...' : '📋 Дублировать сценарий'}
+        </button>
+      </div>
+
+      <div className="bg-white rounded-xl border border-red-100 p-5">
+        <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-700">Удалить сценарий и все сообщения</p>
+          {!confirmDelete ? (
+            <button onClick={() => setConfirmDelete(true)} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={deleteScenario} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Да, удалить</button>
+              <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenario: Scenario; onBack: () => void; onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void }) {
   const [activeTab, setActiveTab] = useState<'scenario' | 'users' | 'analytics' | 'settings'>('scenario')
   const [showAI, setShowAI] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -431,16 +537,7 @@ function ScenarioDetail({ scenario, onBack }: { scenario: Scenario; onBack: () =
       )}
 
       {activeTab === 'settings' && (
-        <div className="max-w-xl bg-white rounded-xl border border-gray-100 p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Название сценария</label>
-            <input type="text" defaultValue={scenario.name} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Статус</label>
-            <p className="text-sm text-gray-500">{scenario.status === 'active' ? 'Активен' : 'Черновик'}</p>
-          </div>
-        </div>
+        <SettingsTab scenario={scenario} supabase={supabase} onBack={onBack} onDeleted={onDeleted} onDuplicated={onDuplicated} />
       )}
 
       <AiAssistantOverlay
@@ -523,7 +620,10 @@ export default function ChatbotsPage() {
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId)
 
   if (selectedScenario) {
-    return <ScenarioDetail scenario={selectedScenario} onBack={clearSelection} />
+    return <ScenarioDetail scenario={selectedScenario} onBack={clearSelection}
+      onDeleted={(id) => setScenarios(prev => prev.filter(s => s.id !== id))}
+      onDuplicated={(s) => setScenarios(prev => [...prev, s])}
+    />
   }
 
   return (
