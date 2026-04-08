@@ -104,26 +104,24 @@ function FunnelDetail({ funnel, onBack, onDeleted, onDuplicated }: { funnel: Fun
   const params = useParams()
 
   async function loadStages() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('funnel_stages')
-      .select('*')
-      .eq('funnel_id', funnel.id)
-      .order('order_position')
-    setStages(data ?? [])
+    // Load stages and counts in parallel, no blocking loading state
+    const [stagesRes, countsRes] = await Promise.all([
+      supabase.from('funnel_stages').select('*').eq('funnel_id', funnel.id).order('order_position'),
+      supabase.from('customer_funnel_positions').select('stage_id').eq('funnel_id', funnel.id),
+    ])
+    const stagesData = stagesRes.data ?? []
+    setStages(stagesData)
 
-    // Load customer counts per stage
-    if (data && data.length > 0) {
+    // Count per stage from single query result
+    if (stagesData.length > 0) {
       const counts: Record<string, number> = {}
-      await Promise.all(
-        data.map(async (stage) => {
-          const { count } = await supabase
-            .from('customer_funnel_positions')
-            .select('*', { count: 'exact', head: true })
-            .eq('stage_id', stage.id)
-          counts[stage.id] = count ?? 0
-        })
-      )
+      for (const row of (countsRes.data ?? []) as { stage_id: string }[]) {
+        counts[row.stage_id] = (counts[row.stage_id] ?? 0) + 1
+      }
+      // Ensure all stages have a count
+      for (const stage of stagesData) {
+        if (!(stage.id in counts)) counts[stage.id] = 0
+      }
       setStageCounts(counts)
     }
     setLoading(false)
