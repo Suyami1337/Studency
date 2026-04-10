@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createServiceClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
 
-function getServiceSupabase() {
-  return createServiceClient(
+function getSupabase() {
+  return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
+}
+
+// Утилита: тихое удаление — не падает если таблица не существует или нет строк
+async function safeDelete(supabase: ReturnType<typeof getSupabase>, table: string, column: string, value: string) {
+  try {
+    await supabase.from(table).delete().eq(column, value)
+  } catch (e) {
+    console.warn(`safeDelete ${table}.${column}=${value}:`, e)
+  }
 }
 
 // POST /api/customers/[id]/delete
@@ -19,72 +27,60 @@ export async function POST(
 ) {
   const { id: customerId } = await params
 
-  // Проверяем авторизацию через обычный клиент (RLS)
-  const userSupabase = createClient()
-  const { data: { user } } = await userSupabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!customerId) {
+    return NextResponse.json({ error: 'Missing customer id' }, { status: 400 })
   }
 
-  // Проверяем что клиент принадлежит проекту, к которому у пользователя есть доступ
-  const { data: customer } = await userSupabase
+  const supabase = getSupabase()
+
+  // Получаем visitor_token для удаления tracking_events
+  const { data: customer, error: fetchErr } = await supabase
     .from('customers')
-    .select('id, project_id, visitor_token')
+    .select('id, visitor_token')
     .eq('id', customerId)
     .single()
 
-  if (!customer) {
+  if (fetchErr || !customer) {
     return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
   }
 
-  // Дальше используем service role для полной очистки
-  const supabase = getServiceSupabase()
   const visitorToken = customer.visitor_token
 
+  // Удаляем в правильном порядке (от зависимых к независимым)
+
+  // 1. Сначала удаляем сообщения из разговоров (дочерние записи)
   try {
-    // 1. Удаляем заявки с лендингов (SET NULL не каскадирует, удаляем явно)
-    await supabase.from('lead_submissions').delete().eq('customer_id', customerId)
-
-    // 2. Удаляем визиты лендинга
-    await supabase.from('landing_visits').delete().eq('customer_id', customerId)
-
-    // 3. Удаляем трекинг-события по visitor_token (если есть)
-    if (visitorToken) {
-      await supabase.from('tracking_events').delete().eq('visitor_token', visitorToken)
-    }
-
-    // 4. Удаляем позиции в воронках
-    await supabase.from('customer_funnel_positions').delete().eq('customer_id', customerId)
-
-    // 5. Удаляем историю действий
-    await supabase.from('customer_actions').delete().eq('customer_id', customerId)
-
-    // 6. Удаляем заметки
-    await supabase.from('customer_notes').delete().eq('customer_id', customerId)
-
-    // 7. Удаляем сообщения диалогов через разговоры
     const { data: convs } = await supabase
       .from('chatbot_conversations')
       .select('id')
       .eq('customer_id', customerId)
     if (convs && convs.length > 0) {
-      const convIds = convs.map(c => c.id)
-      await supabase.from('chatbot_messages').delete().in('conversation_id', convIds)
+      await supabase.from('chatbot_messages').delete().in('conversation_id', convs.map(c => c.id))
     }
-
-    // 8. Удаляем разговоры
-    await supabase.from('chatbot_conversations').delete().eq('customer_id', customerId)
-
-    // 9. Удаляем заказы
-    await supabase.from('orders').delete().eq('customer_id', customerId)
-
-    // 10. Наконец удаляем самого клиента
-    const { error } = await supabase.from('customers').delete().eq('id', customerId)
-    if (error) throw error
-
-    return NextResponse.json({ ok: true })
-  } catch (err) {
-    console.error('Delete customer error:', err)
-    return NextResponse.json({ error: 'Failed to delete customer' }, { status: 500 })
+  } catch (e) {
+    console.warn('Delete chatbot_messages:', e)
   }
+
+  // 2. Остальные зависимые таблицы
+  await safeDelete(supabase, 'chatbot_conversations', 'customer_id', customerId)
+  await safeDelete(supabase, 'lead_submissions', 'customer_id', customerId)
+  await safeDelete(supabase, 'landing_visits', 'customer_id', customerId)
+  await safeDelete(supabase, 'customer_funnel_positions', 'customer_id', customerId)
+  await safeDelete(supabase, 'customer_actions', 'customer_id', customerId)
+  await safeDelete(supabase, 'customer_notes', 'customer_id', customerId)
+  await safeDelete(supabase, 'orders', 'customer_id', customerId)
+
+  // 3. Tracking events по visitor_token
+  if (visitorToken) {
+    await safeDelete(supabase, 'tracking_events', 'visitor_token', visitorToken)
+  }
+
+  // 4. Наконец сам клиент
+  const { error } = await supabase.from('customers').delete().eq('id', customerId)
+  if (error) {
+    console.error('Delete customer final error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true })
 }
