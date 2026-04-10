@@ -41,6 +41,7 @@ function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, o
   onChange: (mediaId: string | null, type: string | null, url: string | null, fileName: string | null) => void
 }) {
   const supabase = createClient()
+  const inputId = React.useId()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sendAsVideoNote, setSendAsVideoNote] = useState(mediaType === 'video_note')
@@ -94,7 +95,7 @@ function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, o
         <div className="border border-dashed border-gray-300 rounded-lg p-3 text-center">
           <input
             type="file"
-            id={`media-upload-${Math.random()}`}
+            id={inputId}
             className="hidden"
             accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip"
             onChange={ev => {
@@ -104,7 +105,7 @@ function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, o
             disabled={uploading}
           />
           <label
-            htmlFor={`media-upload-${Math.random()}`}
+            htmlFor={inputId}
             className="inline-block cursor-pointer text-xs text-[#6A55F8] font-medium hover:underline"
           >
             {uploading ? 'Загрузка…' : '+ Прикрепить файл'}
