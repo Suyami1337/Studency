@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { sendTelegramMessage } from '@/lib/telegram'
-import { sendScenarioMessage } from '@/lib/scenario-sender'
+import { sendScenarioMessage, sendFollowupContent } from '@/lib/scenario-sender'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -40,17 +39,20 @@ export async function GET(_request: NextRequest) {
     for (const item of followupItems) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const followup = followupMap.get(item.followup_id) as any
-      if (!followup || !followup.text) {
+      // Пропускаем если ни текста ни медиа
+      if (!followup || (!followup.text && !followup.media_url)) {
         await supabase.from('followup_queue').update({ status: 'sent', sent_at: now }).eq('id', item.id)
         continue
       }
       try {
         const channel = followup.channel ?? 'telegram'
         if (channel === 'telegram' || channel === 'both') {
-          await sendTelegramMessage(item.bot_token, item.chat_id, followup.text)
+          await sendFollowupContent(item.bot_token, item.chat_id, followup)
         }
         await supabase.from('chatbot_messages').insert({
-          conversation_id: item.conversation_id, direction: 'outgoing', content: followup.text,
+          conversation_id: item.conversation_id,
+          direction: 'outgoing',
+          content: followup.text || `[${followup.media_type}]`,
         })
         await supabase.from('followup_queue').update({ status: 'sent', sent_at: now }).eq('id', item.id)
         sent++

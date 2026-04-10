@@ -20,7 +20,7 @@ export type MediaItem = {
   uploaded_at: string
 }
 
-export type UsageType = 'scenario_message' | 'landing' | 'landing_block'
+export type UsageType = 'scenario_message' | 'followup' | 'landing' | 'landing_block'
 
 export function detectMediaTypeFromMime(mime: string): MediaType {
   if (mime === 'image/gif') return 'animation'
@@ -153,6 +153,10 @@ export async function deleteMediaForce(supabase: SupabaseClient, mediaId: string
   for (const u of (usages ?? []) as { usage_type: string; usage_id: string }[]) {
     if (u.usage_type === 'scenario_message') {
       await supabase.from('scenario_messages').update({
+        media_id: null, media_url: null, media_file_name: null, media_type: null,
+      }).eq('id', u.usage_id)
+    } else if (u.usage_type === 'followup') {
+      await supabase.from('message_followups').update({
         media_id: null, media_url: null, media_file_name: null, media_type: null,
       }).eq('id', u.usage_id)
     }

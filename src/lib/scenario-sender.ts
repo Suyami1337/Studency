@@ -21,6 +21,40 @@ export function delayToMs(value: number, unit: string): number {
   }
 }
 
+/**
+ * Sends a followup/message row using the correct Telegram method based on media_type.
+ * Works for both followups and standalone messages.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function sendFollowupContent(botToken: string, chatId: number, f: any) {
+  const caption = f.text || undefined
+  if (f.media_type && f.media_url) {
+    switch (f.media_type) {
+      case 'photo':
+        await sendTelegramPhoto(botToken, chatId, f.media_url, caption)
+        return
+      case 'video':
+        await sendTelegramVideo(botToken, chatId, f.media_url, caption)
+        return
+      case 'animation':
+        await sendTelegramAnimation(botToken, chatId, f.media_url, caption)
+        return
+      case 'video_note':
+        await sendTelegramVideoNote(botToken, chatId, f.media_url)
+        if (f.text) await sendTelegramMessage(botToken, chatId, f.text)
+        return
+      case 'audio':
+        await sendTelegramAudio(botToken, chatId, f.media_url, caption)
+        return
+      case 'document':
+      default:
+        await sendTelegramDocument(botToken, chatId, f.media_url, caption)
+        return
+    }
+  }
+  if (f.text) await sendTelegramMessage(botToken, chatId, f.text)
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function sendScenarioMessage(
   supabase: SupabaseClient,
@@ -151,12 +185,12 @@ export async function sendScenarioMessage(
           try {
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {
-              await sendTelegramMessage(botToken, chatId, f.text)
+              await sendFollowupContent(botToken, chatId, f)
             }
             await supabase.from('chatbot_messages').insert({
               conversation_id: conversationId,
               direction: 'outgoing',
-              content: f.text,
+              content: f.text || `[${f.media_type}]`,
             })
           } catch (err) {
             console.error('short followup send error:', err)

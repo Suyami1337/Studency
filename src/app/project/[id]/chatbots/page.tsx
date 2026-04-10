@@ -26,6 +26,8 @@ type Followup = {
   delay_value: number; delay_unit: string
   text: string; channel: 'telegram' | 'email' | 'both'
   cancel_on_reply: boolean; is_active: boolean
+  media_id?: string | null; media_type?: string | null
+  media_url?: string | null; media_file_name?: string | null
   created_at?: string
 }
 
@@ -149,7 +151,8 @@ function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, o
 // =============================================
 // FOLLOWUP CARD — чистый controlled-компонент, без своего черновика
 // =============================================
-function FollowupCard({ followup, index, onEdit, onDelete }: {
+function FollowupCard({ projectId, followup, index, onEdit, onDelete }: {
+  projectId: string
   followup: Followup; index: number
   onEdit: (id: string, data: Partial<Followup>) => void
   onDelete: (id: string) => void
@@ -194,6 +197,17 @@ function FollowupCard({ followup, index, onEdit, onDelete }: {
           <textarea value={followup.text} onChange={ev => onEdit(followup.id, { text: ev.target.value })}
             placeholder={`Текст дожима ${index + 1}...`}
             className="w-full px-3 py-2 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-16 resize-none" />
+          {/* Медиа-вложение для дожима */}
+          <MediaUpload
+            projectId={projectId}
+            mediaId={followup.media_id ?? null}
+            mediaType={followup.media_type ?? null}
+            mediaUrl={followup.media_url ?? null}
+            mediaFileName={followup.media_file_name ?? null}
+            onChange={(mid, mt, mu, mfn) => onEdit(followup.id, {
+              media_id: mid, media_type: mt, media_url: mu, media_file_name: mfn,
+            })}
+          />
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-600 flex-shrink-0">Канал:</span>
             <div className="flex gap-1">
@@ -228,9 +242,10 @@ type FollowupSectionHandle = {
 }
 
 const FollowupSection = React.forwardRef<FollowupSectionHandle, {
+  projectId: string
   messageId: string
   onDirtyChange: (dirty: boolean) => void
-}>(function FollowupSection({ messageId, onDirtyChange }, ref) {
+}>(function FollowupSection({ projectId, messageId, onDirtyChange }, ref) {
   const supabase = createClient()
   const [followups, setFollowups] = useState<Followup[]>([])
   const [savedFollowups, setSavedFollowups] = useState<Followup[]>([])
@@ -261,6 +276,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
   React.useImperativeHandle(ref, () => ({
     save: async () => {
       let currentFollowups = followups
+      const { trackUsage, untrackUsage } = await import('@/lib/media-library')
 
       // Вставляем новые (temp) записи
       const tempIds = [...dirtyIds].filter(id => id.startsWith('temp-'))
@@ -269,13 +285,24 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
       for (const tempId of tempIds) {
         const f = currentFollowups.find(f => f.id === tempId)
         if (!f) continue
-        const { scenario_message_id, order_index, delay_value, delay_unit, text, channel, cancel_on_reply, is_active } = f
         const { data, error } = await supabase.from('message_followups')
-          .insert({ scenario_message_id, order_index, delay_value, delay_unit, text, channel, cancel_on_reply, is_active })
+          .insert({
+            scenario_message_id: f.scenario_message_id,
+            order_index: f.order_index,
+            delay_value: f.delay_value, delay_unit: f.delay_unit,
+            text: f.text, channel: f.channel,
+            cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
+            media_id: f.media_id ?? null, media_type: f.media_type ?? null,
+            media_url: f.media_url ?? null, media_file_name: f.media_file_name ?? null,
+          })
           .select().single()
         if (error) console.error('insert followup error:', error)
         if (data) {
           currentFollowups = currentFollowups.map(cf => cf.id === tempId ? data as Followup : cf)
+          // Трекаем media usage если есть
+          if (f.media_id) {
+            await trackUsage(supabase, f.media_id, 'followup', (data as Followup).id)
+          }
         }
       }
 
@@ -283,10 +310,21 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
       for (const id of realDirtyIds) {
         const f = currentFollowups.find(f => f.id === id)
         if (!f) continue
+        const prevMediaId = savedFollowups.find(sf => sf.id === id)?.media_id ?? null
+        const newMediaId = f.media_id ?? null
+
         await supabase.from('message_followups').update({
           delay_value: f.delay_value, delay_unit: f.delay_unit,
           text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
+          media_id: newMediaId, media_type: f.media_type ?? null,
+          media_url: f.media_url ?? null, media_file_name: f.media_file_name ?? null,
         }).eq('id', id)
+
+        // Обновляем media usages
+        if (prevMediaId !== newMediaId) {
+          if (prevMediaId) await untrackUsage(supabase, prevMediaId, 'followup', id)
+          if (newMediaId) await trackUsage(supabase, newMediaId, 'followup', id)
+        }
       }
 
       setFollowups(currentFollowups)
@@ -354,6 +392,9 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
 
     if (!id.startsWith('temp-')) {
       setSavedFollowups(prev => prev.filter(f => f.id !== id))
+      // Очищаем media usages для этого дожима
+      const { untrackAllUsages } = await import('@/lib/media-library')
+      await untrackAllUsages(supabase, 'followup', id)
       await supabase.from('message_followups').delete().eq('id', id)
     }
 
@@ -398,7 +439,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
       {enabled && !sectionCollapsed && followups.length > 0 && (
         <div className="space-y-2">
           {followups.map((f, i) => (
-            <FollowupCard key={f.id} followup={f} index={i}
+            <FollowupCard key={f.id} projectId={projectId} followup={f} index={i}
               onEdit={editFollowup} onDelete={deleteFollowup} />
           ))}
         </div>
@@ -626,7 +667,7 @@ function MessageCard({
           </div>
 
           {/* Followups */}
-          <FollowupSection ref={followupRef} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
+          <FollowupSection ref={followupRef} projectId={projectId} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
 
           {/* Save / Discard / Delete */}
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
