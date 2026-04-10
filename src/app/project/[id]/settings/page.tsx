@@ -18,7 +18,7 @@ export default function SettingsPage() {
   const projectId = params.id as string
   const supabase = createClient()
 
-  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'domain'>('integrations')
+  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'domain' | 'fields'>('integrations')
   const [bots, setBots] = useState<TelegramBot[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -74,6 +74,7 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'integrations' as const, label: 'Интеграции' },
+    { id: 'fields' as const, label: 'Поля клиента' },
     { id: 'profile' as const, label: 'Профиль' },
     { id: 'domain' as const, label: 'Домен' },
   ]
@@ -158,6 +159,8 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {activeTab === 'fields' && <CustomFieldsTab projectId={projectId} />}
+
       {activeTab === 'profile' && (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">👤</div>
@@ -177,6 +180,154 @@ export default function SettingsPage() {
             <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
             В разработке
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// CUSTOM FIELDS TAB — управление кастомными полями клиента
+// =============================================================================
+type CustomField = {
+  id: string
+  field_key: string
+  field_label: string
+  field_type: string
+  field_options: unknown
+  order_index: number
+}
+
+function CustomFieldsTab({ projectId }: { projectId: string }) {
+  const [fields, setFields] = useState<CustomField[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [newKey, setNewKey] = useState('')
+  const [newLabel, setNewLabel] = useState('')
+  const [newType, setNewType] = useState<'text' | 'number' | 'boolean' | 'date'>('text')
+
+  async function load() {
+    setLoading(true)
+    const res = await fetch(`/api/customers/custom-fields?project_id=${projectId}`)
+    const json = await res.json()
+    setFields(json.fields ?? [])
+    setLoading(false)
+  }
+
+  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId])
+
+  async function handleAdd() {
+    if (!newKey.trim() || !newLabel.trim()) return
+    await fetch('/api/customers/custom-fields', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        field_key: newKey.trim().toLowerCase().replace(/\s+/g, '_'),
+        field_label: newLabel.trim(),
+        field_type: newType,
+      }),
+    })
+    setNewKey('')
+    setNewLabel('')
+    setNewType('text')
+    setAdding(false)
+    await load()
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Удалить поле? Все значения этого поля у клиентов будут потеряны.')) return
+    await fetch(`/api/customers/custom-fields?id=${id}`, { method: 'DELETE' })
+    await load()
+  }
+
+  const typeLabel = (t: string) => {
+    switch (t) {
+      case 'text': return 'Текст'
+      case 'number': return 'Число'
+      case 'boolean': return 'Да/Нет'
+      case 'date': return 'Дата'
+      default: return t
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Кастомные поля клиента</h2>
+          <p className="text-xs text-gray-500">Добавь дополнительные поля для карточек клиентов</p>
+        </div>
+        <button onClick={() => setAdding(true)}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+          + Добавить поле
+        </button>
+      </div>
+
+      {adding && (
+        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Название (отображается)</label>
+              <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)}
+                placeholder="Например: Компания"
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Ключ (машинное имя)</label>
+              <input type="text" value={newKey} onChange={e => setNewKey(e.target.value)}
+                placeholder="company"
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:border-[#6A55F8]" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Тип</label>
+            <select value={newType}
+              onChange={e => setNewType(e.target.value as 'text' | 'number' | 'boolean' | 'date')}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+              <option value="text">Текст</option>
+              <option value="number">Число</option>
+              <option value="boolean">Да/Нет</option>
+              <option value="date">Дата</option>
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleAdd}
+              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+              Создать
+            </button>
+            <button onClick={() => setAdding(false)}
+              className="px-4 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-sm text-gray-400">Загрузка…</div>
+      ) : fields.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <div className="text-4xl mb-2">📋</div>
+          <p className="text-sm text-gray-500">Нет кастомных полей</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {fields.map(f => (
+            <div key={f.id} className="flex items-center justify-between px-5 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900">{f.field_label}</p>
+                <p className="text-xs text-gray-500">
+                  <code className="bg-gray-100 px-1 rounded">{f.field_key}</code>
+                  <span className="ml-2">· {typeLabel(f.field_type)}</span>
+                </p>
+              </div>
+              <button onClick={() => handleDelete(f.id)}
+                className="text-xs text-gray-400 hover:text-red-500">
+                Удалить
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>
