@@ -14,6 +14,7 @@ type Message = {
   delay_minutes: number; delay_unit: string; followup_condition: string | null
   next_message_id: string | null; parent_message_id: string | null
   media_type?: string | null; media_url?: string | null; media_file_name?: string | null
+  media_id?: string | null
 }
 type Button = {
   id: string; message_id: string; order_position: number; text: string
@@ -29,22 +30,15 @@ type Followup = {
 }
 
 // =============================================
-// MEDIA UPLOAD — загрузка вложений в Supabase Storage
+// MEDIA UPLOAD — загрузка через media-library (центральное хранилище проекта)
 // =============================================
-function detectMediaType(file: File): string {
-  const mime = file.type
-  if (mime === 'image/gif') return 'animation'
-  if (mime.startsWith('image/')) return 'photo'
-  if (mime.startsWith('video/')) return 'video'
-  if (mime.startsWith('audio/')) return 'audio'
-  return 'document'
-}
-
-function MediaUpload({ mediaType, mediaUrl, mediaFileName, onChange }: {
+function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, onChange }: {
+  projectId: string
+  mediaId: string | null
   mediaType: string | null
   mediaUrl: string | null
   mediaFileName: string | null
-  onChange: (type: string | null, url: string | null, fileName: string | null) => void
+  onChange: (mediaId: string | null, type: string | null, url: string | null, fileName: string | null) => void
 }) {
   const supabase = createClient()
   const [uploading, setUploading] = useState(false)
@@ -55,15 +49,9 @@ function MediaUpload({ mediaType, mediaUrl, mediaFileName, onChange }: {
     setError(null)
     setUploading(true)
     try {
-      const ext = file.name.split('.').pop() || 'bin'
-      const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-      const { error: upErr } = await supabase.storage.from('chatbot-media').upload(path, file, {
-        cacheControl: '3600', upsert: false,
-      })
-      if (upErr) throw upErr
-      const { data: pub } = supabase.storage.from('chatbot-media').getPublicUrl(path)
-      const type = detectMediaType(file)
-      onChange(type, pub.publicUrl, file.name)
+      const { uploadMedia } = await import('@/lib/media-library')
+      const item = await uploadMedia(supabase, projectId, file)
+      onChange(item.id, item.media_type, item.public_url, item.file_name)
       setSendAsVideoNote(false)
     } catch (err) {
       console.error('upload error:', err)
@@ -74,14 +62,16 @@ function MediaUpload({ mediaType, mediaUrl, mediaFileName, onChange }: {
   }
 
   function handleRemove() {
-    onChange(null, null, null)
+    // Просто убираем медиа из черновика. Реальная очистка (unlink + delete orphan)
+    // произойдёт в MessageCard.handleSave и при удалении сообщения.
+    onChange(null, null, null, null)
     setSendAsVideoNote(false)
   }
 
   function toggleVideoNote() {
     const next = !sendAsVideoNote
     setSendAsVideoNote(next)
-    onChange(next ? 'video_note' : 'video', mediaUrl, mediaFileName)
+    onChange(mediaId, next ? 'video_note' : 'video', mediaUrl, mediaFileName)
   }
 
   const typeLabel = (t: string | null) => {
@@ -419,8 +409,9 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
 // MESSAGE EDITOR (карточка сообщения)
 // =============================================
 function MessageCard({
-  msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton
+  projectId, msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton
 }: {
+  projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
   onUpdate: (id: string, data: Partial<Message>) => void
   onDelete: (id: string) => void
@@ -448,10 +439,20 @@ function MessageCard({
       const updates = {
         text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
         next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
-        media_type: e.media_type ?? null, media_url: e.media_url ?? null, media_file_name: e.media_file_name ?? null,
+        media_type: e.media_type ?? null, media_url: e.media_url ?? null,
+        media_file_name: e.media_file_name ?? null, media_id: e.media_id ?? null,
       }
       if (!msg.id.startsWith('temp-')) {
         await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
+
+        // Media library usage tracking
+        const prevMediaId = msg.media_id ?? null
+        const newMediaId = e.media_id ?? null
+        if (prevMediaId !== newMediaId) {
+          const { untrackUsage, trackUsage } = await import('@/lib/media-library')
+          if (prevMediaId) await untrackUsage(supabase, prevMediaId, 'scenario_message', msg.id)
+          if (newMediaId) await trackUsage(supabase, newMediaId, 'scenario_message', msg.id)
+        }
       }
       onUpdate(msg.id, updates)
       setDraft({})
@@ -508,10 +509,12 @@ function MessageCard({
 
           {/* Media attachment */}
           <MediaUpload
+            projectId={projectId}
+            mediaId={e.media_id ?? null}
             mediaType={e.media_type ?? null}
             mediaUrl={e.media_url ?? null}
             mediaFileName={e.media_file_name ?? null}
-            onChange={(mt, mu, mfn) => set({ media_type: mt, media_url: mu, media_file_name: mfn })}
+            onChange={(mid, mt, mu, mfn) => set({ media_id: mid, media_type: mt, media_url: mu, media_file_name: mfn })}
           />
 
           {/* Type settings */}
@@ -827,6 +830,8 @@ type BotConversation = {
 }
 
 function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenario: Scenario; onBack: () => void; onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void }) {
+  const params = useParams()
+  const projectId = params.id as string
   const [activeTab, setActiveTab] = useState<'scenario' | 'users' | 'analytics' | 'settings'>('scenario')
   const [showAI, setShowAI] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -993,6 +998,13 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
   async function deleteMessage(id: string) {
     const remaining = messages.filter(m => m.id !== id)
     setMessages(remaining)
+
+    // Очищаем media usages + удаляем осиротевшие файлы из библиотеки/Storage
+    if (!id.startsWith('temp-')) {
+      const { untrackAllUsages } = await import('@/lib/media-library')
+      await untrackAllUsages(supabase, 'scenario_message', id)
+    }
+
     await supabase.from('scenario_messages').delete().eq('id', id)
     // Reorder remaining messages in background
     for (let i = 0; i < remaining.length; i++) {
@@ -1112,6 +1124,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                       </div>
                     )}
                     <MessageCard
+                      projectId={projectId}
                       msg={msg}
                       buttons={msgButtons}
                       allMessages={messages}
