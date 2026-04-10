@@ -16,6 +16,8 @@ type Landing = {
   meta_title: string | null
   meta_description: string | null
   funnel_id: string | null
+  funnel_stage_id: string | null
+  custom_domain: string | null
   visits: number
   conversions: number
   project_id: string
@@ -42,6 +44,12 @@ type LandingVisit = {
 type Funnel = {
   id: string
   name: string
+}
+
+type FunnelStage = {
+  id: string
+  name: string
+  funnel_id: string
 }
 
 // ─── Status badge ───────────────────────────────────────────────────────────
@@ -191,7 +199,11 @@ function LandingDetail({
   const [settingMetaTitle, setSettingMetaTitle] = useState(landing.meta_title ?? '')
   const [settingMetaDesc, setSettingMetaDesc] = useState(landing.meta_description ?? '')
   const [settingFunnelId, setSettingFunnelId] = useState(landing.funnel_id ?? '')
+  const [settingFunnelStageId, setSettingFunnelStageId] = useState(landing.funnel_stage_id ?? '')
+  const [settingCustomDomain, setSettingCustomDomain] = useState(landing.custom_domain ?? '')
   const [funnels, setFunnels] = useState<Funnel[]>([])
+  const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([])
+  const [copiedBtnId, setCopiedBtnId] = useState<string | null>(null)
   const [deletingLanding, setDeletingLanding] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -230,6 +242,33 @@ function LandingDetail({
       .select('id, name')
       .eq('project_id', projectId)
     setFunnels(data ?? [])
+    // Загружаем стадии если воронка уже выбрана
+    if (landing.funnel_id) {
+      const { data: stages } = await supabase
+        .from('funnel_stages')
+        .select('id, name, funnel_id')
+        .eq('funnel_id', landing.funnel_id)
+        .order('order_position', { ascending: true })
+      setFunnelStages(stages ?? [])
+    }
+  }
+
+  async function loadFunnelStages(funnelId: string) {
+    if (!funnelId) { setFunnelStages([]); return }
+    const { data } = await supabase
+      .from('funnel_stages')
+      .select('id, name, funnel_id')
+      .eq('funnel_id', funnelId)
+      .order('order_position', { ascending: true })
+    setFunnelStages(data ?? [])
+  }
+
+  function copyButtonSnippet(btnId: string) {
+    const snippet = `data-stud-btn="${btnId}"`
+    navigator.clipboard.writeText(snippet).then(() => {
+      setCopiedBtnId(btnId)
+      setTimeout(() => setCopiedBtnId(null), 2000)
+    })
   }
 
   async function handlePublish() {
@@ -283,6 +322,8 @@ function LandingDetail({
         meta_title: settingMetaTitle || null,
         meta_description: settingMetaDesc || null,
         funnel_id: settingFunnelId || null,
+        funnel_stage_id: settingFunnelStageId || null,
+        custom_domain: settingCustomDomain.trim() || null,
       })
       .eq('id', landing.id)
       .select()
@@ -532,9 +573,18 @@ function LandingDetail({
                   <div key={btn.id} className="px-5 py-4 flex items-center gap-4">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-800 truncate">{btn.name}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {btn.clicks} кликов · {btn.conversions} конверсий
-                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <code className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded font-mono truncate max-w-[220px]">
+                          data-stud-btn=&quot;{btn.id}&quot;
+                        </code>
+                        <button
+                          onClick={() => copyButtonSnippet(btn.id)}
+                          className="text-xs text-[#6A55F8] hover:text-[#5040D6] flex-shrink-0 transition-colors"
+                          title="Скопировать атрибут"
+                        >
+                          {copiedBtnId === btn.id ? '✓ Скопировано' : 'Копировать'}
+                        </button>
+                      </div>
                     </div>
                     <div className="w-40">
                       <ConversionBar value={btn.conversions} max={btn.clicks} />
@@ -671,6 +721,38 @@ function LandingDetail({
             </div>
           </div>
 
+          {/* Custom domain */}
+          <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">Кастомный домен</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Подключите свой домен вместо studency.vercel.app</p>
+              </div>
+              <span className="text-xs bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full font-medium">DNS настройка</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Домен</label>
+              <input
+                type="text"
+                value={settingCustomDomain}
+                onChange={(e) => setSettingCustomDomain(e.target.value)}
+                placeholder="example.com"
+                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+              />
+            </div>
+            {settingCustomDomain && (
+              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-700">Инструкция по настройке DNS:</p>
+                <ol className="text-xs text-gray-500 space-y-1.5 list-decimal list-inside">
+                  <li>Зайдите в панель управления вашим доменом</li>
+                  <li>Создайте CNAME запись: <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">{settingCustomDomain}</code> → <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">cname.vercel-dns.com</code></li>
+                  <li>Добавьте домен в Vercel Dashboard → Settings → Domains</li>
+                  <li>Сохраните настройки — домен заработает через 5–30 минут</li>
+                </ol>
+              </div>
+            )}
+          </div>
+
           {/* Funnel */}
           <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
             <h3 className="font-semibold text-gray-900">Связь с воронкой</h3>
@@ -678,7 +760,11 @@ function LandingDetail({
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Воронка</label>
               <select
                 value={settingFunnelId}
-                onChange={(e) => setSettingFunnelId(e.target.value)}
+                onChange={(e) => {
+                  setSettingFunnelId(e.target.value)
+                  setSettingFunnelStageId('')
+                  loadFunnelStages(e.target.value)
+                }}
                 className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
               >
                 <option value="">Не выбрана</option>
@@ -689,6 +775,26 @@ function LandingDetail({
                 ))}
               </select>
             </div>
+            {settingFunnelId && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Стадия при заявке
+                  <span className="ml-1.5 text-xs text-gray-400 font-normal">куда попадёт лид из формы</span>
+                </label>
+                <select
+                  value={settingFunnelStageId}
+                  onChange={(e) => setSettingFunnelStageId(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+                >
+                  <option value="">Первая стадия (авто)</option>
+                  {funnelStages.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Tracking toggles (placeholders) */}
@@ -834,6 +940,8 @@ function LandingsList({
       meta_title: null,
       meta_description: null,
       funnel_id: null,
+      funnel_stage_id: null,
+      custom_domain: null,
       visits: 0,
       conversions: 0,
       project_id: projectId,
