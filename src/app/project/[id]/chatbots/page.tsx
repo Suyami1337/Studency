@@ -24,6 +24,7 @@ type Followup = {
   delay_value: number; delay_unit: string
   text: string; channel: 'telegram' | 'email' | 'both'
   cancel_on_reply: boolean; is_active: boolean
+  created_at?: string
 }
 
 // =============================================
@@ -117,6 +118,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [enabled, setEnabled] = useState(false)
+  const [savedEnabled, setSavedEnabled] = useState(false)
   const [sectionCollapsed, setSectionCollapsed] = useState(false)
 
   useEffect(() => {
@@ -125,75 +127,122 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
         const items = (data ?? []) as Followup[]
         setFollowups(items)
         setSavedFollowups(items)
-        setEnabled(items.length > 0)
+        const hasFollowups = items.length > 0
+        setEnabled(hasFollowups)
+        setSavedEnabled(hasFollowups)
         setLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messageId])
 
+  function notifyDirty(ids: Set<string>, currentEnabled: boolean, currentSavedEnabled: boolean) {
+    onDirtyChange(ids.size > 0 || currentEnabled !== currentSavedEnabled)
+  }
+
   React.useImperativeHandle(ref, () => ({
     save: async () => {
-      for (const id of dirtyIds) {
-        const f = followups.find(f => f.id === id)
+      let currentFollowups = followups
+
+      // Вставляем новые (temp) записи
+      const tempIds = [...dirtyIds].filter(id => id.startsWith('temp-'))
+      const realDirtyIds = [...dirtyIds].filter(id => !id.startsWith('temp-'))
+
+      for (const tempId of tempIds) {
+        const f = currentFollowups.find(f => f.id === tempId)
+        if (!f) continue
+        const { scenario_message_id, order_index, delay_value, delay_unit, text, channel, cancel_on_reply, is_active } = f
+        const { data, error } = await supabase.from('message_followups')
+          .insert({ scenario_message_id, order_index, delay_value, delay_unit, text, channel, cancel_on_reply, is_active })
+          .select().single()
+        if (error) console.error('insert followup error:', error)
+        if (data) {
+          currentFollowups = currentFollowups.map(cf => cf.id === tempId ? data as Followup : cf)
+        }
+      }
+
+      // Обновляем изменённые (real) записи
+      for (const id of realDirtyIds) {
+        const f = currentFollowups.find(f => f.id === id)
         if (!f) continue
         await supabase.from('message_followups').update({
           delay_value: f.delay_value, delay_unit: f.delay_unit,
           text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
         }).eq('id', id)
       }
-      setSavedFollowups([...followups])
+
+      setFollowups(currentFollowups)
+      setSavedFollowups(currentFollowups)
+      setSavedEnabled(enabled)
       setDirtyIds(new Set())
       onDirtyChange(false)
     },
     discard: () => {
       setFollowups([...savedFollowups])
+      setEnabled(savedEnabled)
       setDirtyIds(new Set())
       onDirtyChange(false)
     },
-  }), [followups, dirtyIds, savedFollowups, onDirtyChange])
+  }), [followups, dirtyIds, savedFollowups, enabled, savedEnabled, onDirtyChange])
 
   function editFollowup(id: string, updates: Partial<Followup>) {
     setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f))
-    setDirtyIds(prev => { const next = new Set(prev); next.add(id); return next })
-    onDirtyChange(true)
+    setDirtyIds(prev => {
+      const next = new Set(prev); next.add(id)
+      notifyDirty(next, enabled, savedEnabled)
+      return next
+    })
   }
 
-  async function toggleEnabled() {
-    if (enabled) {
-      setEnabled(false)
-    } else {
-      setEnabled(true)
-      setSectionCollapsed(false)
-      if (followups.length === 0) {
-        const row = { scenario_message_id: messageId, order_index: 0, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
-        const { data, error } = await supabase.from('message_followups').insert(row).select().single()
-        if (error) console.error('message_followups insert error:', error)
-        if (data) {
-          setFollowups([data as Followup])
-          setSavedFollowups([data as Followup])
-        }
+  function toggleEnabled() {
+    const newEnabled = !enabled
+    setEnabled(newEnabled)
+    setSectionCollapsed(false)
+
+    // Включаем и нет followup-ов — создаём temp-запись локально
+    if (newEnabled && followups.length === 0) {
+      const tempId = `temp-${Date.now()}`
+      const tempFollowup: Followup = {
+        id: tempId, scenario_message_id: messageId, order_index: 0,
+        delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram',
+        cancel_on_reply: true, is_active: true, created_at: new Date().toISOString(),
       }
+      setFollowups([tempFollowup])
+      setDirtyIds(prev => { const next = new Set(prev); next.add(tempId); return next })
     }
+
+    notifyDirty(dirtyIds, newEnabled, savedEnabled)
   }
 
-  async function addFollowup() {
+  function addFollowup() {
     if (followups.length >= 5) return
-    const row = { scenario_message_id: messageId, order_index: followups.length, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
-    const { data, error } = await supabase.from('message_followups').insert(row).select().single()
-    if (error) console.error('message_followups insert error:', error)
-    if (data) {
-      setFollowups(prev => [...prev, data as Followup])
-      setSavedFollowups(prev => [...prev, data as Followup])
+    const tempId = `temp-${Date.now()}`
+    const tempFollowup: Followup = {
+      id: tempId, scenario_message_id: messageId, order_index: followups.length,
+      delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram',
+      cancel_on_reply: true, is_active: true, created_at: new Date().toISOString(),
     }
+    setFollowups(prev => [...prev, tempFollowup])
+    setDirtyIds(prev => { const next = new Set(prev); next.add(tempId); return next })
+    onDirtyChange(true)
   }
 
   async function deleteFollowup(id: string) {
     const remaining = followups.filter(f => f.id !== id)
     setFollowups(remaining)
-    setSavedFollowups(prev => prev.filter(f => f.id !== id))
-    setDirtyIds(prev => { const next = new Set(prev); next.delete(id); return next })
-    if (remaining.length === 0) setEnabled(false)
-    await supabase.from('message_followups').delete().eq('id', id)
+    const newDirty = new Set(dirtyIds); newDirty.delete(id)
+    setDirtyIds(newDirty)
+
+    if (!id.startsWith('temp-')) {
+      setSavedFollowups(prev => prev.filter(f => f.id !== id))
+      await supabase.from('message_followups').delete().eq('id', id)
+    }
+
+    if (remaining.length === 0) {
+      setEnabled(false)
+      notifyDirty(newDirty, false, savedEnabled)
+    } else {
+      notifyDirty(newDirty, enabled, savedEnabled)
+    }
   }
 
   if (loading) return null
