@@ -11,7 +11,7 @@ type TelegramBot = { id: string; name: string; bot_username: string }
 type Message = {
   id: string; scenario_id: string; order_position: number; text: string | null
   is_start: boolean; trigger_word: string | null; is_followup: boolean
-  delay_minutes: number; followup_condition: string | null
+  delay_minutes: number; delay_unit: string; followup_condition: string | null
   next_message_id: string | null; parent_message_id: string | null
 }
 type Button = {
@@ -21,7 +21,8 @@ type Button = {
 }
 type Followup = {
   id: string; scenario_message_id: string; order_index: number
-  delay_minutes: number; text: string; channel: 'telegram' | 'email' | 'both'
+  delay_value: number; delay_unit: string
+  text: string; channel: 'telegram' | 'email' | 'both'
   cancel_on_reply: boolean
 }
 
@@ -33,18 +34,6 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
   onUpdate: (id: string, data: Partial<Followup>) => void
   onDelete: (id: string) => void
 }) {
-  const getUnit = (mins: number) => mins >= 1440 ? 'day' : mins >= 60 ? 'hour' : 'min'
-  const [unit, setUnit] = useState<'min' | 'hour' | 'day'>(getUnit(followup.delay_minutes))
-
-  const displayValue = unit === 'day' ? Math.round(followup.delay_minutes / 1440)
-    : unit === 'hour' ? Math.round(followup.delay_minutes / 60)
-    : followup.delay_minutes
-
-  function handleDelayChange(value: number, u: typeof unit) {
-    const mins = u === 'day' ? value * 1440 : u === 'hour' ? value * 60 : value
-    onUpdate(followup.id, { delay_minutes: mins })
-  }
-
   return (
     <div className="bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/15 space-y-2.5">
       <div className="flex items-center justify-between">
@@ -55,11 +44,12 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
       {/* Задержка */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-gray-600 w-10 flex-shrink-0">Через</span>
-        <input type="number" min="1" value={displayValue}
-          onChange={e => { const v = parseInt(e.target.value) || 1; handleDelayChange(v, unit) }}
+        <input type="number" min="1" value={followup.delay_value}
+          onChange={e => onUpdate(followup.id, { delay_value: parseInt(e.target.value) || 1 })}
           className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]" />
-        <select value={unit} onChange={e => { const u = e.target.value as typeof unit; setUnit(u); handleDelayChange(displayValue, u) }}
+        <select value={followup.delay_unit} onChange={e => onUpdate(followup.id, { delay_unit: e.target.value })}
           className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+          <option value="sec">сек</option>
           <option value="min">мин</option>
           <option value="hour">час</option>
           <option value="day">дней</option>
@@ -121,7 +111,7 @@ function FollowupSection({ messageId }: { messageId: string }) {
 
   async function enable() {
     setEnabled(true)
-    const row = { scenario_message_id: messageId, order_index: 0, delay_minutes: 60, text: '', channel: 'telegram', cancel_on_reply: true }
+    const row = { scenario_message_id: messageId, order_index: 0, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true }
     const { data } = await supabase.from('message_followups').insert(row).select().single()
     if (data) setFollowups([data as Followup])
   }
@@ -134,7 +124,7 @@ function FollowupSection({ messageId }: { messageId: string }) {
 
   async function addFollowup() {
     if (followups.length >= 5) return
-    const row = { scenario_message_id: messageId, order_index: followups.length, delay_minutes: 60, text: '', channel: 'telegram', cancel_on_reply: true }
+    const row = { scenario_message_id: messageId, order_index: followups.length, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true }
     const { data } = await supabase.from('message_followups').insert(row).select().single()
     if (data) setFollowups(prev => [...prev, data as Followup])
   }
@@ -207,7 +197,7 @@ function MessageCard({
           <div className="flex items-center gap-2 mb-0.5">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${typeColor}`}>{typeLabel}</span>
             {msg.trigger_word && <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">{msg.trigger_word}</span>}
-            {msg.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {msg.delay_minutes >= 60 ? `${Math.round(msg.delay_minutes / 60)}ч` : `${msg.delay_minutes}мин`}</span>}
+            {msg.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {msg.delay_minutes} {msg.delay_unit === 'sec' ? 'сек' : msg.delay_unit === 'hour' ? 'ч' : msg.delay_unit === 'day' ? 'дн' : 'мин'}</span>}
           </div>
           <p className="text-sm text-gray-700 truncate">{msg.text || 'Пустое сообщение'}</p>
         </div>
@@ -318,12 +308,21 @@ function MessageCard({
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-xs text-gray-500">через</span>
                   <input
-                    type="number"
+                    type="number" min="0"
                     value={msg.delay_minutes}
                     onChange={e => onUpdate(msg.id, { delay_minutes: parseInt(e.target.value) || 0 })}
                     className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]"
                   />
-                  <span className="text-xs text-gray-500">мин</span>
+                  <select
+                    value={msg.delay_unit || 'min'}
+                    onChange={e => onUpdate(msg.id, { delay_unit: e.target.value })}
+                    className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]"
+                  >
+                    <option value="sec">сек</option>
+                    <option value="min">мин</option>
+                    <option value="hour">час</option>
+                    <option value="day">дней</option>
+                  </select>
                 </div>
               )}
             </div>
@@ -670,6 +669,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       trigger_word: messages.length === 0 ? '/start' : null,
       is_followup: false,
       delay_minutes: 0,
+      delay_unit: 'min',
       followup_condition: null,
       next_message_id: null,
       parent_message_id: null,
@@ -799,7 +799,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                           )}
                           {msg.delay_minutes > 0 && (
                             <span className="text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded font-medium">
-                              ⏱ {msg.delay_minutes >= 60 ? `${Math.round(msg.delay_minutes / 60)}ч` : `${msg.delay_minutes}мин`}
+                              ⏱ {msg.delay_minutes} {msg.delay_unit === 'sec' ? 'сек' : msg.delay_unit === 'hour' ? 'ч' : msg.delay_unit === 'day' ? 'дн' : 'мин'}
                             </span>
                           )}
                           {msg.is_followup && (
