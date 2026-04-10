@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
@@ -51,7 +51,7 @@ function OverviewTab({ projectId }: { projectId: string }) {
   const [landings, setLandings] = useState<Landing[]>([])
   const [products, setProducts] = useState<Product[]>([])
 
-  const loadAll = useCallback(async () => {
+  async function loadAll() {
     const [
       customersRes, ordersRes, revenueRes, visitsRes,
       funnelsRes, botsRes, landingsRes, productsRes,
@@ -97,9 +97,10 @@ function OverviewTab({ projectId }: { projectId: string }) {
       setProducts(productsRes.data.map(p => ({ ...p, order_count: cntMap.get(p.id) ?? 0, revenue: revMap.get(p.id) ?? 0 })))
     }
     setLoading(false)
-  }, [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
-  useEffect(() => { loadAll() }, [loadAll])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadAll() }, [projectId])
 
   if (loading) return <div className="p-6"><SkeletonList count={3} /></div>
 
@@ -208,7 +209,8 @@ function SourcesTab({ projectId }: { projectId: string }) {
     setLoading(false)
   }
 
-  useEffect(() => { loadSources() }, [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { loadSources() }, [projectId])
 
   // Авто-генерация slug из названия
   function handleNameChange(val: string) {
