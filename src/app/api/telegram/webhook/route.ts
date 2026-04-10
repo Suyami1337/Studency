@@ -16,7 +16,8 @@ async function sendScenarioMessage(
   chatId: number,
   messageId: string,
   conversationId: string,
-  userId?: number  // для подстановки {tgid} в URL кнопках
+  userId?: number,   // для подстановки {tgid} в URL кнопках
+  scenarioId?: string  // для аналитики — в каком сценарии участвовал пользователь
 ) {
   const { data: msg } = await supabase
     .from('scenario_messages')
@@ -25,6 +26,9 @@ async function sendScenarioMessage(
     .single()
 
   if (!msg || !msg.text) return
+
+  // Определяем scenario_id: из параметра или из самого сообщения
+  const resolvedScenarioId = scenarioId ?? msg.scenario_id ?? null
 
   // Get buttons
   const { data: btns } = await supabase
@@ -59,11 +63,12 @@ async function sendScenarioMessage(
     conversation_id: conversationId,
     direction: 'outgoing',
     content: msg.text,
+    scenario_id: resolvedScenarioId,
   })
 
   // If next message exists and delay is 0, send it too
   if (msg.next_message_id && msg.delay_minutes === 0) {
-    await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId)
+    await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId, resolvedScenarioId)
   }
 
   // TODO: If delay > 0, schedule via cron/queue (for now skip delayed messages)
@@ -243,6 +248,7 @@ export async function POST(request: NextRequest) {
 
         // Handle action
         if (btn.action_type === 'goto_message' && btn.action_goto_message_id) {
+          // scenario_id определяется из целевого сообщения внутри sendScenarioMessage
           await sendScenarioMessage(supabase, botToken, chatId, btn.action_goto_message_id, conversation.id, userId)
         } else if (btn.action_type === 'trigger' && btn.action_trigger_word) {
           // Find start message with this trigger
@@ -255,7 +261,7 @@ export async function POST(request: NextRequest) {
             .limit(1)
 
           if (triggerMsgs && triggerMsgs[0]) {
-            await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId)
+            await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId, triggerMsgs[0].scenario_id)
           }
         }
         // url buttons are handled by Telegram directly
@@ -279,7 +285,7 @@ export async function POST(request: NextRequest) {
     )
 
     if (matchedStart) {
-      await sendScenarioMessage(supabase, botToken, chatId, matchedStart.id, conversation.id, userId)
+      await sendScenarioMessage(supabase, botToken, chatId, matchedStart.id, conversation.id, userId, matchedStart.scenario_id)
       return NextResponse.json({ ok: true })
     }
 

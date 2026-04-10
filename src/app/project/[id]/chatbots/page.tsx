@@ -423,12 +423,19 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
   }
 
   async function loadUsers() {
-    if (!scenario.telegram_bot_id) { setBotUsers([]); return }
     setLoadingUsers(true)
+    // Находим только разговоры, в которых есть исходящие сообщения именно этого сценария
+    const { data: msgRows } = await supabase
+      .from('chatbot_messages')
+      .select('conversation_id')
+      .eq('scenario_id', scenario.id)
+      .eq('direction', 'outgoing')
+    const convIds = [...new Set((msgRows ?? []).map((r: { conversation_id: string }) => r.conversation_id))]
+    if (convIds.length === 0) { setBotUsers([]); setLoadingUsers(false); return }
     const { data } = await supabase
       .from('chatbot_conversations')
       .select('id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
-      .eq('telegram_bot_id', scenario.telegram_bot_id)
+      .in('id', convIds)
       .order('updated_at', { ascending: false })
       .limit(100)
     setBotUsers((data ?? []) as unknown as BotConversation[])
@@ -721,6 +728,9 @@ export default function ChatbotsPage() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newBotId, setNewBotId] = useState('')
+  const [activePageTab, setActivePageTab] = useState<'scenarios' | 'users'>('scenarios')
+  const [botAllUsers, setBotAllUsers] = useState<(BotConversation & { scenarioNames: string[] })[]>([])
+  const [loadingBotUsers, setLoadingBotUsers] = useState(false)
 
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const urlSelectedId = searchParams.get('open') || null
@@ -751,6 +761,52 @@ export default function ChatbotsPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [projectId])
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activePageTab === 'users') loadBotUsers() }, [activePageTab, scenarios])
+
+  async function loadBotUsers() {
+    setLoadingBotUsers(true)
+    // Берём все боты из сценариев этого проекта
+    const botIds = [...new Set(scenarios.filter(s => s.telegram_bot_id).map(s => s.telegram_bot_id as string))]
+    if (botIds.length === 0) { setBotAllUsers([]); setLoadingBotUsers(false); return }
+
+    // Все разговоры по этим ботам
+    const { data: convs } = await supabase
+      .from('chatbot_conversations')
+      .select('id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
+      .in('telegram_bot_id', botIds)
+      .order('updated_at', { ascending: false })
+      .limit(200)
+    if (!convs || convs.length === 0) { setBotAllUsers([]); setLoadingBotUsers(false); return }
+
+    // Участие в сценариях: chatbot_messages.scenario_id per conversation
+    const convIds = convs.map((c: { id: string }) => c.id)
+    const { data: msgRows } = await supabase
+      .from('chatbot_messages')
+      .select('conversation_id, scenario_id')
+      .in('conversation_id', convIds)
+      .not('scenario_id', 'is', null)
+      .eq('direction', 'outgoing')
+
+    // conversation_id → Set<scenario_id>
+    const convScenarioMap: Record<string, Set<string>> = {}
+    for (const row of (msgRows ?? []) as { conversation_id: string; scenario_id: string }[]) {
+      if (!convScenarioMap[row.conversation_id]) convScenarioMap[row.conversation_id] = new Set()
+      convScenarioMap[row.conversation_id].add(row.scenario_id)
+    }
+
+    // scenario_id → name (из уже загруженного списка сценариев)
+    const scenarioMap: Record<string, string> = {}
+    for (const s of scenarios) scenarioMap[s.id] = s.name
+
+    const result = (convs as unknown as BotConversation[]).map(conv => ({
+      ...conv,
+      scenarioNames: [...(convScenarioMap[conv.id] ?? [])].map(sid => scenarioMap[sid]).filter(Boolean) as string[],
+    }))
+    setBotAllUsers(result)
+    setLoadingBotUsers(false)
+  }
 
   async function createScenario() {
     if (!newName.trim()) return
@@ -791,12 +847,89 @@ export default function ChatbotsPage() {
           <h1 className="text-xl font-bold text-gray-900">Чат-боты</h1>
           <p className="text-sm text-gray-500">Сценарии и автоматизация Telegram-ботов</p>
         </div>
-        <button onClick={() => setCreating(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-          + Создать сценарий
-        </button>
+        {activePageTab === 'scenarios' && (
+          <button onClick={() => setCreating(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+            + Создать сценарий
+          </button>
+        )}
       </div>
 
-      {creating && (
+      {/* Вкладки страницы */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {(['scenarios', 'users'] as const).map(tab => (
+          <button key={tab} onClick={() => setActivePageTab(tab)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${activePageTab === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            {tab === 'scenarios' ? '🤖 Сценарии' : '👥 Все пользователи'}
+          </button>
+        ))}
+      </div>
+
+      {activePageTab === 'users' && (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {loadingBotUsers ? (
+            <div className="p-8 text-center text-sm text-gray-400">Загружаю...</div>
+          ) : botAllUsers.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="text-3xl mb-3">👥</div>
+              <p className="text-sm text-gray-500">Пока никто не писал боту</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Пользователь</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Username</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Участвовал в сценариях</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Источник</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Активность</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {botAllUsers.map(conv => {
+                  const name = conv.customers?.full_name || conv.telegram_first_name || 'Без имени'
+                  const source = conv.customers?.source_name
+                  return (
+                    <tr key={conv.id} className="hover:bg-gray-50/50">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0">
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-gray-800 text-sm">{name}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-gray-500 text-sm">
+                        {conv.telegram_username ? `@${conv.telegram_username}` : conv.telegram_user_id ? `ID: ${conv.telegram_user_id}` : '—'}
+                      </td>
+                      <td className="px-5 py-3">
+                        {conv.scenarioNames.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {conv.scenarioNames.map(n => (
+                              <span key={n} className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">{n}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3">
+                        {source ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">📍 {source}</span>
+                        ) : <span className="text-gray-400 text-xs">—</span>}
+                      </td>
+                      <td className="px-5 py-3 text-gray-500 text-xs">
+                        {new Date(conv.updated_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {activePageTab === 'scenarios' && creating && (
         <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
           <h3 className="text-sm font-semibold text-gray-900">Новый сценарий</h3>
           <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Название сценария"
@@ -820,7 +953,7 @@ export default function ChatbotsPage() {
         </div>
       )}
 
-      {loading ? (
+      {activePageTab === 'scenarios' && (loading ? (
         <SkeletonList count={3} />
       ) : scenarios.length === 0 && !creating ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
@@ -849,7 +982,7 @@ export default function ChatbotsPage() {
             </button>
           ))}
         </div>
-      )}
+      ))}
     </div>
   )
 }
