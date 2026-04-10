@@ -35,13 +35,28 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
   onDelete: (id: string) => void
 }) {
   const [cardExpanded, setCardExpanded] = useState(true)
+  const [draft, setDraft] = useState<Partial<Followup>>({})
+  const [saving, setSaving] = useState(false)
+  const isDirty = Object.keys(draft).length > 0
+  const e = { ...followup, ...draft }
+
+  function set(data: Partial<Followup>) { setDraft(prev => ({ ...prev, ...data })) }
+  function handleDiscard() { setDraft({}) }
+  async function handleSave() {
+    if (!isDirty) return
+    setSaving(true)
+    onUpdate(followup.id, draft)
+    setDraft({})
+    setSaving(false)
+  }
+
   const unitLabel = (u: string) => u === 'sec' ? 'сек' : u === 'min' ? 'мин' : u === 'hour' ? 'ч' : 'дн'
 
   return (
-    <div className={`rounded-lg border transition-colors ${followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
+    <div className={`rounded-lg border transition-colors ${isDirty ? 'border-amber-400 bg-amber-50/30' : followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
       {/* Шапка карточки — всегда видна */}
       <div className="flex items-center gap-2 px-3 py-2">
-        {/* Тоггл активности */}
+        {/* Тоггл активности — мгновенное сохранение */}
         <button onClick={() => onUpdate(followup.id, { is_active: !followup.is_active })}
           className={`w-7 h-4 rounded-full transition-colors relative flex-shrink-0 ${followup.is_active ? 'bg-[#6A55F8]' : 'bg-gray-300'}`}>
           <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${followup.is_active ? 'translate-x-3' : 'translate-x-0.5'}`} />
@@ -49,9 +64,10 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
         <span className={`text-xs font-semibold flex-1 min-w-0 ${followup.is_active ? 'text-[#6A55F8]' : 'text-gray-400'}`}>
           Дожим {index + 1}
           <span className="ml-1.5 font-normal text-gray-400">
-            через {followup.delay_value} {unitLabel(followup.delay_unit)}
+            через {e.delay_value} {unitLabel(e.delay_unit)}
           </span>
-          {!followup.is_active && <span className="ml-1.5 text-gray-400">(выкл.)</span>}
+          {isDirty && <span className="ml-1.5 text-amber-500 font-normal">● Не сохранено</span>}
+          {!followup.is_active && !isDirty && <span className="ml-1.5 text-gray-400">(выкл.)</span>}
         </span>
         <button onClick={() => setCardExpanded(!cardExpanded)} className="text-gray-400 hover:text-gray-600 text-xs px-1">
           {cardExpanded ? '▲' : '▼'}
@@ -65,10 +81,10 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
           {/* Задержка */}
           <div className="flex items-center gap-2 mt-2.5">
             <span className="text-xs text-gray-600 w-10 flex-shrink-0">Через</span>
-            <input type="number" min="1" value={followup.delay_value}
-              onChange={e => onUpdate(followup.id, { delay_value: parseInt(e.target.value) || 1 })}
+            <input type="number" min="1" value={e.delay_value}
+              onChange={ev => set({ delay_value: parseInt(ev.target.value) || 1 })}
               className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]" />
-            <select value={followup.delay_unit} onChange={e => onUpdate(followup.id, { delay_unit: e.target.value })}
+            <select value={e.delay_unit} onChange={ev => set({ delay_unit: ev.target.value })}
               className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
               <option value="sec">сек</option>
               <option value="min">мин</option>
@@ -77,7 +93,7 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
             </select>
           </div>
           {/* Текст */}
-          <textarea value={followup.text} onChange={e => onUpdate(followup.id, { text: e.target.value })}
+          <textarea value={e.text} onChange={ev => set({ text: ev.target.value })}
             placeholder={`Текст дожима ${index + 1}...`}
             className="w-full px-3 py-2 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-16 resize-none" />
           {/* Канал */}
@@ -85,9 +101,9 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
             <span className="text-xs text-gray-600 flex-shrink-0">Канал:</span>
             <div className="flex gap-1">
               {(['telegram', 'email', 'both'] as const).map(ch => (
-                <button key={ch} onClick={() => onUpdate(followup.id, { channel: ch })}
+                <button key={ch} onClick={() => set({ channel: ch })}
                   className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    followup.channel === ch ? 'bg-[#6A55F8] text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-[#6A55F8]/40'
+                    e.channel === ch ? 'bg-[#6A55F8] text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-[#6A55F8]/40'
                   }`}>
                   {ch === 'telegram' ? 'Telegram' : ch === 'email' ? 'Email' : 'Оба'}
                 </button>
@@ -96,11 +112,24 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
           </div>
           {/* Условие отмены */}
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={followup.cancel_on_reply}
-              onChange={e => onUpdate(followup.id, { cancel_on_reply: e.target.checked })}
+            <input type="checkbox" checked={e.cancel_on_reply}
+              onChange={ev => set({ cancel_on_reply: ev.target.checked })}
               className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
             <span className="text-xs text-gray-600">Отменить, если пользователь ответит</span>
           </label>
+          {/* Сохранение черновика */}
+          {isDirty && (
+            <div className="flex gap-2 pt-1">
+              <button onClick={handleSave} disabled={saving}
+                className="px-3 py-1.5 bg-[#6A55F8] text-white text-xs rounded font-medium hover:bg-[#5845e0] disabled:opacity-50">
+                {saving ? 'Сохранение…' : 'Сохранить'}
+              </button>
+              <button onClick={handleDiscard}
+                className="px-3 py-1.5 text-gray-500 text-xs rounded font-medium hover:bg-gray-100">
+                Отменить
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
