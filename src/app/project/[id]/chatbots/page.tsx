@@ -1762,8 +1762,30 @@ export default function ChatbotsPage() {
           {bots.length === 0 && (
             <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">Сначала подключите Telegram-бота в Настройки → Интеграции</p>
           )}
-          <div className="flex gap-2">
-            <button onClick={createScenario} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать</button>
+          <div className="flex gap-2 items-center">
+            <button onClick={createScenario} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать пустой</button>
+            <button
+              onClick={async () => {
+                if (!newBotId) { alert('Сначала выбери бота'); return }
+                const description = prompt('Опиши бота — какой он, для чего, как должен общаться с клиентом:')
+                if (!description) return
+                const res = await fetch('/api/ai/generate-scenario', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ description, telegram_bot_id: newBotId }),
+                })
+                const json = await res.json()
+                if (json.error) {
+                  alert('Ошибка: ' + json.error + (json.hint ? '\n' + json.hint : ''))
+                  return
+                }
+                setCreating(false)
+                window.location.reload()
+              }}
+              className="bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] hover:from-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1"
+            >
+              ✨ Сгенерировать AI
+            </button>
             <button onClick={() => setCreating(false)} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
           </div>
         </div>
