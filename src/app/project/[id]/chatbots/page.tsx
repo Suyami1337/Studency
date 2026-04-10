@@ -138,7 +138,8 @@ function FollowupSection({ messageId }: { messageId: string }) {
       if (followups.length === 0) {
         // Первый дожим — создаём в БД
         const row = { scenario_message_id: messageId, order_index: 0, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
-        const { data } = await supabase.from('message_followups').insert(row).select().single()
+        const { data, error } = await supabase.from('message_followups').insert(row).select().single()
+        if (error) console.error('message_followups insert error:', error)
         if (data) setFollowups([data as Followup])
       }
     }
@@ -147,7 +148,8 @@ function FollowupSection({ messageId }: { messageId: string }) {
   async function addFollowup() {
     if (followups.length >= 5) return
     const row = { scenario_message_id: messageId, order_index: followups.length, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
-    const { data } = await supabase.from('message_followups').insert(row).select().single()
+    const { data, error } = await supabase.from('message_followups').insert(row).select().single()
+    if (error) console.error('message_followups insert error:', error)
     if (data) setFollowups(prev => [...prev, data as Followup])
   }
 
