@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
@@ -27,47 +27,29 @@ type Followup = {
 }
 
 // =============================================
-// FOLLOWUP CARD (одна запись дожима)
+// FOLLOWUP CARD — чистый controlled-компонент, без своего черновика
 // =============================================
-function FollowupCard({ followup, index, onUpdate, onDelete }: {
+function FollowupCard({ followup, index, onEdit, onToggleActive, onDelete }: {
   followup: Followup; index: number
-  onUpdate: (id: string, data: Partial<Followup>) => void
+  onEdit: (id: string, data: Partial<Followup>) => void
+  onToggleActive: (id: string, val: boolean) => void
   onDelete: (id: string) => void
 }) {
   const [cardExpanded, setCardExpanded] = useState(true)
-  const [draft, setDraft] = useState<Partial<Followup>>({})
-  const [saving, setSaving] = useState(false)
-  const isDirty = Object.keys(draft).length > 0
-  const e = { ...followup, ...draft }
-
-  function set(data: Partial<Followup>) { setDraft(prev => ({ ...prev, ...data })) }
-  function handleDiscard() { setDraft({}) }
-  async function handleSave() {
-    if (!isDirty) return
-    setSaving(true)
-    onUpdate(followup.id, draft)
-    setDraft({})
-    setSaving(false)
-  }
-
   const unitLabel = (u: string) => u === 'sec' ? 'сек' : u === 'min' ? 'мин' : u === 'hour' ? 'ч' : 'дн'
 
   return (
-    <div className={`rounded-lg border transition-colors ${isDirty ? 'border-amber-400 bg-amber-50/30' : followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
-      {/* Шапка карточки — всегда видна */}
+    <div className={`rounded-lg border transition-colors ${followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
       <div className="flex items-center gap-2 px-3 py-2">
         {/* Тоггл активности — мгновенное сохранение */}
-        <button onClick={() => onUpdate(followup.id, { is_active: !followup.is_active })}
+        <button onClick={() => onToggleActive(followup.id, !followup.is_active)}
           className={`w-7 h-4 rounded-full transition-colors relative flex-shrink-0 ${followup.is_active ? 'bg-[#6A55F8]' : 'bg-gray-300'}`}>
           <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${followup.is_active ? 'translate-x-3' : 'translate-x-0.5'}`} />
         </button>
         <span className={`text-xs font-semibold flex-1 min-w-0 ${followup.is_active ? 'text-[#6A55F8]' : 'text-gray-400'}`}>
           Дожим {index + 1}
-          <span className="ml-1.5 font-normal text-gray-400">
-            через {e.delay_value} {unitLabel(e.delay_unit)}
-          </span>
-          {isDirty && <span className="ml-1.5 text-amber-500 font-normal">● Не сохранено</span>}
-          {!followup.is_active && !isDirty && <span className="ml-1.5 text-gray-400">(выкл.)</span>}
+          <span className="ml-1.5 font-normal text-gray-400">через {followup.delay_value} {unitLabel(followup.delay_unit)}</span>
+          {!followup.is_active && <span className="ml-1.5 text-gray-400">(выкл.)</span>}
         </span>
         <button onClick={() => setCardExpanded(!cardExpanded)} className="text-gray-400 hover:text-gray-600 text-xs px-1">
           {cardExpanded ? '▲' : '▼'}
@@ -75,16 +57,14 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
         <button onClick={() => onDelete(followup.id)} className="text-gray-400 hover:text-red-500 text-xs">✕</button>
       </div>
 
-      {/* Тело карточки — сворачивается */}
       {cardExpanded && (
         <div className="px-3 pb-3 space-y-2.5 border-t border-[#6A55F8]/10">
-          {/* Задержка */}
           <div className="flex items-center gap-2 mt-2.5">
             <span className="text-xs text-gray-600 w-10 flex-shrink-0">Через</span>
-            <input type="number" min="1" value={e.delay_value}
-              onChange={ev => set({ delay_value: parseInt(ev.target.value) || 1 })}
+            <input type="number" min="1" value={followup.delay_value}
+              onChange={ev => onEdit(followup.id, { delay_value: parseInt(ev.target.value) || 1 })}
               className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]" />
-            <select value={e.delay_unit} onChange={ev => set({ delay_unit: ev.target.value })}
+            <select value={followup.delay_unit} onChange={ev => onEdit(followup.id, { delay_unit: ev.target.value })}
               className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
               <option value="sec">сек</option>
               <option value="min">мин</option>
@@ -92,44 +72,28 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
               <option value="day">дней</option>
             </select>
           </div>
-          {/* Текст */}
-          <textarea value={e.text} onChange={ev => set({ text: ev.target.value })}
+          <textarea value={followup.text} onChange={ev => onEdit(followup.id, { text: ev.target.value })}
             placeholder={`Текст дожима ${index + 1}...`}
             className="w-full px-3 py-2 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-16 resize-none" />
-          {/* Канал */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-600 flex-shrink-0">Канал:</span>
             <div className="flex gap-1">
               {(['telegram', 'email', 'both'] as const).map(ch => (
-                <button key={ch} onClick={() => set({ channel: ch })}
+                <button key={ch} onClick={() => onEdit(followup.id, { channel: ch })}
                   className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    e.channel === ch ? 'bg-[#6A55F8] text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-[#6A55F8]/40'
+                    followup.channel === ch ? 'bg-[#6A55F8] text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-[#6A55F8]/40'
                   }`}>
                   {ch === 'telegram' ? 'Telegram' : ch === 'email' ? 'Email' : 'Оба'}
                 </button>
               ))}
             </div>
           </div>
-          {/* Условие отмены */}
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={e.cancel_on_reply}
-              onChange={ev => set({ cancel_on_reply: ev.target.checked })}
+            <input type="checkbox" checked={followup.cancel_on_reply}
+              onChange={ev => onEdit(followup.id, { cancel_on_reply: ev.target.checked })}
               className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
             <span className="text-xs text-gray-600">Отменить, если пользователь ответит</span>
           </label>
-          {/* Сохранение черновика */}
-          {isDirty && (
-            <div className="flex gap-2 pt-1">
-              <button onClick={handleSave} disabled={saving}
-                className="px-3 py-1.5 bg-[#6A55F8] text-white text-xs rounded font-medium hover:bg-[#5845e0] disabled:opacity-50">
-                {saving ? 'Сохранение…' : 'Сохранить'}
-              </button>
-              <button onClick={handleDiscard}
-                className="px-3 py-1.5 text-gray-500 text-xs rounded font-medium hover:bg-gray-100">
-                Отменить
-              </button>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -137,11 +101,21 @@ function FollowupCard({ followup, index, onUpdate, onDelete }: {
 }
 
 // =============================================
-// FOLLOWUP SECTION (секция внутри MessageCard)
+// FOLLOWUP SECTION — ref handle для сохранения из MessageCard
 // =============================================
-function FollowupSection({ messageId }: { messageId: string }) {
+type FollowupSectionHandle = {
+  save: () => Promise<void>
+  discard: () => void
+}
+
+const FollowupSection = React.forwardRef<FollowupSectionHandle, {
+  messageId: string
+  onDirtyChange: (dirty: boolean) => void
+}>(function FollowupSection({ messageId, onDirtyChange }, ref) {
   const supabase = createClient()
   const [followups, setFollowups] = useState<Followup[]>([])
+  const [savedFollowups, setSavedFollowups] = useState<Followup[]>([])
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [enabled, setEnabled] = useState(false)
   const [sectionCollapsed, setSectionCollapsed] = useState(false)
@@ -151,25 +125,60 @@ function FollowupSection({ messageId }: { messageId: string }) {
       .then(({ data }) => {
         const items = (data ?? []) as Followup[]
         setFollowups(items)
+        setSavedFollowups(items)
         setEnabled(items.length > 0)
         setLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messageId])
 
+  React.useImperativeHandle(ref, () => ({
+    save: async () => {
+      for (const id of dirtyIds) {
+        const f = followups.find(f => f.id === id)
+        if (!f) continue
+        await supabase.from('message_followups').update({
+          delay_value: f.delay_value, delay_unit: f.delay_unit,
+          text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply,
+        }).eq('id', id)
+      }
+      setSavedFollowups([...followups])
+      setDirtyIds(new Set())
+      onDirtyChange(false)
+    },
+    discard: () => {
+      setFollowups([...savedFollowups])
+      setDirtyIds(new Set())
+      onDirtyChange(false)
+    },
+  }), [followups, dirtyIds, savedFollowups, onDirtyChange])
+
+  function editFollowup(id: string, updates: Partial<Followup>) {
+    setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f))
+    setDirtyIds(prev => { const next = new Set(prev); next.add(id); return next })
+    onDirtyChange(true)
+  }
+
+  async function toggleActive(id: string, val: boolean) {
+    setFollowups(prev => prev.map(f => f.id === id ? { ...f, is_active: val } : f))
+    setSavedFollowups(prev => prev.map(f => f.id === id ? { ...f, is_active: val } : f))
+    await supabase.from('message_followups').update({ is_active: val }).eq('id', id)
+  }
+
   async function toggleEnabled() {
     if (enabled) {
-      // Выключаем — только скрываем, данные НЕ удаляем
       setEnabled(false)
     } else {
       setEnabled(true)
       setSectionCollapsed(false)
       if (followups.length === 0) {
-        // Первый дожим — создаём в БД
         const row = { scenario_message_id: messageId, order_index: 0, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
         const { data, error } = await supabase.from('message_followups').insert(row).select().single()
         if (error) console.error('message_followups insert error:', error)
-        if (data) setFollowups([data as Followup])
+        if (data) {
+          setFollowups([data as Followup])
+          setSavedFollowups([data as Followup])
+        }
       }
     }
   }
@@ -179,17 +188,17 @@ function FollowupSection({ messageId }: { messageId: string }) {
     const row = { scenario_message_id: messageId, order_index: followups.length, delay_value: 1, delay_unit: 'hour', text: '', channel: 'telegram', cancel_on_reply: true, is_active: true }
     const { data, error } = await supabase.from('message_followups').insert(row).select().single()
     if (error) console.error('message_followups insert error:', error)
-    if (data) setFollowups(prev => [...prev, data as Followup])
-  }
-
-  async function updateFollowup(id: string, updates: Partial<Followup>) {
-    setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f))
-    await supabase.from('message_followups').update(updates).eq('id', id)
+    if (data) {
+      setFollowups(prev => [...prev, data as Followup])
+      setSavedFollowups(prev => [...prev, data as Followup])
+    }
   }
 
   async function deleteFollowup(id: string) {
     const remaining = followups.filter(f => f.id !== id)
     setFollowups(remaining)
+    setSavedFollowups(prev => prev.filter(f => f.id !== id))
+    setDirtyIds(prev => { const next = new Set(prev); next.delete(id); return next })
     if (remaining.length === 0) setEnabled(false)
     await supabase.from('message_followups').delete().eq('id', id)
   }
@@ -201,7 +210,6 @@ function FollowupSection({ messageId }: { messageId: string }) {
   return (
     <div className="border-t border-gray-100 pt-4">
       <div className="flex items-center justify-between mb-2">
-        {/* Главный тоггл + заголовок */}
         <button onClick={toggleEnabled} className="flex items-center gap-2">
           <div className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${enabled ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
             <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
@@ -225,17 +233,17 @@ function FollowupSection({ messageId }: { messageId: string }) {
           </div>
         )}
       </div>
-
       {enabled && !sectionCollapsed && followups.length > 0 && (
         <div className="space-y-2">
           {followups.map((f, i) => (
-            <FollowupCard key={f.id} followup={f} index={i} onUpdate={updateFollowup} onDelete={deleteFollowup} />
+            <FollowupCard key={f.id} followup={f} index={i}
+              onEdit={editFollowup} onToggleActive={toggleActive} onDelete={deleteFollowup} />
           ))}
         </div>
       )}
     </div>
   )
-}
+})
 
 // =============================================
 // MESSAGE EDITOR (карточка сообщения)
@@ -253,8 +261,10 @@ function MessageCard({
   const supabase = createClient()
   const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState<Partial<Message>>({})
+  const [followupsDirty, setFollowupsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
-  const isDirty = Object.keys(draft).length > 0
+  const followupRef = React.useRef<FollowupSectionHandle>(null)
+  const isDirty = Object.keys(draft).length > 0 || followupsDirty
   const e = { ...msg, ...draft } // effective values
 
   function set(data: Partial<Message>) {
@@ -264,20 +274,26 @@ function MessageCard({
   async function handleSave() {
     if (!isDirty) return
     setSaving(true)
-    const updates = {
-      text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
-      next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
+    if (Object.keys(draft).length > 0) {
+      const updates = {
+        text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
+        next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
+      }
+      if (!msg.id.startsWith('temp-')) {
+        await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
+      }
+      onUpdate(msg.id, updates)
+      setDraft({})
     }
-    if (!msg.id.startsWith('temp-')) {
-      await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
+    if (followupsDirty) {
+      await followupRef.current?.save()
     }
-    onUpdate(msg.id, updates) // синхронизируем родительский стейт
-    setDraft({})
     setSaving(false)
   }
 
   function handleDiscard() {
     setDraft({})
+    followupRef.current?.discard()
   }
 
   const typeLabel = e.is_start ? '⭐ Стартовое' : '💬 Сообщение'
@@ -426,7 +442,7 @@ function MessageCard({
           </div>
 
           {/* Followups */}
-          <FollowupSection messageId={msg.id} />
+          <FollowupSection ref={followupRef} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
 
           {/* Save / Discard / Delete */}
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
