@@ -408,6 +408,12 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
   const [loading, setLoading] = useState(true)
   const [botUsers, setBotUsers] = useState<BotConversation[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
+  const [analytics, setAnalytics] = useState<{
+    totalReach: number; totalReplies: number; totalBtnClicks: number
+    msgReach: { id: string; text: string | null; is_start: boolean; order_position: number; reach: number }[]
+    btnCounts: [string, number][]
+  } | null>(null)
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const supabase = createClient()
 
   async function loadData() {
@@ -448,6 +454,82 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeTab === 'users') loadUsers() }, [activeTab])
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeTab === 'analytics') loadAnalytics() }, [activeTab, messages])
+
+  async function loadAnalytics() {
+    if (!scenario.telegram_bot_id) { setAnalytics(null); return }
+    setLoadingAnalytics(true)
+
+    // Все разговоры этого бота
+    const { data: convs } = await supabase
+      .from('chatbot_conversations')
+      .select('id, customer_id')
+      .eq('telegram_bot_id', scenario.telegram_bot_id)
+
+    if (!convs || convs.length === 0) { setAnalytics({ totalReach: 0, totalReplies: 0, totalBtnClicks: 0, msgReach: [], btnCounts: [] }); setLoadingAnalytics(false); return }
+
+    const convIds = convs.map((c: { id: string }) => c.id)
+    const customerIds = convs.map((c: { customer_id: string | null }) => c.customer_id).filter(Boolean) as string[]
+
+    // Все исходящие сообщения из этих разговоров
+    const { data: outMsgs } = await supabase
+      .from('chatbot_messages')
+      .select('conversation_id, content')
+      .in('conversation_id', convIds)
+      .eq('direction', 'outgoing')
+
+    // Считаем охват по каждому сообщению сценария (сопоставление по тексту)
+    const convsByMsg: Record<string, Set<string>> = {}
+    for (const m of messages) {
+      if (!m.text) continue
+      convsByMsg[m.id] = new Set()
+      const trimmed = m.text.trim()
+      for (const om of (outMsgs ?? [])) {
+        if (om.content?.trim() === trimmed) convsByMsg[m.id].add(om.conversation_id)
+      }
+    }
+
+    // Все разговоры, получившие хоть одно сообщение этого сценария
+    const reachedConvIds = new Set<string>()
+    for (const s of Object.values(convsByMsg)) for (const id of s) reachedConvIds.add(id)
+
+    // Входящие сообщения от пользователей в этих разговорах
+    let totalReplies = 0
+    if (reachedConvIds.size > 0) {
+      const { count } = await supabase
+        .from('chatbot_messages')
+        .select('id', { count: 'exact', head: true })
+        .in('conversation_id', [...reachedConvIds])
+        .eq('direction', 'incoming')
+      totalReplies = count ?? 0
+    }
+
+    // Клики по кнопкам
+    const { data: btnActions } = customerIds.length > 0
+      ? await supabase.from('customer_actions').select('data').in('customer_id', customerIds).eq('action', 'bot_button_click')
+      : { data: [] }
+
+    const btnCounts: Record<string, number> = {}
+    for (const a of (btnActions ?? [])) {
+      const t = (a.data as Record<string, string>)?.button_text ?? 'Кнопка'
+      btnCounts[t] = (btnCounts[t] ?? 0) + 1
+    }
+
+    setAnalytics({
+      totalReach: reachedConvIds.size,
+      totalReplies,
+      totalBtnClicks: btnActions?.length ?? 0,
+      msgReach: messages.map(m => ({
+        id: m.id, text: m.text, is_start: m.is_start,
+        order_position: m.order_position,
+        reach: convsByMsg[m.id]?.size ?? 0,
+      })),
+      btnCounts: Object.entries(btnCounts).sort((a, b) => b[1] - a[1]),
+    })
+    setLoadingAnalytics(false)
+  }
 
   async function addMessage() {
     const tempMsg: Message = {
@@ -693,8 +775,97 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       )}
 
       {activeTab === 'analytics' && (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-400 text-sm">
-          Аналитика появится после того как бот начнёт получать сообщения
+        <div className="space-y-4">
+          {loadingAnalytics ? (
+            <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-sm text-gray-400">Загружаю...</div>
+          ) : !analytics || !scenario.telegram_bot_id ? (
+            <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-400 text-sm">
+              Привяжите бота к сценарию чтобы видеть аналитику
+            </div>
+          ) : (
+            <>
+              {/* Карточки-метрики */}
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  { label: 'Охват', value: analytics.totalReach, icon: '👥', hint: 'Уникальных пользователей' },
+                  { label: 'Ответов', value: analytics.totalReplies, icon: '💬', hint: 'Сообщений от пользователей' },
+                  { label: 'Кликов', value: analytics.totalBtnClicks, icon: '👆', hint: 'Нажатий на кнопки' },
+                ].map(({ label, value, icon, hint }) => (
+                  <div key={label} className="bg-white rounded-xl border border-gray-100 p-5">
+                    <div className="text-2xl mb-2">{icon}</div>
+                    <div className="text-2xl font-bold text-gray-900">{value}</div>
+                    <div className="text-sm font-medium text-gray-700 mt-0.5">{label}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">{hint}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Воронка по сообщениям */}
+              {analytics.msgReach.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 p-5">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Воронка сообщений</h3>
+                  <div className="space-y-3">
+                    {analytics.msgReach.map((m, i) => {
+                      const maxReach = Math.max(...analytics.msgReach.map(x => x.reach), 1)
+                      const pct = Math.round((m.reach / maxReach) * 100)
+                      const label = m.is_start ? '⭐ Стартовое' : `💬 Сообщение ${i + 1}`
+                      const text = m.text ? (m.text.length > 60 ? m.text.slice(0, 60) + '…' : m.text) : '(без текста)'
+                      return (
+                        <div key={m.id} className="flex items-center gap-3">
+                          <div className="w-28 flex-shrink-0">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${m.is_start ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'}`}>{label}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-gray-500 mb-1 truncate">{text}</div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-[#6A55F8] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                          <div className="w-16 text-right flex-shrink-0">
+                            <span className="text-sm font-semibold text-gray-800">{m.reach}</span>
+                            <span className="text-xs text-gray-400 ml-1">чел.</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Клики по кнопкам */}
+              {analytics.btnCounts.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 p-5">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Клики по кнопкам</h3>
+                  <div className="space-y-2.5">
+                    {analytics.btnCounts.map(([btnText, count]) => {
+                      const maxCount = analytics.btnCounts[0][1]
+                      const pct = Math.round((count / maxCount) * 100)
+                      return (
+                        <div key={btnText} className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-gray-700 mb-1 truncate">{btnText}</div>
+                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-[#6A55F8]/60 rounded-full" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                          <div className="w-16 text-right flex-shrink-0">
+                            <span className="text-sm font-semibold text-gray-800">{count}</span>
+                            <span className="text-xs text-gray-400 ml-1">раз</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {analytics.totalReach === 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-gray-400 text-sm">
+                  Бот ещё не отправил ни одного сообщения этого сценария
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
