@@ -128,6 +128,7 @@ function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: 
   const [toggling, setToggling] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   async function load() {
     const [oRes, aRes, nRes] = await Promise.all([
@@ -174,13 +175,27 @@ function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: 
   async function handleDelete() {
     if (!deleteConfirm) { setDeleteConfirm(true); return }
     setDeleting(true)
-    const res = await fetch(`/api/customers/${current.id}/delete`, { method: 'POST' })
-    if (res.ok) {
+    setDeleteError('')
+
+    try {
+      // Удаляем последовательно через API (service role)
+      const res = await fetch(`/api/customers/${current.id}/delete`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        // Показываем реальную ошибку
+        const msg = json?.error || `HTTP ${res.status}`
+        setDeleteError(msg)
+        setDeleting(false)
+        return
+      }
+
       onDeleted?.(current.id)
       onBack()
-    } else {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Неизвестная ошибка'
+      setDeleteError(msg)
       setDeleting(false)
-      setDeleteConfirm(false)
     }
   }
 
@@ -230,21 +245,26 @@ function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: 
 
           {/* Полное удаление */}
           {deleteConfirm ? (
-            <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
-              <span className="text-xs text-red-600 font-medium">Удалить навсегда?</span>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded px-2 py-0.5 disabled:opacity-50 transition-colors"
-              >
-                {deleting ? '...' : 'Да'}
-              </button>
-              <button
-                onClick={() => setDeleteConfirm(false)}
-                className="text-xs text-gray-400 hover:text-gray-600 px-1 transition-colors"
-              >
-                Отмена
-              </button>
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                <span className="text-xs text-red-600 font-medium">Удалить навсегда?</span>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded px-2 py-0.5 disabled:opacity-50 transition-colors"
+                >
+                  {deleting ? 'Удаляю...' : 'Да'}
+                </button>
+                <button
+                  onClick={() => { setDeleteConfirm(false); setDeleteError('') }}
+                  className="text-xs text-gray-400 hover:text-gray-600 px-1 transition-colors"
+                >
+                  Отмена
+                </button>
+              </div>
+              {deleteError && (
+                <p className="text-xs text-red-500 max-w-xs text-right">{deleteError}</p>
+              )}
             </div>
           ) : (
             <button
