@@ -261,21 +261,73 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
   async function duplicateScenario() {
     if (duplicating) return
     setDuplicating(true)
-    const temp: Scenario = { ...scenario, id: 'temp-' + Date.now(), name: `${scenario.name} (копия)`, status: 'draft', created_at: new Date().toISOString() }
-    if (onDuplicated) onDuplicated(temp)
-    onBack()
+
+    // Создаём новый сценарий без привязки к боту (чистая копия)
     const { data: newS } = await supabase.from('chatbot_scenarios').insert({
-      project_id: projectId, name: temp.name, telegram_bot_id: scenario.telegram_bot_id, status: 'draft',
+      project_id: projectId,
+      name: `${scenario.name} (копия)`,
+      telegram_bot_id: null,
+      status: 'draft',
     }).select().single()
+
     if (newS) {
-      // Copy messages
+      // Копируем сообщения
       const { data: msgs } = await supabase.from('scenario_messages').select('*').eq('scenario_id', scenario.id)
+
       if (msgs && msgs.length > 0) {
-        await supabase.from('scenario_messages').insert(
-          msgs.map((m: Record<string, unknown>) => ({ ...m, id: undefined, scenario_id: newS.id }))
+        // Проход 1: вставляем сообщения без перекрёстных ссылок, строим карту oldId → newId
+        const idMap: Record<string, string> = {}
+        await Promise.all(
+          msgs.map(async (m: Record<string, unknown>) => {
+            const { id: oldId, next_message_id: _n, parent_message_id: _p, ...rest } = m
+            const { data: newMsg } = await supabase.from('scenario_messages').insert({
+              ...rest,
+              scenario_id: newS.id,
+              next_message_id: null,
+              parent_message_id: null,
+            }).select('id').single()
+            if (newMsg) idMap[oldId as string] = newMsg.id
+          })
         )
+
+        // Проход 2: восстанавливаем next_message_id / parent_message_id через карту
+        await Promise.all(
+          msgs.map(async (m: Record<string, unknown>) => {
+            const newId = idMap[m.id as string]
+            if (!newId) return
+            const updates: Record<string, string | null> = {}
+            if (m.next_message_id && idMap[m.next_message_id as string]) updates.next_message_id = idMap[m.next_message_id as string]
+            if (m.parent_message_id && idMap[m.parent_message_id as string]) updates.parent_message_id = idMap[m.parent_message_id as string]
+            if (Object.keys(updates).length > 0) {
+              await supabase.from('scenario_messages').update(updates).eq('id', newId)
+            }
+          })
+        )
+
+        // Копируем кнопки с перепривязкой message_id и action_goto_message_id
+        const oldMsgIds = msgs.map((m: Record<string, unknown>) => m.id as string)
+        const { data: btns } = await supabase.from('scenario_buttons').select('*').in('message_id', oldMsgIds)
+        if (btns && btns.length > 0) {
+          await supabase.from('scenario_buttons').insert(
+            btns.map((b: Record<string, unknown>) => {
+              const { id: _id, message_id, action_goto_message_id, ...brest } = b
+              return {
+                ...brest,
+                message_id: idMap[message_id as string] ?? message_id,
+                action_goto_message_id: action_goto_message_id && idMap[action_goto_message_id as string]
+                  ? idMap[action_goto_message_id as string]
+                  : action_goto_message_id,
+              }
+            })
+          )
+        }
       }
+
+      if (onDuplicated) onDuplicated(newS as Scenario)
     }
+
+    setDuplicating(false)
+    onBack()
   }
 
   return (
