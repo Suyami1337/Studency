@@ -228,21 +228,30 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   const [bots, setBots] = useState<TelegramBot[]>([])
+
+  // Controlled state для всех полей
+  const [name, setName] = useState(scenario.name)
+  const [status, setStatus] = useState(scenario.status)
   const [selectedBotId, setSelectedBotId] = useState(scenario.telegram_bot_id || '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId).then(({ data }) => setBots((data ?? []) as TelegramBot[]))
   }, [projectId, supabase])
 
-  async function updateName(name: string) {
-    if (name.trim()) await supabase.from('chatbot_scenarios').update({ name: name.trim() }).eq('id', scenario.id)
-  }
-  async function updateStatus(status: string) {
-    await supabase.from('chatbot_scenarios').update({ status }).eq('id', scenario.id)
-  }
-  async function updateBot(botId: string) {
-    setSelectedBotId(botId)
-    await supabase.from('chatbot_scenarios').update({ telegram_bot_id: botId || null }).eq('id', scenario.id)
+  async function handleSave() {
+    if (!name.trim()) return
+    setSaving(true)
+    setSaved(false)
+    await supabase.from('chatbot_scenarios').update({
+      name: name.trim(),
+      status,
+      telegram_bot_id: selectedBotId || null,
+    }).eq('id', scenario.id)
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
   }
   async function deleteScenario() {
     if (onDeleted) onDeleted(scenario.id)
@@ -275,12 +284,12 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
         <h3 className="text-sm font-semibold text-gray-900">Основные</h3>
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Название сценария</label>
-          <input type="text" defaultValue={scenario.name} onBlur={e => updateName(e.target.value)}
+          <input type="text" value={name} onChange={e => setName(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Статус</label>
-          <select defaultValue={scenario.status} onChange={e => updateStatus(e.target.value)}
+          <select value={status} onChange={e => setStatus(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
             <option value="draft">Черновик</option>
             <option value="active">Активен</option>
@@ -289,13 +298,17 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-700 mb-1">Привязка к Telegram-боту</label>
-          <select value={selectedBotId} onChange={e => updateBot(e.target.value)}
+          <select value={selectedBotId} onChange={e => setSelectedBotId(e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
             <option value="">Не привязан</option>
             {bots.map(b => <option key={b.id} value={b.id}>@{b.bot_username} — {b.name}</option>)}
           </select>
           {bots.length === 0 && <p className="text-xs text-amber-600 mt-1">Подключите бота в Настройки → Интеграции</p>}
         </div>
+        <button onClick={handleSave} disabled={saving || !name.trim()}
+          className="w-full py-2 rounded-lg text-sm font-medium bg-[#6A55F8] text-white hover:bg-[#5A45E8] disabled:opacity-50 transition-colors">
+          {saving ? 'Сохраняю...' : saved ? '✓ Сохранено' : 'Сохранить'}
+        </button>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 p-5">
