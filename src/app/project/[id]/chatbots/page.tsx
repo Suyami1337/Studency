@@ -341,6 +341,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
     }
     setFollowups(prev => [...prev, tempFollowup])
     setDirtyIds(prev => { const next = new Set(prev); next.add(tempId); return next })
+    setSectionCollapsed(false) // раскрываем чтобы пользователь увидел новую запись
     onDirtyChange(true)
   }
 
