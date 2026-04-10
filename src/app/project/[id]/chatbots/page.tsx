@@ -221,13 +221,41 @@ function MessageCard({
   onDeleteButton: (id: string) => void
   onUpdateButton: (id: string, data: Partial<Button>) => void
 }) {
+  const supabase = createClient()
   const [expanded, setExpanded] = useState(false)
+  const [draft, setDraft] = useState<Partial<Message>>({})
+  const [saving, setSaving] = useState(false)
+  const isDirty = Object.keys(draft).length > 0
+  const e = { ...msg, ...draft } // effective values
 
-  const typeLabel = msg.is_start ? '⭐ Стартовое' : '💬 Сообщение'
-  const typeColor = msg.is_start ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'
+  function set(data: Partial<Message>) {
+    setDraft(prev => ({ ...prev, ...data }))
+  }
+
+  async function handleSave() {
+    if (!isDirty) return
+    setSaving(true)
+    const updates = {
+      text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
+      next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
+    }
+    if (!msg.id.startsWith('temp-')) {
+      await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
+    }
+    onUpdate(msg.id, updates) // синхронизируем родительский стейт
+    setDraft({})
+    setSaving(false)
+  }
+
+  function handleDiscard() {
+    setDraft({})
+  }
+
+  const typeLabel = e.is_start ? '⭐ Стартовое' : '💬 Сообщение'
+  const typeColor = e.is_start ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'
 
   return (
-    <div className={`bg-white rounded-xl border ${expanded ? 'border-[#6A55F8]/40 shadow-sm' : 'border-gray-100'} transition-all`}>
+    <div className={`bg-white rounded-xl border ${expanded ? 'border-[#6A55F8]/40 shadow-sm' : isDirty ? 'border-amber-300' : 'border-gray-100'} transition-all`}>
       {/* Header — always visible */}
       <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8]">
@@ -236,10 +264,11 @@ function MessageCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${typeColor}`}>{typeLabel}</span>
-            {msg.trigger_word && <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">{msg.trigger_word}</span>}
-            {msg.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {msg.delay_minutes} {msg.delay_unit === 'sec' ? 'сек' : msg.delay_unit === 'hour' ? 'ч' : msg.delay_unit === 'day' ? 'дн' : 'мин'}</span>}
+            {e.trigger_word && <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">{e.trigger_word}</span>}
+            {e.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {e.delay_minutes} {e.delay_unit === 'sec' ? 'сек' : e.delay_unit === 'hour' ? 'ч' : e.delay_unit === 'day' ? 'дн' : 'мин'}</span>}
+            {isDirty && <span className="text-xs text-amber-600 font-medium">● Не сохранено</span>}
           </div>
-          <p className="text-sm text-gray-700 truncate">{msg.text || 'Пустое сообщение'}</p>
+          <p className="text-sm text-gray-700 truncate">{e.text || 'Пустое сообщение'}</p>
         </div>
         <div className="flex items-center gap-2">
           {buttons.length > 0 && <span className="text-xs text-gray-400">{buttons.length} кнопок</span>}
@@ -254,8 +283,8 @@ function MessageCard({
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
             <textarea
-              value={msg.text || ''}
-              onChange={e => onUpdate(msg.id, { text: e.target.value })}
+              value={e.text || ''}
+              onChange={ev => set({ text: ev.target.value })}
               placeholder="Введите текст сообщения..."
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-24 resize-none"
             />
@@ -264,23 +293,23 @@ function MessageCard({
           {/* Type settings */}
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={msg.is_start} onChange={e => onUpdate(msg.id, { is_start: e.target.checked })}
+              <input type="checkbox" checked={e.is_start} onChange={ev => set({ is_start: ev.target.checked })}
                 className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
               <span className="text-xs font-medium text-gray-700">⭐ Стартовое сообщение</span>
             </label>
           </div>
 
           {/* Trigger word (if start) */}
-          {msg.is_start && (
+          {e.is_start && (
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Кодовое слово (триггер)</label>
-              <input type="text" value={msg.trigger_word || ''} onChange={e => onUpdate(msg.id, { trigger_word: e.target.value })}
+              <input type="text" value={e.trigger_word || ''} onChange={ev => set({ trigger_word: ev.target.value })}
                 placeholder="/start, привет, любое слово..."
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:border-[#6A55F8]" />
             </div>
           )}
 
-          {/* Buttons */}
+          {/* Buttons — immediate save (add/delete/edit) */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium text-gray-700">Кнопки</label>
@@ -293,27 +322,27 @@ function MessageCard({
                 {buttons.map(btn => (
                   <div key={btn.id} className="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
                     <div className="flex items-center gap-2">
-                      <input type="text" value={btn.text} onChange={e => onUpdateButton(btn.id, { text: e.target.value })}
+                      <input type="text" value={btn.text} onChange={ev => onUpdateButton(btn.id, { text: ev.target.value })}
                         placeholder="Текст кнопки" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
                       <button onClick={() => onDeleteButton(btn.id)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select value={btn.action_type} onChange={e => onUpdateButton(btn.id, { action_type: e.target.value })}
+                      <select value={btn.action_type} onChange={ev => onUpdateButton(btn.id, { action_type: ev.target.value })}
                         className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
                         <option value="url">Ссылка</option>
                         <option value="trigger">Запустить кодовое слово</option>
                         <option value="goto_message">Перейти к сообщению</option>
                       </select>
                       {btn.action_type === 'url' && (
-                        <input type="text" value={btn.action_url || ''} onChange={e => onUpdateButton(btn.id, { action_url: e.target.value })}
+                        <input type="text" value={btn.action_url || ''} onChange={ev => onUpdateButton(btn.id, { action_url: ev.target.value })}
                           placeholder="https://..." className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
                       )}
                       {btn.action_type === 'trigger' && (
-                        <input type="text" value={btn.action_trigger_word || ''} onChange={e => onUpdateButton(btn.id, { action_trigger_word: e.target.value })}
+                        <input type="text" value={btn.action_trigger_word || ''} onChange={ev => onUpdateButton(btn.id, { action_trigger_word: ev.target.value })}
                           placeholder="Кодовое слово..." className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8]" />
                       )}
                       {btn.action_type === 'goto_message' && (
-                        <select value={btn.action_goto_message_id || ''} onChange={e => onUpdateButton(btn.id, { action_goto_message_id: e.target.value || null })}
+                        <select value={btn.action_goto_message_id || ''} onChange={ev => onUpdateButton(btn.id, { action_goto_message_id: ev.target.value || null })}
                           className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
                           <option value="">Выберите сообщение...</option>
                           {allMessages.filter(m => m.id !== msg.id).map(m => (
@@ -333,31 +362,27 @@ function MessageCard({
             <label className="block text-xs font-medium text-[#6A55F8] mb-2">↓ Следующее сообщение</label>
             <div className="flex items-center gap-3">
               <select
-                value={msg.next_message_id || ''}
-                onChange={e => onUpdate(msg.id, { next_message_id: e.target.value || null })}
+                value={e.next_message_id || ''}
+                onChange={ev => set({ next_message_id: ev.target.value || null })}
                 className="flex-1 px-2 py-1.5 rounded border border-[#6A55F8]/20 text-sm focus:outline-none focus:border-[#6A55F8] bg-white"
               >
                 <option value="">Нет (конец цепочки)</option>
                 {allMessages.filter(m => m.id !== msg.id).map(m => (
                   <option key={m.id} value={m.id}>
-                    #{m.order_position + 1}: {m.is_start ? '⭐' : m.is_followup ? '🔔' : '💬'} {(m.text || 'Пустое').slice(0, 50)}
+                    #{m.order_position + 1}: {m.is_start ? '⭐' : '💬'} {(m.text || 'Пустое').slice(0, 50)}
                   </option>
                 ))}
               </select>
-              {msg.next_message_id && (
+              {e.next_message_id && (
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <span className="text-xs text-gray-500">через</span>
-                  <input
-                    type="number" min="0"
-                    value={msg.delay_minutes}
-                    onChange={e => onUpdate(msg.id, { delay_minutes: parseInt(e.target.value) || 0 })}
+                  <input type="number" min="0"
+                    value={e.delay_minutes}
+                    onChange={ev => set({ delay_minutes: parseInt(ev.target.value) || 0 })}
                     className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]"
                   />
-                  <select
-                    value={msg.delay_unit || 'min'}
-                    onChange={e => onUpdate(msg.id, { delay_unit: e.target.value })}
-                    className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]"
-                  >
+                  <select value={e.delay_unit || 'min'} onChange={ev => set({ delay_unit: ev.target.value })}
+                    className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
                     <option value="sec">сек</option>
                     <option value="min">мин</option>
                     <option value="hour">час</option>
@@ -366,7 +391,7 @@ function MessageCard({
                 </div>
               )}
             </div>
-            {!msg.next_message_id && buttons.length > 0 && (
+            {!e.next_message_id && buttons.length > 0 && (
               <p className="text-[10px] text-gray-400 mt-1.5">Кнопки уже настраивают переходы. Следующее сообщение нужно только для линейной цепочки.</p>
             )}
           </div>
@@ -374,9 +399,18 @@ function MessageCard({
           {/* Followups */}
           <FollowupSection messageId={msg.id} />
 
-          {/* Delete */}
-          <div className="pt-2 border-t border-gray-100 flex justify-end">
-            <button onClick={() => onDelete(msg.id)} className="text-xs text-red-500 hover:underline">Удалить сообщение</button>
+          {/* Save / Discard / Delete */}
+          <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
+            <button onClick={() => onDelete(msg.id)} className="text-xs text-red-400 hover:text-red-600 hover:underline">Удалить сообщение</button>
+            {isDirty && (
+              <div className="flex items-center gap-2">
+                <button onClick={handleDiscard} className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100">Отменить</button>
+                <button onClick={handleSave} disabled={saving}
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-[#6A55F8] text-white hover:bg-[#5A45E8] disabled:opacity-50">
+                  {saving ? 'Сохраняю...' : 'Сохранить'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -727,9 +761,9 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     }
   }
 
-  async function updateMessage(id: string, data: Partial<Message>) {
+  // Только локальное обновление — DB-запись делает сам MessageCard при Save
+  function updateMessage(id: string, data: Partial<Message>) {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...data } : m))
-    await supabase.from('scenario_messages').update(data).eq('id', id)
   }
 
   async function deleteMessage(id: string) {
