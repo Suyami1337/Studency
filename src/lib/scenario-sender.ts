@@ -2,7 +2,10 @@
 // Used by both webhook (for immediate sends) and cron (for delayed sends from queue)
 
 import { SupabaseClient } from '@supabase/supabase-js'
-import { sendTelegramMessage } from '@/lib/telegram'
+import {
+  sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo,
+  sendTelegramAnimation, sendTelegramVideoNote, sendTelegramDocument, sendTelegramAudio,
+} from '@/lib/telegram'
 import { waitUntil } from '@vercel/functions'
 
 // Delays shorter than this are handled via waitUntil; longer ones go to the queue
@@ -34,7 +37,8 @@ export async function sendScenarioMessage(
     .eq('id', messageId)
     .single()
 
-  if (!msg || !msg.text) return
+  // Сообщение валидно если есть хоть что-то: текст или медиа
+  if (!msg || (!msg.text && !msg.media_url)) return
 
   const resolvedScenarioId = scenarioId ?? msg.scenario_id ?? null
 
@@ -58,17 +62,45 @@ export async function sendScenarioMessage(
       }
     })
 
-  if (telegramButtons.length > 0) {
-    await sendTelegramMessage(botToken, chatId, msg.text, telegramButtons)
+  const hasButtons = telegramButtons.length > 0
+  const buttonsArg = hasButtons ? telegramButtons : undefined
+  const caption = msg.text || undefined
+
+  // Отправляем в зависимости от типа медиа
+  if (msg.media_type && msg.media_url) {
+    switch (msg.media_type) {
+      case 'photo':
+        await sendTelegramPhoto(botToken, chatId, msg.media_url, caption, buttonsArg)
+        break
+      case 'video':
+        await sendTelegramVideo(botToken, chatId, msg.media_url, caption, buttonsArg)
+        break
+      case 'animation':
+        await sendTelegramAnimation(botToken, chatId, msg.media_url, caption, buttonsArg)
+        break
+      case 'video_note':
+        // video_note не поддерживает caption/buttons — отправляем отдельно текст если есть
+        await sendTelegramVideoNote(botToken, chatId, msg.media_url)
+        if (msg.text) await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+        break
+      case 'audio':
+        await sendTelegramAudio(botToken, chatId, msg.media_url, caption, buttonsArg)
+        break
+      case 'document':
+      default:
+        await sendTelegramDocument(botToken, chatId, msg.media_url, caption, buttonsArg)
+        break
+    }
   } else {
-    await sendTelegramMessage(botToken, chatId, msg.text)
+    // Обычное текстовое сообщение
+    await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
   }
 
   // Save outgoing
   await supabase.from('chatbot_messages').insert({
     conversation_id: conversationId,
     direction: 'outgoing',
-    content: msg.text,
+    content: msg.text || `[${msg.media_type}]`,
     scenario_id: resolvedScenarioId,
   })
 

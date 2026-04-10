@@ -13,6 +13,7 @@ type Message = {
   is_start: boolean; trigger_word: string | null; is_followup: boolean
   delay_minutes: number; delay_unit: string; followup_condition: string | null
   next_message_id: string | null; parent_message_id: string | null
+  media_type?: string | null; media_url?: string | null; media_file_name?: string | null
 }
 type Button = {
   id: string; message_id: string; order_position: number; text: string
@@ -25,6 +26,133 @@ type Followup = {
   text: string; channel: 'telegram' | 'email' | 'both'
   cancel_on_reply: boolean; is_active: boolean
   created_at?: string
+}
+
+// =============================================
+// MEDIA UPLOAD — загрузка вложений в Supabase Storage
+// =============================================
+function detectMediaType(file: File): string {
+  const mime = file.type
+  if (mime === 'image/gif') return 'animation'
+  if (mime.startsWith('image/')) return 'photo'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
+  return 'document'
+}
+
+function MediaUpload({ mediaType, mediaUrl, mediaFileName, onChange }: {
+  mediaType: string | null
+  mediaUrl: string | null
+  mediaFileName: string | null
+  onChange: (type: string | null, url: string | null, fileName: string | null) => void
+}) {
+  const supabase = createClient()
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sendAsVideoNote, setSendAsVideoNote] = useState(mediaType === 'video_note')
+
+  async function handleFile(file: File) {
+    setError(null)
+    setUploading(true)
+    try {
+      const ext = file.name.split('.').pop() || 'bin'
+      const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
+      const { error: upErr } = await supabase.storage.from('chatbot-media').upload(path, file, {
+        cacheControl: '3600', upsert: false,
+      })
+      if (upErr) throw upErr
+      const { data: pub } = supabase.storage.from('chatbot-media').getPublicUrl(path)
+      const type = detectMediaType(file)
+      onChange(type, pub.publicUrl, file.name)
+      setSendAsVideoNote(false)
+    } catch (err) {
+      console.error('upload error:', err)
+      setError(err instanceof Error ? err.message : 'Ошибка загрузки')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleRemove() {
+    onChange(null, null, null)
+    setSendAsVideoNote(false)
+  }
+
+  function toggleVideoNote() {
+    const next = !sendAsVideoNote
+    setSendAsVideoNote(next)
+    onChange(next ? 'video_note' : 'video', mediaUrl, mediaFileName)
+  }
+
+  const typeLabel = (t: string | null) => {
+    switch (t) {
+      case 'photo': return '🖼 Фото'
+      case 'video': return '🎬 Видео'
+      case 'animation': return '🎞 GIF'
+      case 'video_note': return '⭕ Кружок'
+      case 'audio': return '🎵 Аудио'
+      case 'document': return '📎 Файл'
+      default: return 'Вложение'
+    }
+  }
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">Вложение</label>
+
+      {!mediaUrl ? (
+        <div className="border border-dashed border-gray-300 rounded-lg p-3 text-center">
+          <input
+            type="file"
+            id={`media-upload-${Math.random()}`}
+            className="hidden"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip"
+            onChange={ev => {
+              const f = ev.target.files?.[0]
+              if (f) handleFile(f)
+            }}
+            disabled={uploading}
+          />
+          <label
+            htmlFor={`media-upload-${Math.random()}`}
+            className="inline-block cursor-pointer text-xs text-[#6A55F8] font-medium hover:underline"
+          >
+            {uploading ? 'Загрузка…' : '+ Прикрепить файл'}
+          </label>
+          <p className="text-[10px] text-gray-400 mt-1">Фото, видео, GIF, аудио, документы</p>
+        </div>
+      ) : (
+        <div className="bg-[#F8F7FF] border border-[#6A55F8]/15 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-[#6A55F8]">{typeLabel(mediaType)}</span>
+            <span className="text-xs text-gray-500 truncate flex-1">{mediaFileName}</span>
+            <button onClick={handleRemove} className="text-xs text-gray-400 hover:text-red-500">✕ Удалить</button>
+          </div>
+          {/* Preview */}
+          {(mediaType === 'photo' || mediaType === 'animation') && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={mediaUrl} alt="preview" className="max-h-40 rounded border border-gray-200" />
+          )}
+          {(mediaType === 'video' || mediaType === 'video_note') && (
+            <video src={mediaUrl} controls className="max-h-40 rounded border border-gray-200" />
+          )}
+          {mediaType === 'audio' && (
+            <audio src={mediaUrl} controls className="w-full" />
+          )}
+          {/* Video note toggle */}
+          {(mediaType === 'video' || mediaType === 'video_note') && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={sendAsVideoNote} onChange={toggleVideoNote}
+                className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
+              <span className="text-xs text-gray-600">Отправить как кружок (video note)</span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+    </div>
+  )
 }
 
 // =============================================
@@ -320,6 +448,7 @@ function MessageCard({
       const updates = {
         text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
         next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
+        media_type: e.media_type ?? null, media_url: e.media_url ?? null, media_file_name: e.media_file_name ?? null,
       }
       if (!msg.id.startsWith('temp-')) {
         await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
@@ -376,6 +505,14 @@ function MessageCard({
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-24 resize-none"
             />
           </div>
+
+          {/* Media attachment */}
+          <MediaUpload
+            mediaType={e.media_type ?? null}
+            mediaUrl={e.media_url ?? null}
+            mediaFileName={e.media_file_name ?? null}
+            onChange={(mt, mu, mfn) => set({ media_type: mt, media_url: mu, media_file_name: mfn })}
+          />
 
           {/* Type settings */}
           <div className="flex items-center gap-3">

@@ -1,45 +1,99 @@
 const TELEGRAM_API = 'https://api.telegram.org/bot'
 
-export async function sendTelegramMessage(token: string, chatId: number | string, text: string, buttons?: { text: string; url?: string; callback_data?: string }[]) {
-  const body: Record<string, unknown> = {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-  }
+type InlineButton = { text: string; url?: string; callback_data?: string }
 
-  if (buttons && buttons.length > 0) {
-    body.reply_markup = {
-      inline_keyboard: [buttons.map(b => {
-        if (b.url) return { text: b.text, url: b.url }
-        return { text: b.text, callback_data: b.callback_data || b.text }
-      })],
-    }
+function buildReplyMarkup(buttons?: InlineButton[]) {
+  if (!buttons || buttons.length === 0) return undefined
+  return {
+    inline_keyboard: [buttons.map(b => {
+      if (b.url) return { text: b.text, url: b.url }
+      return { text: b.text, callback_data: b.callback_data || b.text }
+    })],
   }
+}
 
-  const res = await fetch(`${TELEGRAM_API}${token}/sendMessage`, {
+async function telegramRequest(token: string, method: string, body: Record<string, unknown>) {
+  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-
   return res.json()
+}
+
+export async function sendTelegramMessage(token: string, chatId: number | string, text: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    reply_markup: buildReplyMarkup(buttons),
+  })
+}
+
+export async function sendTelegramPhoto(token: string, chatId: number | string, photoUrl: string, caption?: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendPhoto', {
+    chat_id: chatId,
+    photo: photoUrl,
+    caption,
+    parse_mode: caption ? 'HTML' : undefined,
+    reply_markup: buildReplyMarkup(buttons),
+  })
+}
+
+export async function sendTelegramVideo(token: string, chatId: number | string, videoUrl: string, caption?: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendVideo', {
+    chat_id: chatId,
+    video: videoUrl,
+    caption,
+    parse_mode: caption ? 'HTML' : undefined,
+    reply_markup: buildReplyMarkup(buttons),
+  })
+}
+
+export async function sendTelegramAnimation(token: string, chatId: number | string, animationUrl: string, caption?: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendAnimation', {
+    chat_id: chatId,
+    animation: animationUrl,
+    caption,
+    parse_mode: caption ? 'HTML' : undefined,
+    reply_markup: buildReplyMarkup(buttons),
+  })
+}
+
+export async function sendTelegramVideoNote(token: string, chatId: number | string, videoNoteUrl: string) {
+  // video_note не поддерживает caption, buttons, parse_mode
+  return telegramRequest(token, 'sendVideoNote', {
+    chat_id: chatId,
+    video_note: videoNoteUrl,
+  })
+}
+
+export async function sendTelegramDocument(token: string, chatId: number | string, documentUrl: string, caption?: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendDocument', {
+    chat_id: chatId,
+    document: documentUrl,
+    caption,
+    parse_mode: caption ? 'HTML' : undefined,
+    reply_markup: buildReplyMarkup(buttons),
+  })
+}
+
+export async function sendTelegramAudio(token: string, chatId: number | string, audioUrl: string, caption?: string, buttons?: InlineButton[]) {
+  return telegramRequest(token, 'sendAudio', {
+    chat_id: chatId,
+    audio: audioUrl,
+    caption,
+    parse_mode: caption ? 'HTML' : undefined,
+    reply_markup: buildReplyMarkup(buttons),
+  })
 }
 
 export async function setTelegramWebhook(token: string, webhookUrl: string) {
-  const res = await fetch(`${TELEGRAM_API}${token}/setWebhook`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: webhookUrl }),
-  })
-
-  return res.json()
+  return telegramRequest(token, 'setWebhook', { url: webhookUrl })
 }
 
 export async function deleteTelegramWebhook(token: string) {
-  const res = await fetch(`${TELEGRAM_API}${token}/deleteWebhook`, {
-    method: 'POST',
-  })
-
+  const res = await fetch(`${TELEGRAM_API}${token}/deleteWebhook`, { method: 'POST' })
   return res.json()
 }
 
