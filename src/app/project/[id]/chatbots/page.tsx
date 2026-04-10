@@ -119,7 +119,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
   const [loading, setLoading] = useState(true)
   const [enabled, setEnabled] = useState(false)
   const [savedEnabled, setSavedEnabled] = useState(false)
-  const [sectionCollapsed, setSectionCollapsed] = useState(false)
+  const [sectionCollapsed, setSectionCollapsed] = useState(true)
 
   useEffect(() => {
     supabase.from('message_followups').select('*').eq('scenario_message_id', messageId).order('order_index')
