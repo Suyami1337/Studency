@@ -1,153 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { sendTelegramMessage } from '@/lib/telegram'
-import { waitUntil } from '@vercel/functions'
-
-// Порог: задержки короче этого — отправляем через waitUntil сразу из webhook
-const IMMEDIATE_THRESHOLD_MS = 25_000
+import { sendScenarioMessage } from '@/lib/scenario-sender'
 
 function getSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
-}
-
-// Convert delay_value + delay_unit → milliseconds
-function delayToMs(value: number, unit: string): number {
-  switch (unit) {
-    case 'sec':  return value * 1000
-    case 'min':  return value * 60 * 1000
-    case 'hour': return value * 60 * 60 * 1000
-    case 'day':  return value * 24 * 60 * 60 * 1000
-    default:     return value * 60 * 1000 // fallback: minutes
-  }
-}
-
-// Helper: send a scenario message with its buttons
-async function sendScenarioMessage(
-  supabase: ReturnType<typeof getSupabase>,
-  botToken: string,
-  chatId: number,
-  messageId: string,
-  conversationId: string,
-  userId?: number,   // для подстановки {tgid} в URL кнопках
-  scenarioId?: string  // для аналитики — в каком сценарии участвовал пользователь
-) {
-  const { data: msg } = await supabase
-    .from('scenario_messages')
-    .select('*')
-    .eq('id', messageId)
-    .single()
-
-  if (!msg || !msg.text) return
-
-  // Определяем scenario_id: из параметра или из самого сообщения
-  const resolvedScenarioId = scenarioId ?? msg.scenario_id ?? null
-
-  // Get buttons
-  const { data: btns } = await supabase
-    .from('scenario_buttons')
-    .select('*')
-    .eq('message_id', msg.id)
-    .order('order_position')
-
-  const telegramButtons = (btns ?? [])
-    .filter(b => b.text)
-    .map(b => {
-      let url = b.action_type === 'url' && b.action_url ? b.action_url : undefined
-      // Подставляем Telegram ID пользователя вместо {tgid}
-      if (url && userId) {
-        url = url.replace(/\{tgid\}/g, String(userId))
-      }
-      return {
-        text: b.text,
-        url,
-        callback_data: b.action_type !== 'url' ? `btn:${b.id}` : undefined,
-      }
-    })
-
-  if (telegramButtons.length > 0) {
-    await sendTelegramMessage(botToken, chatId, msg.text, telegramButtons)
-  } else {
-    await sendTelegramMessage(botToken, chatId, msg.text)
-  }
-
-  // Save outgoing
-  await supabase.from('chatbot_messages').insert({
-    conversation_id: conversationId,
-    direction: 'outgoing',
-    content: msg.text,
-    scenario_id: resolvedScenarioId,
-  })
-
-  // Schedule followups for this message
-  const { data: followups } = await supabase
-    .from('message_followups')
-    .select('*')
-    .eq('scenario_message_id', msg.id)
-    .eq('is_active', true)
-    .order('order_index')
-
-  if (followups && followups.length > 0) {
-    const now = Date.now()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const shortDelay: any[] = []
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const queueRows: any[] = []
-
-    for (const f of followups) {
-      const delayMs = delayToMs(f.delay_value, f.delay_unit)
-      if (delayMs < IMMEDIATE_THRESHOLD_MS) {
-        shortDelay.push({ f, delayMs })
-      } else {
-        queueRows.push({
-          followup_id: f.id,
-          conversation_id: conversationId,
-          chat_id: chatId,
-          bot_token: botToken,
-          send_at: new Date(now + delayMs).toISOString(),
-          status: 'pending',
-        })
-      }
-    }
-
-    // Длинные задержки — в очередь для cron
-    if (queueRows.length > 0) {
-      const { error: queueErr } = await supabase.from('followup_queue').insert(queueRows)
-      if (queueErr) console.error('followup_queue insert error:', queueErr)
-    }
-
-    // Короткие задержки — waitUntil (фоново, все параллельно от одной точки отсчёта)
-    if (shortDelay.length > 0) {
-      const startedAt = Date.now()
-      waitUntil(Promise.all(shortDelay.map(({ f, delayMs }) =>
-        (async () => {
-          const elapsed = Date.now() - startedAt
-          const remaining = Math.max(0, delayMs - elapsed)
-          await new Promise(res => setTimeout(res, remaining))
-          try {
-            const channel = f.channel ?? 'telegram'
-            if (channel === 'telegram' || channel === 'both') {
-              await sendTelegramMessage(botToken, chatId, f.text)
-            }
-            await supabase.from('chatbot_messages').insert({
-              conversation_id: conversationId,
-              direction: 'outgoing',
-              content: f.text,
-            })
-          } catch (err) {
-            console.error('short followup send error:', err)
-          }
-        })()
-      )))
-    }
-  }
-
-  // If next message exists and delay is 0, send it too
-  if (msg.next_message_id && msg.delay_minutes === 0) {
-    await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId, resolvedScenarioId)
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -215,7 +74,6 @@ export async function POST(request: NextRequest) {
 
       if (pendingFollowups && pendingFollowups.length > 0) {
         const followupIds = pendingFollowups.map((q: { followup_id: string }) => q.followup_id)
-        // Check which followups have cancel_on_reply=true
         const { data: cancelFollowups } = await supabase
           .from('message_followups')
           .select('id')
@@ -238,7 +96,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Извлекаем source slug если пришёл /start src_SLUG (из UTM-ссылки /go/[slug])
+    // Извлекаем source slug если пришёл /start src_SLUG
     let sourceSlugFromStart: string | null = null
     if (text.startsWith('/start src_')) {
       sourceSlugFromStart = text.replace('/start src_', '').trim().replace(/_/g, '-') || null
@@ -266,7 +124,6 @@ export async function POST(request: NextRequest) {
           data: { bot_name: bot.name, telegram_username: username },
         })
 
-        // Привязываем источник трафика если пришёл через UTM deep link
         if (sourceSlugFromStart) {
           const { data: source } = await supabase
             .from('traffic_sources')
@@ -277,11 +134,8 @@ export async function POST(request: NextRequest) {
 
           if (source) {
             await supabase.from('customers').update({
-              source_id: source.id,
-              source_slug: source.slug,
-              source_name: source.name,
+              source_id: source.id, source_slug: source.slug, source_name: source.name,
             }).eq('id', customer.id)
-
             await supabase.from('customer_actions').insert({
               customer_id: customer.id, project_id: projectId, action: 'source_linked',
               data: { source_name: source.name, source_slug: source.slug, via: 'bot_start' },
@@ -290,28 +144,18 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (sourceSlugFromStart && customerId) {
-      // Уже существующий клиент — обновляем источник если ещё не установлен
       const { data: existingCustomer } = await supabase
-        .from('customers')
-        .select('source_id')
-        .eq('id', customerId)
-        .single()
+        .from('customers').select('source_id').eq('id', customerId).single()
 
       if (existingCustomer && !existingCustomer.source_id) {
         const { data: source } = await supabase
-          .from('traffic_sources')
-          .select('id, name, slug')
-          .eq('project_id', projectId)
-          .eq('slug', sourceSlugFromStart)
-          .single()
+          .from('traffic_sources').select('id, name, slug')
+          .eq('project_id', projectId).eq('slug', sourceSlugFromStart).single()
 
         if (source) {
           await supabase.from('customers').update({
-            source_id: source.id,
-            source_slug: source.slug,
-            source_name: source.name,
+            source_id: source.id, source_slug: source.slug, source_name: source.name,
           }).eq('id', customerId)
-
           await supabase.from('customer_actions').insert({
             customer_id: customerId, project_id: projectId, action: 'source_linked',
             data: { source_name: source.name, source_slug: source.slug, via: 'bot_start' },
@@ -337,15 +181,9 @@ export async function POST(request: NextRequest) {
     // =============================================
     if (callbackData && callbackData.startsWith('btn:')) {
       const buttonId = callbackData.replace('btn:', '')
-
-      const { data: btn } = await supabase
-        .from('scenario_buttons')
-        .select('*')
-        .eq('id', buttonId)
-        .single()
+      const { data: btn } = await supabase.from('scenario_buttons').select('*').eq('id', buttonId).single()
 
       if (btn) {
-        // Log action
         if (customerId) {
           await supabase.from('customer_actions').insert({
             customer_id: customerId, project_id: projectId, action: 'bot_button_click',
@@ -353,25 +191,18 @@ export async function POST(request: NextRequest) {
           })
         }
 
-        // Handle action
         if (btn.action_type === 'goto_message' && btn.action_goto_message_id) {
-          // scenario_id определяется из целевого сообщения внутри sendScenarioMessage
           await sendScenarioMessage(supabase, botToken, chatId, btn.action_goto_message_id, conversation.id, userId)
         } else if (btn.action_type === 'trigger' && btn.action_trigger_word) {
-          // Find start message with this trigger
           const { data: triggerMsgs } = await supabase
-            .from('scenario_messages')
-            .select('*')
-            .in('scenario_id', scenarioIds)
-            .eq('is_start', true)
-            .eq('trigger_word', btn.action_trigger_word)
-            .limit(1)
+            .from('scenario_messages').select('*')
+            .in('scenario_id', scenarioIds).eq('is_start', true)
+            .eq('trigger_word', btn.action_trigger_word).limit(1)
 
           if (triggerMsgs && triggerMsgs[0]) {
             await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId, triggerMsgs[0].scenario_id)
           }
         }
-        // url buttons are handled by Telegram directly
       }
 
       return NextResponse.json({ ok: true })
@@ -381,13 +212,11 @@ export async function POST(request: NextRequest) {
     // HANDLE TEXT MESSAGE — match trigger words
     // =============================================
     const { data: startMessages } = await supabase
-      .from('scenario_messages')
-      .select('*')
-      .in('scenario_id', scenarioIds)
-      .eq('is_start', true)
+      .from('scenario_messages').select('*')
+      .in('scenario_id', scenarioIds).eq('is_start', true)
 
     const normalizedText = text.toLowerCase().trim()
-    const matchedStart = (startMessages ?? []).find(m =>
+    const matchedStart = (startMessages ?? []).find((m: { trigger_word: string }) =>
       m.trigger_word && normalizedText === m.trigger_word.toLowerCase().trim()
     )
 
@@ -396,7 +225,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // No match — do nothing
     return NextResponse.json({ ok: true })
   } catch (error) {
     console.error('Webhook error:', error)
