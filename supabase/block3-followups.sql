@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS message_followups (
   text text NOT NULL DEFAULT '',
   channel text NOT NULL DEFAULT 'telegram',    -- 'telegram' | 'email' | 'both'
   cancel_on_reply boolean NOT NULL DEFAULT true,
+  is_active boolean NOT NULL DEFAULT true,     -- включён/выключен без удаления
   created_at timestamptz DEFAULT now()
 );
 
