@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { sendScenarioMessage, sendFollowupContent } from '@/lib/scenario-sender'
+import { sendScenarioMessage, sendFollowupContent, maybeDuplicateToEmail } from '@/lib/scenario-sender'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -48,6 +48,9 @@ export async function GET(_request: NextRequest) {
         const channel = followup.channel ?? 'telegram'
         if (channel === 'telegram' || channel === 'both') {
           await sendFollowupContent(item.bot_token, item.chat_id, followup)
+        }
+        if (channel === 'email' || channel === 'both' || followup.duplicate_to_email) {
+          await maybeDuplicateToEmail(supabase, item.conversation_id, followup)
         }
         await supabase.from('chatbot_messages').insert({
           conversation_id: item.conversation_id,

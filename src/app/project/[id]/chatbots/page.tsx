@@ -26,6 +26,7 @@ type Followup = {
   delay_value: number; delay_unit: string
   text: string; channel: 'telegram' | 'email' | 'both'
   cancel_on_reply: boolean; is_active: boolean
+  duplicate_to_email?: boolean
   media_id?: string | null; media_type?: string | null
   media_url?: string | null; media_file_name?: string | null
   created_at?: string
@@ -348,6 +349,12 @@ function FollowupCard({ projectId, followup, index, onEdit, onDelete }: {
               className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
             <span className="text-xs text-gray-600">Отменить, если пользователь ответит</span>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={followup.duplicate_to_email ?? false}
+              onChange={ev => onEdit(followup.id, { duplicate_to_email: ev.target.checked })}
+              className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
+            <span className="text-xs text-gray-600">✉️ Дублировать на email клиента</span>
+          </label>
         </div>
       )}
     </div>
@@ -413,6 +420,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
             delay_value: f.delay_value, delay_unit: f.delay_unit,
             text: f.text, channel: f.channel,
             cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
+            duplicate_to_email: f.duplicate_to_email ?? false,
             media_id: f.media_id ?? null, media_type: f.media_type ?? null,
             media_url: f.media_url ?? null, media_file_name: f.media_file_name ?? null,
           })
@@ -437,6 +445,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
         await supabase.from('message_followups').update({
           delay_value: f.delay_value, delay_unit: f.delay_unit,
           text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
+          duplicate_to_email: f.duplicate_to_email ?? false,
           media_id: newMediaId, media_type: f.media_type ?? null,
           media_url: f.media_url ?? null, media_file_name: f.media_file_name ?? null,
         }).eq('id', id)

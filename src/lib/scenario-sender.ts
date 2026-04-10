@@ -6,7 +6,42 @@ import {
   sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo,
   sendTelegramAnimation, sendTelegramVideoNote, sendTelegramDocument, sendTelegramAudio,
 } from '@/lib/telegram'
+import { sendEmail } from '@/lib/email'
 import { waitUntil } from '@vercel/functions'
+
+/**
+ * If followup has duplicate_to_email flag, find customer's email and send a copy.
+ */
+export async function maybeDuplicateToEmail(
+  supabase: SupabaseClient,
+  conversationId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  followup: any
+) {
+  if (!followup.duplicate_to_email) return
+  if (!followup.text && !followup.media_url) return
+
+  const { data: conv } = await supabase
+    .from('chatbot_conversations')
+    .select('customer_id')
+    .eq('id', conversationId)
+    .maybeSingle()
+  if (!conv?.customer_id) return
+
+  const { data: customer } = await supabase
+    .from('customers').select('email, full_name').eq('id', conv.customer_id).single()
+  if (!customer?.email) return
+
+  const subject = followup.text
+    ? followup.text.slice(0, 60)
+    : 'Сообщение от бота'
+  const body = followup.text ?? 'Сообщение со вложением'
+  const html = followup.media_url
+    ? `<p>${(followup.text ?? '').replace(/\n/g, '<br>')}</p><p><a href="${followup.media_url}">Открыть вложение</a></p>`
+    : `<p>${(followup.text ?? '').replace(/\n/g, '<br>')}</p>`
+
+  await sendEmail(customer.email, subject, body, html)
+}
 
 // Delays shorter than this are handled via waitUntil; longer ones go to the queue
 const IMMEDIATE_THRESHOLD_MS = 25_000
@@ -186,6 +221,9 @@ export async function sendScenarioMessage(
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {
               await sendFollowupContent(botToken, chatId, f)
+            }
+            if (channel === 'email' || channel === 'both' || f.duplicate_to_email) {
+              await maybeDuplicateToEmail(supabase, conversationId, f)
             }
             await supabase.from('chatbot_messages').insert({
               conversation_id: conversationId,
