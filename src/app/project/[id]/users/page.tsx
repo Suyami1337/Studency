@@ -114,7 +114,7 @@ function StatusBadge({ status }: { status: string }) {
 
 // ─── Customer Detail ──────────────────────────────────────────────────────────
 
-function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; onBack: () => void; onUpdated: (c: Customer) => void }) {
+function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: Customer; onBack: () => void; onUpdated: (c: Customer) => void; onDeleted?: (id: string) => void }) {
   const supabase = createClient()
   const [current, setCurrent] = useState<Customer>(customer)
   const [orders, setOrders] = useState<Order[]>([])
@@ -126,6 +126,8 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
   const [editData, setEditData] = useState<Partial<Customer>>({})
   const [saving, setSaving] = useState(false)
   const [toggling, setToggling] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   async function load() {
     const [oRes, aRes, nRes] = await Promise.all([
@@ -169,6 +171,19 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
     setToggling(false)
   }
 
+  async function handleDelete() {
+    if (!deleteConfirm) { setDeleteConfirm(true); return }
+    setDeleting(true)
+    const res = await fetch(`/api/customers/${current.id}/delete`, { method: 'POST' })
+    if (res.ok) {
+      onDeleted?.(current.id)
+      onBack()
+    } else {
+      setDeleting(false)
+      setDeleteConfirm(false)
+    }
+  }
+
   async function addNote() {
     if (!newNote.trim()) return
     setAddingNote(true)
@@ -196,7 +211,7 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
           Назад к клиентам
         </button>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           {!editMode && (
             <button onClick={startEdit} className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-300 transition-colors">
               Редактировать
@@ -212,6 +227,34 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
           >
             {toggling ? '...' : current.is_blocked ? 'Разблокировать' : 'Заблокировать'}
           </button>
+
+          {/* Полное удаление */}
+          {deleteConfirm ? (
+            <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+              <span className="text-xs text-red-600 font-medium">Удалить навсегда?</span>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded px-2 py-0.5 disabled:opacity-50 transition-colors"
+              >
+                {deleting ? '...' : 'Да'}
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                className="text-xs text-gray-400 hover:text-gray-600 px-1 transition-colors"
+              >
+                Отмена
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleDelete}
+              className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 transition-colors"
+              title="Удалить клиента полностью"
+            >
+              🗑 Удалить
+            </button>
+          )}
         </div>
       </div>
 
@@ -497,6 +540,10 @@ export default function UsersPage() {
     setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c))
   }
 
+  function removeCustomer(id: string) {
+    setCustomers(prev => prev.filter(c => c.id !== id))
+  }
+
   const filtered = customers.filter(c => {
     const q = search.toLowerCase()
     return !q
@@ -508,7 +555,7 @@ export default function UsersPage() {
   if (selected) {
     return (
       <div className="p-6 max-w-3xl mx-auto">
-        <CustomerDetail customer={selected} onBack={clearSelection} onUpdated={updateCustomer} />
+        <CustomerDetail customer={selected} onBack={clearSelection} onUpdated={updateCustomer} onDeleted={removeCustomer} />
       </div>
     )
   }
