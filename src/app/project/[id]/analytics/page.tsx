@@ -415,14 +415,202 @@ function SourcesTab({ projectId }: { projectId: string }) {
   )
 }
 
+// ─── Вкладка Воронки (конверсии по этапам) ────────────────────────────────────
+function FunnelsTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [funnels, setFunnels] = useState<any[]>([])
+
+  useEffect(() => {
+    async function load() {
+      const { data: funnelsData } = await supabase
+        .from('funnels').select('id, name').eq('project_id', projectId)
+
+      const { data: stages } = await supabase
+        .from('funnel_stages').select('id, funnel_id, name, order_position')
+        .in('funnel_id', (funnelsData ?? []).map(f => f.id))
+        .order('order_position')
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const funnelsWithStages = await Promise.all((funnelsData ?? []).map(async (f: any) => {
+        const fStages = (stages ?? []).filter((s: { funnel_id: string }) => s.funnel_id === f.id)
+        const stagesWithCounts = await Promise.all(fStages.map(async (s: { id: string; name: string }) => {
+          const { count } = await supabase
+            .from('customers')
+            .select('*', { count: 'exact', head: true })
+            .eq('funnel_stage_id', s.id)
+          return { ...s, count: count ?? 0 }
+        }))
+        return { ...f, stages: stagesWithCounts }
+      }))
+
+      setFunnels(funnelsWithStages)
+      setLoading(false)
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  if (loading) return <SkeletonList count={2} />
+  if (funnels.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+        <p className="text-sm text-gray-500">Нет воронок в проекте</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      {funnels.map(f => {
+        const total = f.stages[0]?.count ?? 0
+        return (
+          <div key={f.id} className="bg-white rounded-xl border border-gray-100 p-5">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">{f.name}</h3>
+            <div className="space-y-2">
+              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+              {f.stages.map((s: any, i: number) => {
+                const prevCount = i > 0 ? f.stages[i - 1].count : total
+                const conversion = prevCount > 0 ? Math.round((s.count / prevCount) * 100) : 0
+                const width = total > 0 ? Math.max(5, (s.count / total) * 100) : 5
+                return (
+                  <div key={s.id}>
+                    <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                      <span className="font-medium">{i + 1}. {s.name}</span>
+                      <span>{s.count} клиентов · {conversion}%</span>
+                    </div>
+                    <div className="h-8 bg-gray-100 rounded-lg overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-xs font-medium transition-all"
+                        style={{ width: `${width}%` }}
+                      >
+                        {s.count}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Вкладка Сквозная (клиенты от первого касания до оплаты) ─────────────────
+function CrossAnalyticsTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    totalLeads: 0,
+    engagedInBot: 0,
+    visitedLanding: 0,
+    createdOrder: 0,
+    paidOrder: 0,
+  })
+
+  useEffect(() => {
+    async function load() {
+      const { count: leads } = await supabase
+        .from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId)
+
+      const { data: actions } = await supabase
+        .from('customer_actions')
+        .select('customer_id, action')
+        .eq('project_id', projectId)
+
+      const engagedSet = new Set<string>()
+      const visitedSet = new Set<string>()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const a of (actions ?? []) as any[]) {
+        if (a.action === 'bot_start' || a.action === 'bot_button_click') engagedSet.add(a.customer_id)
+        if (a.action === 'landing_visit' || a.action === 'landing_button_click') visitedSet.add(a.customer_id)
+      }
+
+      const { data: orders } = await supabase
+        .from('orders').select('customer_id, status').eq('project_id', projectId)
+
+      const createdSet = new Set<string>()
+      const paidSet = new Set<string>()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const o of (orders ?? []) as any[]) {
+        if (o.customer_id) {
+          createdSet.add(o.customer_id)
+          if (o.status === 'paid') paidSet.add(o.customer_id)
+        }
+      }
+
+      setStats({
+        totalLeads: leads ?? 0,
+        engagedInBot: engagedSet.size,
+        visitedLanding: visitedSet.size,
+        createdOrder: createdSet.size,
+        paidOrder: paidSet.size,
+      })
+      setLoading(false)
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  if (loading) return <SkeletonList count={1} />
+
+  const steps = [
+    { label: 'Всего клиентов в базе', count: stats.totalLeads, icon: '👥' },
+    { label: 'Запустили бота / кликали кнопки', count: stats.engagedInBot, icon: '🤖' },
+    { label: 'Посещали лендинги', count: stats.visitedLanding, icon: '🌐' },
+    { label: 'Создали заказ', count: stats.createdOrder, icon: '🛒' },
+    { label: 'Оплатили', count: stats.paidOrder, icon: '💰' },
+  ]
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <h3 className="text-base font-semibold text-gray-900 mb-1">Сквозная воронка</h3>
+      <p className="text-xs text-gray-500 mb-5">От первого касания до оплаты</p>
+
+      <div className="space-y-2">
+        {steps.map((s, i) => {
+          const prev = i > 0 ? steps[i - 1].count : stats.totalLeads
+          const conversion = prev > 0 ? Math.round((s.count / prev) * 100) : 0
+          const total = stats.totalLeads || 1
+          const width = Math.max(5, (s.count / total) * 100)
+          return (
+            <div key={i}>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                <span className="font-medium flex items-center gap-2">
+                  <span>{s.icon}</span>
+                  {s.label}
+                </span>
+                <span>{s.count} ({conversion}%)</span>
+              </div>
+              <div className="h-10 bg-gray-100 rounded-lg overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-sm font-semibold transition-all"
+                  style={{ width: `${width}%` }}
+                >
+                  {s.count}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Главный компонент ────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
   const params = useParams()
   const projectId = params.id as string
-  const [activeTab, setActiveTab] = useState<'overview' | 'sources'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'cross' | 'sources'>('overview')
 
   const tabs = [
     { id: 'overview' as const, label: 'Обзор' },
+    { id: 'funnels' as const, label: 'Воронки' },
+    { id: 'cross' as const, label: 'Сквозная' },
     { id: 'sources' as const, label: 'Источники трафика' },
   ]
 
@@ -452,6 +640,8 @@ export default function AnalyticsPage() {
       </div>
 
       {activeTab === 'overview' && <OverviewTab projectId={projectId} />}
+      {activeTab === 'funnels' && <FunnelsTab projectId={projectId} />}
+      {activeTab === 'cross' && <CrossAnalyticsTab projectId={projectId} />}
       {activeTab === 'sources' && <SourcesTab projectId={projectId} />}
     </div>
   )
