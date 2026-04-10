@@ -29,10 +29,9 @@ type Followup = {
 // =============================================
 // FOLLOWUP CARD — чистый controlled-компонент, без своего черновика
 // =============================================
-function FollowupCard({ followup, index, onEdit, onToggleActive, onDelete }: {
+function FollowupCard({ followup, index, onEdit, onDelete }: {
   followup: Followup; index: number
   onEdit: (id: string, data: Partial<Followup>) => void
-  onToggleActive: (id: string, val: boolean) => void
   onDelete: (id: string) => void
 }) {
   const [cardExpanded, setCardExpanded] = useState(true)
@@ -41,8 +40,8 @@ function FollowupCard({ followup, index, onEdit, onToggleActive, onDelete }: {
   return (
     <div className={`rounded-lg border transition-colors ${followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
       <div className="flex items-center gap-2 px-3 py-2">
-        {/* Тоггл активности — мгновенное сохранение */}
-        <button onClick={() => onToggleActive(followup.id, !followup.is_active)}
+        {/* Тоггл активности — через черновик, сохраняется кнопкой */}
+        <button onClick={() => onEdit(followup.id, { is_active: !followup.is_active })}
           className={`w-7 h-4 rounded-full transition-colors relative flex-shrink-0 ${followup.is_active ? 'bg-[#6A55F8]' : 'bg-gray-300'}`}>
           <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${followup.is_active ? 'translate-x-3' : 'translate-x-0.5'}`} />
         </button>
@@ -139,7 +138,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
         if (!f) continue
         await supabase.from('message_followups').update({
           delay_value: f.delay_value, delay_unit: f.delay_unit,
-          text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply,
+          text: f.text, channel: f.channel, cancel_on_reply: f.cancel_on_reply, is_active: f.is_active,
         }).eq('id', id)
       }
       setSavedFollowups([...followups])
@@ -157,12 +156,6 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
     setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f))
     setDirtyIds(prev => { const next = new Set(prev); next.add(id); return next })
     onDirtyChange(true)
-  }
-
-  async function toggleActive(id: string, val: boolean) {
-    setFollowups(prev => prev.map(f => f.id === id ? { ...f, is_active: val } : f))
-    setSavedFollowups(prev => prev.map(f => f.id === id ? { ...f, is_active: val } : f))
-    await supabase.from('message_followups').update({ is_active: val }).eq('id', id)
   }
 
   async function toggleEnabled() {
@@ -237,7 +230,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
         <div className="space-y-2">
           {followups.map((f, i) => (
             <FollowupCard key={f.id} followup={f} index={i}
-              onEdit={editFollowup} onToggleActive={toggleActive} onDelete={deleteFollowup} />
+              onEdit={editFollowup} onDelete={deleteFollowup} />
           ))}
         </div>
       )}
