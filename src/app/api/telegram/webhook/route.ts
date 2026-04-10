@@ -118,11 +118,14 @@ async function sendScenarioMessage(
       if (queueErr) console.error('followup_queue insert error:', queueErr)
     }
 
-    // Короткие задержки — waitUntil (фоново после ответа бота)
+    // Короткие задержки — waitUntil (фоново, все параллельно от одной точки отсчёта)
     if (shortDelay.length > 0) {
-      waitUntil((async () => {
-        for (const { f, delayMs } of shortDelay) {
-          await new Promise(res => setTimeout(res, delayMs))
+      const startedAt = Date.now()
+      waitUntil(Promise.all(shortDelay.map(({ f, delayMs }) =>
+        (async () => {
+          const elapsed = Date.now() - startedAt
+          const remaining = Math.max(0, delayMs - elapsed)
+          await new Promise(res => setTimeout(res, remaining))
           try {
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {
@@ -136,8 +139,8 @@ async function sendScenarioMessage(
           } catch (err) {
             console.error('short followup send error:', err)
           }
-        }
-      })())
+        })()
+      )))
     }
   }
 
