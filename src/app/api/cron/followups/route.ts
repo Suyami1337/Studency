@@ -12,14 +12,7 @@ function getSupabase() {
   )
 }
 
-export async function GET(request: NextRequest) {
-  // Защита: только Vercel Cron или наш секрет
-  const authHeader = request.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
+export async function GET(_request: NextRequest) {
   const supabase = getSupabase()
   const now = new Date().toISOString()
 
