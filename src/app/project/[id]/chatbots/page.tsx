@@ -19,6 +19,164 @@ type Button = {
   action_type: string; action_url: string | null; action_trigger_word: string | null
   action_goto_message_id: string | null
 }
+type Followup = {
+  id: string; scenario_message_id: string; order_index: number
+  delay_minutes: number; text: string; channel: 'telegram' | 'email' | 'both'
+  cancel_on_reply: boolean
+}
+
+// =============================================
+// FOLLOWUP CARD (одна запись дожима)
+// =============================================
+function FollowupCard({ followup, index, onUpdate, onDelete }: {
+  followup: Followup; index: number
+  onUpdate: (id: string, data: Partial<Followup>) => void
+  onDelete: (id: string) => void
+}) {
+  const getUnit = (mins: number) => mins >= 1440 ? 'day' : mins >= 60 ? 'hour' : 'min'
+  const [unit, setUnit] = useState<'min' | 'hour' | 'day'>(getUnit(followup.delay_minutes))
+
+  const displayValue = unit === 'day' ? Math.round(followup.delay_minutes / 1440)
+    : unit === 'hour' ? Math.round(followup.delay_minutes / 60)
+    : followup.delay_minutes
+
+  function handleDelayChange(value: number, u: typeof unit) {
+    const mins = u === 'day' ? value * 1440 : u === 'hour' ? value * 60 : value
+    onUpdate(followup.id, { delay_minutes: mins })
+  }
+
+  return (
+    <div className="bg-[#F8F7FF] rounded-lg p-3 border border-[#6A55F8]/15 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-[#6A55F8]">Дожим {index + 1}</span>
+        <button onClick={() => onDelete(followup.id)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
+      </div>
+
+      {/* Задержка */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-600 w-10 flex-shrink-0">Через</span>
+        <input type="number" min="1" value={displayValue}
+          onChange={e => { const v = parseInt(e.target.value) || 1; handleDelayChange(v, unit) }}
+          className="w-16 px-2 py-1.5 rounded border border-gray-200 text-sm text-center focus:outline-none focus:border-[#6A55F8]" />
+        <select value={unit} onChange={e => { const u = e.target.value as typeof unit; setUnit(u); handleDelayChange(displayValue, u) }}
+          className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+          <option value="min">мин</option>
+          <option value="hour">час</option>
+          <option value="day">дней</option>
+        </select>
+      </div>
+
+      {/* Текст */}
+      <textarea value={followup.text} onChange={e => onUpdate(followup.id, { text: e.target.value })}
+        placeholder={`Текст дожима ${index + 1}...`}
+        className="w-full px-3 py-2 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-16 resize-none" />
+
+      {/* Канал */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-600 flex-shrink-0">Канал:</span>
+        <div className="flex gap-1">
+          {(['telegram', 'email', 'both'] as const).map(ch => (
+            <button key={ch} onClick={() => onUpdate(followup.id, { channel: ch })}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                followup.channel === ch
+                  ? 'bg-[#6A55F8] text-white'
+                  : 'bg-white border border-gray-200 text-gray-500 hover:border-[#6A55F8]/40'
+              }`}>
+              {ch === 'telegram' ? 'Telegram' : ch === 'email' ? 'Email' : 'Оба'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Условие отмены */}
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={followup.cancel_on_reply}
+          onChange={e => onUpdate(followup.id, { cancel_on_reply: e.target.checked })}
+          className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
+        <span className="text-xs text-gray-600">Отменить, если пользователь ответит</span>
+      </label>
+    </div>
+  )
+}
+
+// =============================================
+// FOLLOWUP SECTION (секция внутри MessageCard)
+// =============================================
+function FollowupSection({ messageId }: { messageId: string }) {
+  const supabase = createClient()
+  const [followups, setFollowups] = useState<Followup[]>([])
+  const [loading, setLoading] = useState(true)
+  const [enabled, setEnabled] = useState(false)
+
+  useEffect(() => {
+    supabase.from('message_followups').select('*').eq('scenario_message_id', messageId).order('order_index')
+      .then(({ data }) => {
+        const items = (data ?? []) as Followup[]
+        setFollowups(items)
+        setEnabled(items.length > 0)
+        setLoading(false)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageId])
+
+  async function enable() {
+    setEnabled(true)
+    const row = { scenario_message_id: messageId, order_index: 0, delay_minutes: 60, text: '', channel: 'telegram', cancel_on_reply: true }
+    const { data } = await supabase.from('message_followups').insert(row).select().single()
+    if (data) setFollowups([data as Followup])
+  }
+
+  async function disable() {
+    setEnabled(false)
+    setFollowups([])
+    await supabase.from('message_followups').delete().eq('scenario_message_id', messageId)
+  }
+
+  async function addFollowup() {
+    if (followups.length >= 5) return
+    const row = { scenario_message_id: messageId, order_index: followups.length, delay_minutes: 60, text: '', channel: 'telegram', cancel_on_reply: true }
+    const { data } = await supabase.from('message_followups').insert(row).select().single()
+    if (data) setFollowups(prev => [...prev, data as Followup])
+  }
+
+  async function updateFollowup(id: string, updates: Partial<Followup>) {
+    setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f))
+    await supabase.from('message_followups').update(updates).eq('id', id)
+  }
+
+  async function deleteFollowup(id: string) {
+    const remaining = followups.filter(f => f.id !== id)
+    if (remaining.length === 0) { disable(); return }
+    setFollowups(remaining)
+    await supabase.from('message_followups').delete().eq('id', id)
+  }
+
+  if (loading) return null
+
+  return (
+    <div className="border-t border-gray-100 pt-4">
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={enabled ? disable : enable}
+          className="flex items-center gap-2 cursor-pointer group">
+          <div className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${enabled ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </div>
+          <span className="text-xs font-semibold text-gray-700">🔔 Дожимы</span>
+        </button>
+        {enabled && followups.length < 5 && (
+          <button onClick={addFollowup} className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить дожим</button>
+        )}
+      </div>
+      {enabled && followups.length > 0 && (
+        <div className="space-y-3">
+          {followups.map((f, i) => (
+            <FollowupCard key={f.id} followup={f} index={i} onUpdate={updateFollowup} onDelete={deleteFollowup} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // =============================================
 // MESSAGE EDITOR (карточка сообщения)
@@ -35,8 +193,8 @@ function MessageCard({
 }) {
   const [expanded, setExpanded] = useState(false)
 
-  const typeLabel = msg.is_start ? '⭐ Стартовое' : msg.is_followup ? '🔔 Дожим' : '💬 Сообщение'
-  const typeColor = msg.is_start ? 'bg-green-100 text-green-700 border-green-200' : msg.is_followup ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-blue-100 text-blue-700 border-blue-200'
+  const typeLabel = msg.is_start ? '⭐ Стартовое' : '💬 Сообщение'
+  const typeColor = msg.is_start ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'
 
   return (
     <div className={`bg-white rounded-xl border ${expanded ? 'border-[#6A55F8]/40 shadow-sm' : 'border-gray-100'} transition-all`}>
@@ -74,16 +232,11 @@ function MessageCard({
           </div>
 
           {/* Type settings */}
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={msg.is_start} onChange={e => onUpdate(msg.id, { is_start: e.target.checked, is_followup: false })}
+              <input type="checkbox" checked={msg.is_start} onChange={e => onUpdate(msg.id, { is_start: e.target.checked })}
                 className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
               <span className="text-xs font-medium text-gray-700">⭐ Стартовое сообщение</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={msg.is_followup} onChange={e => onUpdate(msg.id, { is_followup: e.target.checked, is_start: false })}
-                className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
-              <span className="text-xs font-medium text-gray-700">🔔 Дожим</span>
             </label>
           </div>
 
@@ -94,33 +247,6 @@ function MessageCard({
               <input type="text" value={msg.trigger_word || ''} onChange={e => onUpdate(msg.id, { trigger_word: e.target.value })}
                 placeholder="/start, привет, любое слово..."
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:border-[#6A55F8]" />
-            </div>
-          )}
-
-          {/* Delay (if followup or has delay) */}
-          {(msg.is_followup || msg.delay_minutes > 0) && (
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Задержка перед отправкой</label>
-              <div className="flex items-center gap-2">
-                <input type="number" value={msg.delay_minutes} onChange={e => onUpdate(msg.id, { delay_minutes: parseInt(e.target.value) || 0 })}
-                  className="w-24 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                <span className="text-xs text-gray-500">минут</span>
-                <span className="text-xs text-gray-400 ml-2">
-                  (= {msg.delay_minutes >= 60 ? `${Math.round(msg.delay_minutes / 60)} ч` : `${msg.delay_minutes} мин`})
-                </span>
-              </div>
-            </div>
-          )}
-
-          {msg.is_followup && (
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Условие дожима</label>
-              <select value={msg.followup_condition || 'no_action'} onChange={e => onUpdate(msg.id, { followup_condition: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                <option value="no_action">Если не совершил действие</option>
-                <option value="no_button_click">Если не нажал кнопку</option>
-                <option value="no_reply">Если не ответил</option>
-              </select>
             </div>
           )}
 
@@ -205,6 +331,9 @@ function MessageCard({
               <p className="text-[10px] text-gray-400 mt-1.5">Кнопки уже настраивают переходы. Следующее сообщение нужно только для линейной цепочки.</p>
             )}
           </div>
+
+          {/* Followups */}
+          <FollowupSection messageId={msg.id} />
 
           {/* Delete */}
           <div className="pt-2 border-t border-gray-100 flex justify-end">
