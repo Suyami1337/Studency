@@ -11,11 +11,15 @@ type Customer = {
   email: string | null
   phone: string | null
   telegram_username: string | null
+  telegram_id: string | null
   instagram: string | null
   vk: string | null
   whatsapp: string | null
   tags: string[] | null
   is_blocked: boolean
+  source_name: string | null
+  source_slug: string | null
+  visitor_token: string | null
   created_at: string
 }
 
@@ -31,8 +35,8 @@ type Order = {
 
 type CustomerAction = {
   id: string
-  action_type: string
-  description: string | null
+  action: string
+  data: Record<string, unknown> | null
   created_at: string
 }
 
@@ -53,6 +57,46 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; textColor: s
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  bot_start:             '🤖 Запустил бота',
+  bot_message:           '💬 Написал в бота',
+  bot_button_click:      '👆 Нажал кнопку в боте',
+  landing_visit:         '🌐 Открыл лендинг',
+  landing_button_click:  '🖱️ Клик по кнопке на сайте',
+  button_click:          '🖱️ Клик по кнопке',
+  link_click:            '🔗 Перешёл по ссылке',
+  form_submit:           '📝 Отправил форму',
+  page_view:             '👁️ Просмотр страницы',
+  source_linked:         '📍 Источник определён',
+  order_created:         '🛒 Создан заказ',
+  order_paid:            '💳 Оплатил заказ',
+  order_refund:          '↩️ Возврат',
+  lesson_started:        '📚 Начал урок',
+  lesson_completed:      '✅ Завершил урок',
+  funnel_stage_entered:  '➡️ Перешёл в этап воронки',
+  note_added:            '📌 Добавлена заметка',
+  manual_action:         '✏️ Ручное действие',
+}
+
+function actionLabel(action: string, data: Record<string, unknown> | null): string {
+  const base = ACTION_LABELS[action] || action
+  if (!data) return base
+  const extra: string[] = []
+  if (data.button_text) extra.push(String(data.button_text))
+  if (data.source_name) extra.push(String(data.source_name))
+  if (data.landing_name) extra.push(String(data.landing_name))
+  if (data.bot_name) extra.push(String(data.bot_name))
+  if (data.stage_name) extra.push(String(data.stage_name))
+  return extra.length ? `${base}: ${extra.join(', ')}` : base
 }
 
 function formatMoney(n: number) {
@@ -213,6 +257,23 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
           ))}
         </div>
 
+        {/* Источник трафика */}
+        {current.source_name && (
+          <div className="flex items-center gap-2 pt-1">
+            <span className="text-xs text-gray-400">Источник:</span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
+              📍 {current.source_name}
+            </span>
+          </div>
+        )}
+
+        {current.telegram_id && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Telegram ID:</span>
+            <span className="text-xs font-mono text-gray-600">{current.telegram_id}</span>
+          </div>
+        )}
+
         {current.tags && current.tags.length > 0 && (
           <div>
             <p className="text-xs text-gray-400 mb-1.5">Теги</p>
@@ -277,13 +338,13 @@ function CustomerDetail({ customer, onBack, onUpdated }: { customer: Customer; o
         {actions.length === 0 ? (
           <p className="text-sm text-gray-400">Действий пока нет</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {actions.map(a => (
-              <div key={a.id} className="flex items-start gap-3 p-2.5 rounded-lg bg-gray-50">
-                <div className="w-2 h-2 mt-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: '#6A55F8' }} />
+              <div key={a.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div className="w-1.5 h-1.5 mt-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#6A55F8' }} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-800">{a.action_type}{a.description ? ` — ${a.description}` : ''}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{formatDate(a.created_at)}</p>
+                  <p className="text-sm text-gray-800">{actionLabel(a.action, a.data)}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(a.created_at)}</p>
                 </div>
               </div>
             ))}

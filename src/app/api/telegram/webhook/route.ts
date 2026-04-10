@@ -126,6 +126,12 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Извлекаем source slug если пришёл /start src_SLUG (из UTM-ссылки /go/[slug])
+    let sourceSlugFromStart: string | null = null
+    if (text.startsWith('/start src_')) {
+      sourceSlugFromStart = text.replace('/start src_', '').trim().replace(/_/g, '-') || null
+    }
+
     // Find or create customer
     let customerId = conversation.customer_id
     if (!customerId) {
@@ -147,6 +153,58 @@ export async function POST(request: NextRequest) {
           customer_id: customer.id, project_id: projectId, action: 'bot_start',
           data: { bot_name: bot.name, telegram_username: username },
         })
+
+        // Привязываем источник трафика если пришёл через UTM deep link
+        if (sourceSlugFromStart) {
+          const { data: source } = await supabase
+            .from('traffic_sources')
+            .select('id, name, slug')
+            .eq('project_id', projectId)
+            .eq('slug', sourceSlugFromStart)
+            .single()
+
+          if (source) {
+            await supabase.from('customers').update({
+              source_id: source.id,
+              source_slug: source.slug,
+              source_name: source.name,
+            }).eq('id', customer.id)
+
+            await supabase.from('customer_actions').insert({
+              customer_id: customer.id, project_id: projectId, action: 'source_linked',
+              data: { source_name: source.name, source_slug: source.slug, via: 'bot_start' },
+            })
+          }
+        }
+      }
+    } else if (sourceSlugFromStart && customerId) {
+      // Уже существующий клиент — обновляем источник если ещё не установлен
+      const { data: existingCustomer } = await supabase
+        .from('customers')
+        .select('source_id')
+        .eq('id', customerId)
+        .single()
+
+      if (existingCustomer && !existingCustomer.source_id) {
+        const { data: source } = await supabase
+          .from('traffic_sources')
+          .select('id, name, slug')
+          .eq('project_id', projectId)
+          .eq('slug', sourceSlugFromStart)
+          .single()
+
+        if (source) {
+          await supabase.from('customers').update({
+            source_id: source.id,
+            source_slug: source.slug,
+            source_name: source.name,
+          }).eq('id', customerId)
+
+          await supabase.from('customer_actions').insert({
+            customer_id: customerId, project_id: projectId, action: 'source_linked',
+            data: { source_name: source.name, source_slug: source.slug, via: 'bot_start' },
+          })
+        }
       }
     }
 

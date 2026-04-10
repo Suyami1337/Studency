@@ -325,12 +325,23 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
   )
 }
 
+type BotConversation = {
+  id: string
+  telegram_first_name: string | null
+  telegram_username: string | null
+  telegram_user_id: number | null
+  updated_at: string
+  customers: { id: string; full_name: string | null; source_name: string | null } | null
+}
+
 function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenario: Scenario; onBack: () => void; onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void }) {
   const [activeTab, setActiveTab] = useState<'scenario' | 'users' | 'analytics' | 'settings'>('scenario')
   const [showAI, setShowAI] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [buttons, setButtons] = useState<Button[]>([])
   const [loading, setLoading] = useState(true)
+  const [botUsers, setBotUsers] = useState<BotConversation[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
   const supabase = createClient()
 
   async function loadData() {
@@ -346,8 +357,24 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     setLoading(false)
   }
 
+  async function loadUsers() {
+    if (!scenario.telegram_bot_id) { setBotUsers([]); return }
+    setLoadingUsers(true)
+    const { data } = await supabase
+      .from('chatbot_conversations')
+      .select('id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
+      .eq('telegram_bot_id', scenario.telegram_bot_id)
+      .order('updated_at', { ascending: false })
+      .limit(100)
+    setBotUsers((data ?? []) as unknown as BotConversation[])
+    setLoadingUsers(false)
+  }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData() }, [scenario.id])
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeTab === 'users') loadUsers() }, [activeTab])
 
   async function addMessage() {
     const tempMsg: Message = {
@@ -525,8 +552,70 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       )}
 
       {activeTab === 'users' && (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-400 text-sm">
-          Пользователи появятся после того как бот начнёт получать сообщения
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-gray-900">Пользователи бота</h3>
+              {!scenario.telegram_bot_id && (
+                <p className="text-xs text-amber-500 mt-0.5">Бот не подключён к сценарию</p>
+              )}
+            </div>
+            <span className="text-sm text-gray-400">{botUsers.length} чел.</span>
+          </div>
+
+          {loadingUsers ? (
+            <SkeletonList count={4} />
+          ) : botUsers.length === 0 ? (
+            <div className="py-14 text-center">
+              <div className="text-4xl mb-3">🤖</div>
+              <p className="text-sm text-gray-500 font-medium">Пользователей пока нет</p>
+              <p className="text-xs text-gray-400 mt-1">Здесь появятся все кто написал боту</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-left border-b border-gray-100">
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Пользователь</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Telegram</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Источник</th>
+                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Последняя активность</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {botUsers.map(conv => {
+                  const name = conv.customers?.full_name || conv.telegram_first_name || 'Без имени'
+                  const source = conv.customers?.source_name
+                  return (
+                    <tr key={conv.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0">
+                            {name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="font-medium text-gray-800">{name}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-gray-500">
+                        {conv.telegram_username ? `@${conv.telegram_username}` : conv.telegram_user_id ? `ID: ${conv.telegram_user_id}` : '—'}
+                      </td>
+                      <td className="px-5 py-3">
+                        {source ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
+                            📍 {source}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-gray-500 text-xs">
+                        {new Date(conv.updated_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 

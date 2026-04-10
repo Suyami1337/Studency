@@ -104,9 +104,26 @@ export async function GET(
   })()
 
   // 6. Редирект с cookie
-  const destination = source.destination_url.startsWith('http')
+  let destination = source.destination_url.startsWith('http')
     ? source.destination_url
     : `https://${source.destination_url}`
+
+  // Если ссылка ведёт в Telegram-бот — добавляем start параметр с slug источника.
+  // Бот получит /start src_SLUG и сможет сразу привязать источник к клиенту.
+  // Slug для start: только a-z0-9_- (до 64 символов, по правилам Telegram)
+  const isTelegramLink = /^https?:\/\/(t\.me|telegram\.me)\//i.test(destination)
+  if (isTelegramLink) {
+    try {
+      const url = new URL(destination)
+      const safeSlug = source.slug.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 50)
+      const startParam = `src_${safeSlug}`
+      // Если уже есть ?start= — не перебиваем (человек перешёл через кнопку бота)
+      if (!url.searchParams.has('start')) {
+        url.searchParams.set('start', startParam)
+      }
+      destination = url.toString()
+    } catch { /* оставляем оригинальный url */ }
+  }
 
   const response = NextResponse.redirect(destination, { status: 302 })
 
