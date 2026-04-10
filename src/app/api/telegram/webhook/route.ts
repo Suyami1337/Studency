@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendTelegramMessage } from '@/lib/telegram'
+import { waitUntil } from '@vercel/functions'
+
+// Порог: задержки короче этого — отправляем через waitUntil сразу из webhook
+const IMMEDIATE_THRESHOLD_MS = 25_000
 
 function getSupabase() {
   return createClient(
@@ -87,17 +91,54 @@ async function sendScenarioMessage(
 
   if (followups && followups.length > 0) {
     const now = Date.now()
-    const queueRows = followups.map((f: { id: string; delay_value: number; delay_unit: string }) => ({
-      followup_id: f.id,
-      conversation_id: conversationId,
-      chat_id: chatId,
-      bot_token: botToken,
-      send_at: new Date(now + delayToMs(f.delay_value, f.delay_unit)).toISOString(),
-      status: 'pending',
-    }))
-    const { error: queueErr } = await supabase.from('followup_queue').insert(queueRows)
-    if (queueErr) console.error('followup_queue insert error:', queueErr)
-    else console.log(`scheduled ${queueRows.length} followups for message ${msg.id}`)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shortDelay: any[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const queueRows: any[] = []
+
+    for (const f of followups) {
+      const delayMs = delayToMs(f.delay_value, f.delay_unit)
+      if (delayMs < IMMEDIATE_THRESHOLD_MS) {
+        shortDelay.push({ f, delayMs })
+      } else {
+        queueRows.push({
+          followup_id: f.id,
+          conversation_id: conversationId,
+          chat_id: chatId,
+          bot_token: botToken,
+          send_at: new Date(now + delayMs).toISOString(),
+          status: 'pending',
+        })
+      }
+    }
+
+    // Длинные задержки — в очередь для cron
+    if (queueRows.length > 0) {
+      const { error: queueErr } = await supabase.from('followup_queue').insert(queueRows)
+      if (queueErr) console.error('followup_queue insert error:', queueErr)
+    }
+
+    // Короткие задержки — waitUntil (фоново после ответа бота)
+    if (shortDelay.length > 0) {
+      waitUntil((async () => {
+        for (const { f, delayMs } of shortDelay) {
+          await new Promise(res => setTimeout(res, delayMs))
+          try {
+            const channel = f.channel ?? 'telegram'
+            if (channel === 'telegram' || channel === 'both') {
+              await sendTelegramMessage(botToken, chatId, f.text)
+            }
+            await supabase.from('chatbot_messages').insert({
+              conversation_id: conversationId,
+              direction: 'outgoing',
+              content: f.text,
+            })
+          } catch (err) {
+            console.error('short followup send error:', err)
+          }
+        }
+      })())
+    }
   }
 
   // If next message exists and delay is 0, send it too
