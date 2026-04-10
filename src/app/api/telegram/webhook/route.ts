@@ -9,6 +9,17 @@ function getSupabase() {
   )
 }
 
+// Convert delay_value + delay_unit → milliseconds
+function delayToMs(value: number, unit: string): number {
+  switch (unit) {
+    case 'sec':  return value * 1000
+    case 'min':  return value * 60 * 1000
+    case 'hour': return value * 60 * 60 * 1000
+    case 'day':  return value * 24 * 60 * 60 * 1000
+    default:     return value * 60 * 1000 // fallback: minutes
+  }
+}
+
 // Helper: send a scenario message with its buttons
 async function sendScenarioMessage(
   supabase: ReturnType<typeof getSupabase>,
@@ -66,12 +77,31 @@ async function sendScenarioMessage(
     scenario_id: resolvedScenarioId,
   })
 
+  // Schedule followups for this message
+  const { data: followups } = await supabase
+    .from('message_followups')
+    .select('*')
+    .eq('scenario_message_id', msg.id)
+    .eq('is_active', true)
+    .order('order_index')
+
+  if (followups && followups.length > 0) {
+    const now = Date.now()
+    const queueRows = followups.map((f: { id: string; delay_value: number; delay_unit: string }) => ({
+      followup_id: f.id,
+      conversation_id: conversationId,
+      chat_id: chatId,
+      bot_token: botToken,
+      send_at: new Date(now + delayToMs(f.delay_value, f.delay_unit)).toISOString(),
+      status: 'pending',
+    }))
+    await supabase.from('followup_queue').insert(queueRows)
+  }
+
   // If next message exists and delay is 0, send it too
   if (msg.next_message_id && msg.delay_minutes === 0) {
     await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId, resolvedScenarioId)
   }
-
-  // TODO: If delay > 0, schedule via cron/queue (for now skip delayed messages)
 }
 
 export async function POST(request: NextRequest) {
@@ -129,6 +159,37 @@ export async function POST(request: NextRequest) {
         content: text,
         telegram_message_id: message.message_id,
       })
+
+      // Cancel pending followups with cancel_on_reply=true for this conversation
+      const { data: pendingFollowups } = await supabase
+        .from('followup_queue')
+        .select('id, followup_id')
+        .eq('conversation_id', conversation.id)
+        .eq('status', 'pending')
+
+      if (pendingFollowups && pendingFollowups.length > 0) {
+        const followupIds = pendingFollowups.map((q: { followup_id: string }) => q.followup_id)
+        // Check which followups have cancel_on_reply=true
+        const { data: cancelFollowups } = await supabase
+          .from('message_followups')
+          .select('id')
+          .in('id', followupIds)
+          .eq('cancel_on_reply', true)
+
+        if (cancelFollowups && cancelFollowups.length > 0) {
+          const cancelIds = cancelFollowups.map((f: { id: string }) => f.id)
+          const queueIdsToCancel = pendingFollowups
+            .filter((q: { followup_id: string }) => cancelIds.includes(q.followup_id))
+            .map((q: { id: string }) => q.id)
+
+          if (queueIdsToCancel.length > 0) {
+            await supabase
+              .from('followup_queue')
+              .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+              .in('id', queueIdsToCancel)
+          }
+        }
+      }
     }
 
     // Извлекаем source slug если пришёл /start src_SLUG (из UTM-ссылки /go/[slug])
