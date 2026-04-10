@@ -10,6 +10,7 @@ const navItems = [
   { id: 'chatbots', label: 'Чат-боты', icon: '💬' },
   { id: 'sites', label: 'Сайты', icon: '🌐' },
   { id: 'learning', label: 'Обучение', icon: '📚' },
+  { id: 'videos', label: 'Видеохостинг', icon: '🎬' },
   { id: 'products', label: 'Продукты', icon: '📦' },
   { id: 'orders', label: 'Заказы', icon: '🧾' },
   { id: 'analytics', label: 'Аналитика', icon: '📈' },
