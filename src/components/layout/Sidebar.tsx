@@ -8,6 +8,7 @@ const navItems = [
   { id: 'funnels', label: 'Воронки', icon: '🔄' },
   { id: 'crm', label: 'CRM', icon: '👥' },
   { id: 'chatbots', label: 'Чат-боты', icon: '💬' },
+  { id: 'broadcasts', label: 'Рассылки', icon: '📢' },
   { id: 'sites', label: 'Сайты', icon: '🌐' },
   { id: 'learning', label: 'Обучение', icon: '📚' },
   { id: 'videos', label: 'Видеохостинг', icon: '🎬' },
