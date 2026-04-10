@@ -15,6 +15,8 @@ type Customer = {
   telegram: string | null
   stage_id: string
   notes: string | null
+  source_name: string | null
+  source_slug: string | null
 }
 type Board = { id: string; name: string; project_id: string; created_at: string }
 
@@ -56,7 +58,7 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
         .order('order_position'),
       supabase
         .from('customer_crm_positions')
-        .select('id, stage_id, customers(id, name, email, telegram, notes)')
+        .select('id, stage_id, customers(id, name, email, telegram, notes, source_name, source_slug)')
         .eq('board_id', board.id),
     ])
 
@@ -71,6 +73,8 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
           telegram: (c?.telegram as string) ?? null,
           stage_id: row.stage_id as string,
           notes: (c?.notes as string) ?? null,
+          source_name: (c?.source_name as string) ?? null,
+          source_slug: (c?.source_slug as string) ?? null,
         }
       })
       setCustomers(flat)
@@ -171,6 +175,11 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
                           </div>
                           {customer.email && <p className="text-xs text-gray-500">{customer.email}</p>}
                           {customer.telegram && <p className="text-xs text-gray-400">{customer.telegram}</p>}
+                          {customer.source_name && (
+                            <p className="text-xs mt-1">
+                              <span className="bg-[#F0EDFF] text-[#6A55F8] rounded px-1.5 py-0.5">📍 {customer.source_name}</span>
+                            </p>
+                          )}
                         </div>
                       ))}
                       {stageCustomers.length === 0 && (
@@ -199,7 +208,7 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50">
-                      {['Имя', 'Email', 'Telegram', 'Этап', 'Заметки'].map(h => (
+                      {['Имя', 'Email', 'Telegram', 'Источник', 'Этап', 'Заметки'].map(h => (
                         <th key={h} className="text-left text-xs font-semibold text-gray-500 px-4 py-3 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -217,6 +226,11 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
                         </td>
                         <td className="px-4 py-3 text-gray-500">{customer.email ?? '—'}</td>
                         <td className="px-4 py-3 text-gray-500">{customer.telegram ?? '—'}</td>
+                        <td className="px-4 py-3">
+                          {customer.source_name
+                            ? <span className="bg-[#F0EDFF] text-[#6A55F8] rounded px-2 py-0.5 text-xs">📍 {customer.source_name}</span>
+                            : <span className="text-gray-400 text-xs">—</span>}
+                        </td>
                         <td className="px-4 py-3">
                           <span className="rounded-full px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: stageColor(stages, customer.stage_id) }}>
                             {stageLabel(stages, customer.stage_id)}

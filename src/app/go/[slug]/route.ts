@@ -22,7 +22,7 @@ export async function GET(
   // 1. Найти источник трафика по slug
   const { data: source } = await supabase
     .from('traffic_sources')
-    .select('id, project_id, destination_url, slug')
+    .select('id, project_id, destination_url, slug, name')
     .eq('slug', slug)
     .single()
 
@@ -37,14 +37,18 @@ export async function GET(
     visitorToken = randomUUID()
   }
 
-  // 3. Хэш IP для дедупликации (не храним сам IP)
+  // 3. Хэш IP для дедупликации
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || request.headers.get('x-real-ip')
     || 'unknown'
   const ipHash = createHash('sha256').update(ip + source.project_id).digest('hex').slice(0, 16)
 
-  // 4. Логируем событие (fire-and-forget, не блокируем редирект)
+  // 4. Telegram ID из query param (бот подставляет автоматически)
+  const tgId = request.nextUrl.searchParams.get('tgid')
+
+  // 5. Fire-and-forget: логируем событие + привязываем к CRM карточке
   void (async () => {
+    // Логируем клик
     await supabase.from('tracking_events').insert({
       source_id: source.id,
       project_id: source.project_id,
@@ -54,9 +58,52 @@ export async function GET(
       user_agent: request.headers.get('user-agent') || null,
     })
     await supabase.rpc('increment_source_clicks', { source_id: source.id })
+
+    // Если пришёл из бота с Telegram ID — обновляем карточку CRM
+    if (tgId) {
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('id, source_id')
+        .eq('project_id', source.project_id)
+        .eq('telegram_id', tgId)
+        .single()
+
+      if (customer) {
+        // Обновляем источник только если ещё не установлен
+        if (!customer.source_id) {
+          await supabase
+            .from('customers')
+            .update({
+              visitor_token: visitorToken,
+              source_id: source.id,
+              source_slug: source.slug,
+              source_name: source.name,
+            })
+            .eq('id', customer.id)
+        } else {
+          // Visitor token обновляем всегда (для трекинга на сайте)
+          await supabase
+            .from('customers')
+            .update({ visitor_token: visitorToken })
+            .eq('id', customer.id)
+        }
+
+        // Логируем переход в историю действий клиента
+        await supabase.from('customer_actions').insert({
+          customer_id: customer.id,
+          project_id: source.project_id,
+          action: 'landing_visit',
+          data: {
+            source_slug: source.slug,
+            source_name: source.name,
+            url: source.destination_url,
+          },
+        })
+      }
+    }
   })()
 
-  // 5. Редирект с установкой cookie
+  // 6. Редирект с cookie
   const destination = source.destination_url.startsWith('http')
     ? source.destination_url
     : `https://${source.destination_url}`

@@ -15,7 +15,8 @@ async function sendScenarioMessage(
   botToken: string,
   chatId: number,
   messageId: string,
-  conversationId: string
+  conversationId: string,
+  userId?: number  // для подстановки {tgid} в URL кнопках
 ) {
   const { data: msg } = await supabase
     .from('scenario_messages')
@@ -34,11 +35,18 @@ async function sendScenarioMessage(
 
   const telegramButtons = (btns ?? [])
     .filter(b => b.text)
-    .map(b => ({
-      text: b.text,
-      url: b.action_type === 'url' && b.action_url ? b.action_url : undefined,
-      callback_data: b.action_type !== 'url' ? `btn:${b.id}` : undefined,
-    }))
+    .map(b => {
+      let url = b.action_type === 'url' && b.action_url ? b.action_url : undefined
+      // Подставляем Telegram ID пользователя вместо {tgid}
+      if (url && userId) {
+        url = url.replace(/\{tgid\}/g, String(userId))
+      }
+      return {
+        text: b.text,
+        url,
+        callback_data: b.action_type !== 'url' ? `btn:${b.id}` : undefined,
+      }
+    })
 
   if (telegramButtons.length > 0) {
     await sendTelegramMessage(botToken, chatId, msg.text, telegramButtons)
@@ -55,7 +63,7 @@ async function sendScenarioMessage(
 
   // If next message exists and delay is 0, send it too
   if (msg.next_message_id && msg.delay_minutes === 0) {
-    await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId)
+    await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId)
   }
 
   // TODO: If delay > 0, schedule via cron/queue (for now skip delayed messages)
@@ -177,7 +185,7 @@ export async function POST(request: NextRequest) {
 
         // Handle action
         if (btn.action_type === 'goto_message' && btn.action_goto_message_id) {
-          await sendScenarioMessage(supabase, botToken, chatId, btn.action_goto_message_id, conversation.id)
+          await sendScenarioMessage(supabase, botToken, chatId, btn.action_goto_message_id, conversation.id, userId)
         } else if (btn.action_type === 'trigger' && btn.action_trigger_word) {
           // Find start message with this trigger
           const { data: triggerMsgs } = await supabase
@@ -189,7 +197,7 @@ export async function POST(request: NextRequest) {
             .limit(1)
 
           if (triggerMsgs && triggerMsgs[0]) {
-            await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id)
+            await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId)
           }
         }
         // url buttons are handled by Telegram directly
@@ -213,7 +221,7 @@ export async function POST(request: NextRequest) {
     )
 
     if (matchedStart) {
-      await sendScenarioMessage(supabase, botToken, chatId, matchedStart.id, conversation.id)
+      await sendScenarioMessage(supabase, botToken, chatId, matchedStart.id, conversation.id, userId)
       return NextResponse.json({ ok: true })
     }
 
