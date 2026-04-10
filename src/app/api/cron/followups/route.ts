@@ -23,30 +23,45 @@ export async function GET(request: NextRequest) {
   const supabase = getSupabase()
   const now = new Date().toISOString()
 
-  // Берём все pending записи у которых send_at уже прошло
-  const { data: queue, error } = await supabase
+  // 1. Берём pending записи у которых send_at уже прошло
+  const { data: queueItems, error: queueError } = await supabase
     .from('followup_queue')
-    .select('*, message_followups(*)')
+    .select('*')
     .eq('status', 'pending')
     .lte('send_at', now)
     .limit(50)
 
-  if (error) {
-    console.error('followup_queue fetch error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  if (queueError) {
+    console.error('followup_queue fetch error:', queueError)
+    return NextResponse.json({ error: queueError.message }, { status: 500 })
   }
 
-  if (!queue || queue.length === 0) {
-    return NextResponse.json({ ok: true, sent: 0 })
+  if (!queueItems || queueItems.length === 0) {
+    return NextResponse.json({ ok: true, sent: 0, pending: 0 })
   }
+
+  // 2. Грузим данные followup-ов отдельным запросом (join в Supabase ненадёжен для нестандартных FK)
+  const followupIds = queueItems.map((q: { followup_id: string }) => q.followup_id)
+  const { data: followupDefs, error: followupError } = await supabase
+    .from('message_followups')
+    .select('*')
+    .in('id', followupIds)
+
+  if (followupError) {
+    console.error('message_followups fetch error:', followupError)
+    return NextResponse.json({ error: followupError.message }, { status: 500 })
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const followupMap = new Map((followupDefs ?? []).map((f: any) => [f.id, f]))
 
   let sent = 0
   let failed = 0
 
-  for (const item of queue) {
-    const followup = item.message_followups
+  for (const item of queueItems) {
+    const followup = followupMap.get(item.followup_id)
+
     if (!followup || !followup.text) {
-      // Помечаем как отправленное чтобы не зациклиться
       await supabase
         .from('followup_queue')
         .update({ status: 'sent', sent_at: now })
@@ -61,7 +76,6 @@ export async function GET(request: NextRequest) {
       }
       // TODO: email channel
 
-      // Сохраняем исходящее сообщение
       await supabase.from('chatbot_messages').insert({
         conversation_id: item.conversation_id,
         direction: 'outgoing',
@@ -75,11 +89,10 @@ export async function GET(request: NextRequest) {
 
       sent++
     } catch (err) {
-      console.error('followup send error:', err, item.id)
+      console.error('followup send error:', err, 'queue_id:', item.id)
       failed++
-      // Не обновляем статус — попробуем на следующем тике
     }
   }
 
-  return NextResponse.json({ ok: true, sent, failed })
+  return NextResponse.json({ ok: true, sent, failed, processed: queueItems.length })
 }

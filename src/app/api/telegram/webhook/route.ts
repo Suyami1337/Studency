@@ -95,7 +95,9 @@ async function sendScenarioMessage(
       send_at: new Date(now + delayToMs(f.delay_value, f.delay_unit)).toISOString(),
       status: 'pending',
     }))
-    await supabase.from('followup_queue').insert(queueRows)
+    const { error: queueErr } = await supabase.from('followup_queue').insert(queueRows)
+    if (queueErr) console.error('followup_queue insert error:', queueErr)
+    else console.log(`scheduled ${queueRows.length} followups for message ${msg.id}`)
   }
 
   // If next message exists and delay is 0, send it too
