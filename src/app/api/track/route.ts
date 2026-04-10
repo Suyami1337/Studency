@@ -3,6 +3,12 @@ import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+}
+
 function getSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -11,75 +17,83 @@ function getSupabase() {
 }
 
 // POST /api/track
-// Body: { buttonId: string, landingSlug: string, visitorToken?: string }
-// Вызывается из JS-скрипта на публичной странице лендинга
+// Body: { landingSlug, buttonText, buttonHref?, eventType?, visitorToken? }
+// Вызывается автоматически из tracking-скрипта на лендинге.
+// НЕ требует предварительного создания кнопок — сам создаёт записи по upsert.
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { buttonId, landingSlug, visitorToken } = body as {
-      buttonId?: string
+    const body = await request.json() as {
       landingSlug?: string
+      buttonText?: string
+      buttonHref?: string
+      eventType?: string   // 'button_click' | 'link_click' | 'form_submit'
       visitorToken?: string
     }
 
-    if (!buttonId || !landingSlug) {
-      return NextResponse.json({ error: 'Missing buttonId or landingSlug' }, { status: 400 })
+    const { landingSlug, buttonText, visitorToken } = body
+    const eventType = body.eventType || 'button_click'
+
+    if (!landingSlug || !buttonText) {
+      return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
     const supabase = getSupabase()
 
-    // Проверяем что кнопка принадлежит этому лендингу
-    const { data: button } = await supabase
-      .from('landing_buttons')
-      .select('id, landing_id, landings!inner(id, slug)')
-      .eq('id', buttonId)
+    // 1. Находим лендинг
+    const { data: landing } = await supabase
+      .from('landings')
+      .select('id, project_id')
+      .eq('slug', landingSlug)
       .single()
 
-    if (!button) {
-      return NextResponse.json({ error: 'Button not found' }, { status: 404 })
+    if (!landing) {
+      return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
-    const landing = button.landings as unknown as { id: string; slug: string }
-    if (landing.slug !== landingSlug) {
-      return NextResponse.json({ error: 'Button does not belong to this landing' }, { status: 403 })
+    // 2. Upsert кнопки по (landing_id, name) — создаёт если нет, обновляет если есть
+    const { data: btn } = await supabase
+      .from('landing_buttons')
+      .upsert(
+        { landing_id: landing.id, name: buttonText, clicks: 0, conversions: 0 },
+        { onConflict: 'landing_id,name', ignoreDuplicates: false }
+      )
+      .select('id')
+      .single()
+
+    if (btn) {
+      await supabase.rpc('increment_button_clicks', { p_button_id: btn.id })
     }
 
-    // Инкрементируем счётчик
-    await supabase.rpc('increment_button_clicks', { p_button_id: buttonId })
-
-    // Если известен visitor_token — логируем действие (связка с CRM)
+    // 3. Если visitor_token известен — пишем в карточку клиента
     if (visitorToken) {
       const { data: customer } = await supabase
         .from('customers')
         .select('id, project_id')
         .eq('visitor_token', visitorToken)
-        .single()
+        .eq('project_id', landing.project_id)
+        .maybeSingle()
 
       if (customer) {
         await supabase.from('customer_actions').insert({
           customer_id: customer.id,
           project_id: customer.project_id,
-          action: 'button_click',
-          data: { button_id: buttonId, landing_slug: landingSlug },
+          action: eventType,
+          data: {
+            button_text: buttonText,
+            landing_slug: landingSlug,
+            href: body.buttonHref || null,
+          },
         })
       }
     }
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
   } catch (error) {
     console.error('Track error:', error)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+    return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
   }
 }
 
-// OPTIONS — CORS preflight (браузер будет слать с публичного домена)
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  })
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
 }

@@ -25,13 +25,15 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     notFound()
   }
 
-  // Читаем visitor token из cookie (поставлен при переходе через /go/[slug])
+  // Visitor token из cookie (устанавливается при переходе через /go/[slug] из бота)
   const cookieStore = await cookies()
   const visitorToken = cookieStore.get('stud_vid')?.value ?? ''
 
-  // Инжектируемый трекинг-скрипт:
-  // - Трекает клики по кнопкам с атрибутом data-stud-btn="BUTTON_ID"
-  // - Обрабатывает формы с атрибутом data-stud-form
+  // Универсальный трекинг-скрипт.
+  // Не требует никакой ручной разметки в HTML.
+  // Автоматически трекает:
+  //   • клики по ЛЮБЫМ кнопкам, ссылкам и элементам с role=button
+  //   • отправку ЛЮБЫХ форм (name/phone/email/telegram по полю name/placeholder)
   const trackingScript = `
 <script>
 (function() {
@@ -39,47 +41,67 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
   var VT   = ${JSON.stringify(visitorToken)};
   var BASE = ${JSON.stringify(BASE_URL)};
 
-  // ── Трекинг кнопок ───────────────────────────────────────────
-  document.addEventListener('click', function(e) {
-    var el = e.target.closest('[data-stud-btn]');
-    if (!el) return;
-    var btnId = el.getAttribute('data-stud-btn');
-    if (!btnId) return;
+  // Утилита: получить читаемый текст элемента
+  function getLabel(el) {
+    var t = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.title || '').trim();
+    // Обрезаем до 80 символов, убираем переносы
+    return t.replace(/\\s+/g, ' ').slice(0, 80);
+  }
+
+  // Утилита: отправить событие (fire-and-forget)
+  function track(payload) {
     fetch(BASE + '/api/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ buttonId: btnId, landingSlug: SLUG, visitorToken: VT }),
+      body: JSON.stringify(Object.assign({ landingSlug: SLUG, visitorToken: VT }, payload)),
       keepalive: true
-    });
-  });
+    }).catch(function() {});
+  }
 
-  // ── Форма заявки ─────────────────────────────────────────────
-  // Ищет form[data-stud-form] или обычные формы на странице
+  // ── 1. Авто-трекинг ВСЕХ кнопок и ссылок ─────────────────────
+  document.addEventListener('click', function(e) {
+    var el = e.target.closest('button, [type=submit], [role=button], a[href]');
+    if (!el) return;
+
+    var label = getLabel(el);
+    if (!label) return; // пустые кнопки не трекаем
+
+    var isLink = el.tagName === 'A';
+    track({
+      buttonText: label,
+      buttonHref: isLink ? (el.getAttribute('href') || '') : '',
+      eventType: isLink ? 'link_click' : 'button_click',
+    });
+  }, true); // capture=true: ловим до обработчиков страницы
+
+  // ── 2. Авто-обработка форм ────────────────────────────────────
   document.addEventListener('submit', function(e) {
-    var form = e.target.closest('[data-stud-form]') || e.target.closest('form[data-stud-lead]');
-    if (!form) return;
+    var form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+
+    // Не перехватываем формы, у которых есть свой action на другой домен
+    var action = form.getAttribute('action') || '';
+    if (action && !action.startsWith('/') && !action.startsWith(BASE) && action !== '#') return;
+
     e.preventDefault();
 
-    var data = {};
+    var data = { visitorToken: VT };
     var inputs = form.querySelectorAll('input, textarea, select');
     inputs.forEach(function(inp) {
-      var name = inp.name || inp.getAttribute('data-field') || '';
-      var val  = inp.value || '';
-      if (!name || !val) return;
-      var key = name.toLowerCase();
-      if (key === 'name' || key === 'имя' || key === 'fullname') data.name = val;
-      else if (key === 'phone' || key === 'tel' || key === 'телефон') data.phone = val;
-      else if (key === 'email' || key === 'почта') data.email = val;
-      else if (key === 'telegram' || key === 'tg') data.telegram = val;
-      else { if (!data.extra) data.extra = {}; data.extra[name] = val; }
+      var fieldName = (inp.name || inp.getAttribute('data-field') || inp.placeholder || '').toLowerCase();
+      var val = inp.value ? inp.value.trim() : '';
+      if (!fieldName || !val) return;
+      if (/^(name|имя|fullname|full_name|ваше имя)$/.test(fieldName)) data.name = val;
+      else if (/^(phone|tel|телефон|номер|mobile)$/.test(fieldName)) data.phone = val;
+      else if (/^(email|почта|e-mail)$/.test(fieldName)) data.email = val;
+      else if (/^(telegram|tg|телеграм)$/.test(fieldName)) data.telegram = val;
+      else { if (!data.extra) data.extra = {}; data.extra[fieldName] = val; }
     });
-    data.visitorToken = VT;
 
-    // Показываем индикатор загрузки если есть [data-stud-submit]
-    var btn = form.querySelector('[data-stud-submit]') || form.querySelector('[type=submit]');
-    var origText = btn ? btn.textContent : '';
-    if (btn) btn.disabled = true;
-    if (btn) btn.textContent = '...';
+    // UX: блокируем кнопку отправки
+    var submitBtn = form.querySelector('[type=submit]');
+    var origText = submitBtn ? (submitBtn.innerText || submitBtn.value) : '';
+    if (submitBtn) { submitBtn.disabled = true; if (submitBtn.innerText !== undefined) submitBtn.innerText = '...'; }
 
     fetch(BASE + '/api/landing/' + SLUG + '/submit', {
       method: 'POST',
@@ -88,20 +110,26 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     })
     .then(function(r) { return r.json(); })
     .then(function() {
-      // Показываем success-блок если есть [data-stud-success]
-      var success = form.querySelector('[data-stud-success]') || document.querySelector('[data-stud-success]');
-      if (success) {
+      // Ищем блок с классом success / thank-you / stud-success
+      var successEl = form.querySelector('.stud-success, [data-stud-success]')
+        || document.querySelector('.stud-success, [data-stud-success], .thank-you, .success-message');
+      if (successEl) {
         form.style.display = 'none';
-        success.style.display = 'block';
-      } else if (btn) {
-        btn.textContent = 'Заявка отправлена!';
-        btn.style.background = '#16a34a';
+        successEl.style.display = 'block';
+      } else if (submitBtn) {
+        if (submitBtn.innerText !== undefined) submitBtn.innerText = '✓ Заявка отправлена';
+        submitBtn.style.background = '#16a34a';
+        submitBtn.style.color = '#fff';
       }
     })
     .catch(function() {
-      if (btn) { btn.disabled = false; btn.textContent = origText; }
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        if (submitBtn.innerText !== undefined) submitBtn.innerText = origText;
+      }
     });
   });
+
 })();
 </script>
 `

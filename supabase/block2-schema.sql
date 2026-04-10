@@ -54,7 +54,11 @@ BEGIN
 END;
 $$;
 
--- 4. Функция инкремента кликов по кнопке
+-- 4. Уникальный ключ для landing_buttons(landing_id, name) — для авто-upsert по тексту кнопки
+ALTER TABLE public.landing_buttons
+  ADD CONSTRAINT IF NOT EXISTS landing_buttons_landing_id_name_key UNIQUE (landing_id, name);
+
+-- 5. Функция инкремента кликов по кнопке
 CREATE OR REPLACE FUNCTION public.increment_button_clicks(p_button_id UUID)
 RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
