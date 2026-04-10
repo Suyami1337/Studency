@@ -392,6 +392,7 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
 
 type BotConversation = {
   id: string
+  telegram_bot_id: string | null
   telegram_first_name: string | null
   telegram_username: string | null
   telegram_user_id: number | null
@@ -731,6 +732,7 @@ export default function ChatbotsPage() {
   const [activePageTab, setActivePageTab] = useState<'scenarios' | 'users'>('scenarios')
   const [botAllUsers, setBotAllUsers] = useState<(BotConversation & { scenarioNames: string[] })[]>([])
   const [loadingBotUsers, setLoadingBotUsers] = useState(false)
+  const [selectedBotFilter, setSelectedBotFilter] = useState<string | null>(null)
 
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const urlSelectedId = searchParams.get('open') || null
@@ -763,7 +765,16 @@ export default function ChatbotsPage() {
   useEffect(() => { load() }, [projectId])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activePageTab === 'users') loadBotUsers() }, [activePageTab, scenarios])
+  useEffect(() => {
+    if (activePageTab === 'users') {
+      loadBotUsers()
+      // Выбираем первый бот по умолчанию, если фильтр ещё не установлен
+      if (!selectedBotFilter) {
+        const firstBotId = bots[0]?.id ?? null
+        setSelectedBotFilter(firstBotId)
+      }
+    }
+  }, [activePageTab, scenarios])
 
   async function loadBotUsers() {
     setLoadingBotUsers(true)
@@ -774,7 +785,7 @@ export default function ChatbotsPage() {
     // Все разговоры по этим ботам
     const { data: convs } = await supabase
       .from('chatbot_conversations')
-      .select('id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
+      .select('id, telegram_bot_id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
       .in('telegram_bot_id', botIds)
       .order('updated_at', { ascending: false })
       .limit(200)
@@ -865,15 +876,35 @@ export default function ChatbotsPage() {
       </div>
 
       {activePageTab === 'users' && (
-        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div className="space-y-3">
+          {/* Фильтр по боту */}
+          {bots.length > 1 && (
+            <div className="flex gap-2 flex-wrap">
+              {bots.map(b => (
+                <button key={b.id} onClick={() => setSelectedBotFilter(b.id)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                    selectedBotFilter === b.id
+                      ? 'bg-[#6A55F8] text-white border-[#6A55F8]'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-[#6A55F8]/40'
+                  }`}>
+                  @{b.bot_username}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           {loadingBotUsers ? (
             <div className="p-8 text-center text-sm text-gray-400">Загружаю...</div>
-          ) : botAllUsers.length === 0 ? (
-            <div className="p-12 text-center">
-              <div className="text-3xl mb-3">👥</div>
-              <p className="text-sm text-gray-500">Пока никто не писал боту</p>
-            </div>
-          ) : (
+          ) : (() => {
+            const filtered = selectedBotFilter
+              ? botAllUsers.filter(c => c.telegram_bot_id === selectedBotFilter)
+              : botAllUsers
+            return filtered.length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="text-3xl mb-3">👥</div>
+                <p className="text-sm text-gray-500">Пока никто не писал боту</p>
+              </div>
+            ) : (
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
@@ -885,7 +916,7 @@ export default function ChatbotsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {botAllUsers.map(conv => {
+                {filtered.map(conv => {
                   const name = conv.customers?.full_name || conv.telegram_first_name || 'Без имени'
                   const source = conv.customers?.source_name
                   return (
@@ -925,7 +956,8 @@ export default function ChatbotsPage() {
                 })}
               </tbody>
             </table>
-          )}
+          )})()}
+        </div>
         </div>
       )}
 
