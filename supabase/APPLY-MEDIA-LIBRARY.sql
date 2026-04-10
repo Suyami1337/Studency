@@ -52,19 +52,19 @@ ALTER TABLE media_library ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view media from their projects" ON media_library;
 CREATE POLICY "Users can view media from their projects" ON media_library
   FOR SELECT USING (
-    project_id IN (SELECT id FROM projects WHERE user_id = auth.uid())
+    project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid())
   );
 
 DROP POLICY IF EXISTS "Users can insert media to their projects" ON media_library;
 CREATE POLICY "Users can insert media to their projects" ON media_library
   FOR INSERT WITH CHECK (
-    project_id IN (SELECT id FROM projects WHERE user_id = auth.uid())
+    project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid())
   );
 
 DROP POLICY IF EXISTS "Users can delete media from their projects" ON media_library;
 CREATE POLICY "Users can delete media from their projects" ON media_library
   FOR DELETE USING (
-    project_id IN (SELECT id FROM projects WHERE user_id = auth.uid())
+    project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid())
   );
 
 -- 6. RLS для media_usages
@@ -73,19 +73,19 @@ ALTER TABLE media_usages ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users can view their usages" ON media_usages;
 CREATE POLICY "Users can view their usages" ON media_usages
   FOR SELECT USING (
-    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()))
+    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid()))
   );
 
 DROP POLICY IF EXISTS "Users can insert their usages" ON media_usages;
 CREATE POLICY "Users can insert their usages" ON media_usages
   FOR INSERT WITH CHECK (
-    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()))
+    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid()))
   );
 
 DROP POLICY IF EXISTS "Users can delete their usages" ON media_usages;
 CREATE POLICY "Users can delete their usages" ON media_usages
   FOR DELETE USING (
-    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()))
+    media_id IN (SELECT id FROM media_library WHERE project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid()))
   );
 
 -- 7. Storage политики для bucket chatbot-media
