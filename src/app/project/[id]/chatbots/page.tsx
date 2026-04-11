@@ -819,6 +819,162 @@ function MessageCard({
 }
 
 // =============================================
+// EVENT TRIGGERS TAB — триггеры сценария по событиям с сайта
+// =============================================
+type EventTrigger = {
+  id: string
+  event_type: string
+  event_name: string | null
+  source: string | null
+  start_message_id: string
+  conditions: unknown
+}
+
+function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messages: Message[] }) {
+  const supabase = createClient()
+  const [triggers, setTriggers] = useState<EventTrigger[]>([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [newEventType, setNewEventType] = useState('page_view')
+  const [newEventName, setNewEventName] = useState('')
+  const [newSource, setNewSource] = useState('')
+  const [newStartMsgId, setNewStartMsgId] = useState('')
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase.from('scenario_event_triggers')
+      .select('*').eq('scenario_id', scenarioId).order('created_at')
+    setTriggers((data ?? []) as EventTrigger[])
+    setLoading(false)
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [scenarioId])
+
+  async function handleAdd() {
+    if (!newStartMsgId) { alert('Выбери сообщение запуска'); return }
+    await supabase.from('scenario_event_triggers').insert({
+      scenario_id: scenarioId,
+      event_type: newEventType,
+      event_name: newEventName || null,
+      source: newSource || null,
+      start_message_id: newStartMsgId,
+    })
+    setNewEventName('')
+    setNewSource('')
+    setNewStartMsgId('')
+    setAdding(false)
+    await load()
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Удалить триггер?')) return
+    await supabase.from('scenario_event_triggers').delete().eq('id', id)
+    await load()
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Триггеры событий</h2>
+          <p className="text-xs text-gray-500">Запуск сценария при событии на сайте, лендинге или в другом месте</p>
+        </div>
+        <button onClick={() => setAdding(true)}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+          + Добавить триггер
+        </button>
+      </div>
+
+      {adding && (
+        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Тип события</label>
+              <select value={newEventType} onChange={e => setNewEventType(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                <option value="page_view">Просмотр страницы</option>
+                <option value="button_click">Клик по кнопке</option>
+                <option value="form_submit">Отправка формы</option>
+                <option value="video_start">Начало просмотра видео</option>
+                <option value="video_complete">Досмотр видео</option>
+                <option value="custom">Кастомное</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Имя события (опционально)</label>
+              <input type="text" value={newEventName} onChange={e => setNewEventName(e.target.value)}
+                placeholder="например: pricing"
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Источник (опционально)</label>
+            <input type="text" value={newSource} onChange={e => setNewSource(e.target.value)}
+              placeholder="landing, site, bot…"
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Сообщение для запуска</label>
+            <select value={newStartMsgId} onChange={e => setNewStartMsgId(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+              <option value="">— Выбери сообщение —</option>
+              {messages.map(m => (
+                <option key={m.id} value={m.id}>
+                  #{m.order_position + 1}: {(m.text ?? '').slice(0, 50)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleAdd}
+              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+              Создать
+            </button>
+            <button onClick={() => setAdding(false)}
+              className="px-4 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-8 text-sm text-gray-400">Загрузка…</div>
+      ) : triggers.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <div className="text-4xl mb-2">⚡</div>
+          <p className="text-sm text-gray-500">Нет триггеров</p>
+          <p className="text-xs text-gray-400 mt-1">Добавь чтобы бот запускался от действий на сайте</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {triggers.map(t => {
+            const msg = messages.find(m => m.id === t.start_message_id)
+            return (
+              <div key={t.id} className="flex items-center justify-between px-5 py-3 border-b border-gray-50 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900">
+                    ⚡ {t.event_type}{t.event_name ? `: ${t.event_name}` : ''}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    → Сообщение {msg ? `#${msg.order_position + 1}` : '(не найдено)'}
+                    {t.source && <span className="ml-2">· источник: {t.source}</span>}
+                  </p>
+                </div>
+                <button onClick={() => handleDelete(t.id)}
+                  className="text-xs text-gray-400 hover:text-red-500">
+                  Удалить
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================
 // SCENARIO DETAIL
 // =============================================
 function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
@@ -1005,7 +1161,7 @@ type BotConversation = {
 function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenario: Scenario; onBack: () => void; onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void }) {
   const params = useParams()
   const projectId = params.id as string
-  const [activeTab, setActiveTab] = useState<'scenario' | 'users' | 'analytics' | 'settings'>('scenario')
+  const [activeTab, setActiveTab] = useState<'scenario' | 'users' | 'analytics' | 'triggers' | 'settings'>('scenario')
   const [showAI, setShowAI] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [buttons, setButtons] = useState<Button[]>([])
@@ -1212,6 +1368,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     { id: 'scenario' as const, label: 'Сценарий' },
     { id: 'users' as const, label: 'Пользователи' },
     { id: 'analytics' as const, label: 'Аналитика' },
+    { id: 'triggers' as const, label: 'Триггеры' },
     { id: 'settings' as const, label: 'Настройки' },
   ]
 
@@ -1480,6 +1637,10 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
             </>
           )}
         </div>
+      )}
+
+      {activeTab === 'triggers' && (
+        <EventTriggersTab scenarioId={scenario.id} messages={messages} />
       )}
 
       {activeTab === 'settings' && (
