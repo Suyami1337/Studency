@@ -29,7 +29,6 @@ const navGroups: NavItem[][] = [
   // Обучение
   [
     { id: 'learning', label: 'Обучение', icon: '📚' },
-    { id: 'videos', label: 'Видеохостинг', icon: '🎬' },
     { id: 'products', label: 'Продукты', icon: '📦' },
   ],
   // Работа
@@ -41,7 +40,6 @@ const navGroups: NavItem[][] = [
   [
     { id: 'analytics', label: 'Аналитика', icon: '📈' },
     { id: 'ai', label: 'AI-помощник', icon: '✨' },
-    { id: 'media', label: 'Хранилище', icon: '🗂' },
   ],
 ]
 
