@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateChatbotScenario } from '@/lib/ai'
+import { trackUsage } from '@/lib/usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -88,6 +89,15 @@ export async function POST(request: NextRequest) {
           action_trigger_word: b.action_type === 'trigger' ? b.value : null,
         })
       }
+    }
+
+    // Track usage (для мониторинга мастер-аккаунтов)
+    const { data: bot } = await supabase
+      .from('telegram_bots').select('project_id').eq('id', telegram_bot_id).single()
+    if (bot?.project_id) {
+      await trackUsage(supabase, bot.project_id, 'ai_message', 'generate_scenario', 1, {
+        messages_count: scenario.messages.length,
+      })
     }
 
     return NextResponse.json({ ok: true, scenario_id: scenarioRow.id, scenario })

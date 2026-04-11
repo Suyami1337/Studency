@@ -213,7 +213,7 @@ export async function sendProjectEmail(
   const unsubscribeUrl = buildUnsubscribeUrl(opts.projectId, opts.to)
 
   // 4. Send
-  return sendEmail({
+  const result = await sendEmail({
     to: opts.to,
     subject: opts.subject,
     text: opts.text,
@@ -223,4 +223,20 @@ export async function sendProjectEmail(
     unsubscribeUrl,
     addFooter: true,
   })
+
+  // 5. Track usage (не блокируем)
+  if (result.ok) {
+    try {
+      await supabase.from('usage_events').insert({
+        project_id: opts.projectId,
+        resource: 'email_sent',
+        units: 1,
+        metadata: { to: opts.to },
+      })
+    } catch (err) {
+      console.error('usage track error:', err)
+    }
+  }
+
+  return result
 }

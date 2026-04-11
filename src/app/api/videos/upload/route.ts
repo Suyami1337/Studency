@@ -4,6 +4,7 @@ import {
   uploadVideoToKinescope, createKinescopeFolder,
   applyPlayerSettingsToVideo, PlayerSettings,
 } from '@/lib/kinescope'
+import { trackUsage } from '@/lib/usage'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -82,6 +83,15 @@ export async function POST(request: NextRequest) {
       console.error('videos insert error:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
+
+    // Track usage
+    await trackUsage(supabase, projectId, 'video_upload', 'upload', 1, {
+      size_bytes: file.size,
+      duration: kinescopeData.duration,
+    })
+    await trackUsage(supabase, projectId, 'video_storage', 'added', file.size, {
+      video_id: video.id,
+    })
 
     return NextResponse.json({ ok: true, video })
   } catch (err) {
