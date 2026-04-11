@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
     project_id: body.project_id,
     telegram_bot_id: body.telegram_bot_id ?? null,
     name: body.name ?? 'Новая рассылка',
+    channel: body.channel ?? 'telegram',
+    email_subject: body.email_subject ?? null,
     text: body.text ?? null,
     media_id: body.media_id ?? null,
     media_type: body.media_type ?? null,

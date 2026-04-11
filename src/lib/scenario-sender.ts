@@ -6,7 +6,7 @@ import {
   sendTelegramMessage, sendTelegramPhoto, sendTelegramVideo,
   sendTelegramAnimation, sendTelegramVideoNote, sendTelegramDocument, sendTelegramAudio,
 } from '@/lib/telegram'
-import { sendEmail } from '@/lib/email'
+import { sendProjectEmail } from '@/lib/email'
 import { waitUntil } from '@vercel/functions'
 
 /**
@@ -21,12 +21,18 @@ export async function maybeDuplicateToEmail(
   if (!followup.duplicate_to_email) return
   if (!followup.text && !followup.media_url) return
 
+  // Находим customer + project (project_id нужен для sendProjectEmail)
   const { data: conv } = await supabase
     .from('chatbot_conversations')
-    .select('customer_id')
+    .select('customer_id, telegram_bots(project_id)')
     .eq('id', conversationId)
     .maybeSingle()
   if (!conv?.customer_id) return
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const botInfo = (conv as any).telegram_bots
+  const projectId = botInfo?.project_id as string | undefined
+  if (!projectId) return
 
   const { data: customer } = await supabase
     .from('customers').select('email, full_name').eq('id', conv.customer_id).single()
@@ -40,7 +46,13 @@ export async function maybeDuplicateToEmail(
     ? `<p>${(followup.text ?? '').replace(/\n/g, '<br>')}</p><p><a href="${followup.media_url}">Открыть вложение</a></p>`
     : `<p>${(followup.text ?? '').replace(/\n/g, '<br>')}</p>`
 
-  await sendEmail(customer.email, subject, body, html)
+  await sendProjectEmail(supabase, {
+    projectId,
+    to: customer.email,
+    subject,
+    text: body,
+    html,
+  })
 }
 
 // Delays shorter than this are handled via waitUntil; longer ones go to the queue

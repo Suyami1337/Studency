@@ -39,6 +39,8 @@ export default function BroadcastsPage() {
   // Form state
   const [name, setName] = useState('')
   const [botId, setBotId] = useState('')
+  const [channel, setChannel] = useState<'telegram' | 'email' | 'both'>('telegram')
+  const [emailSubject, setEmailSubject] = useState('')
   const [text, setText] = useState('')
   const [segmentType, setSegmentType] = useState<'all' | 'funnel_stage' | 'source' | 'tag'>('all')
   const [segmentValue, setSegmentValue] = useState('')
@@ -69,6 +71,14 @@ export default function BroadcastsPage() {
       alert('Заполни название и текст')
       return
     }
+    if ((channel === 'telegram' || channel === 'both') && !botId) {
+      alert('Для Telegram-канала выбери бота')
+      return
+    }
+    if ((channel === 'email' || channel === 'both') && !emailSubject.trim()) {
+      alert('Для email-канала заполни тему письма')
+      return
+    }
     setSaving(true)
     await fetch('/api/broadcasts', {
       method: 'POST',
@@ -77,6 +87,8 @@ export default function BroadcastsPage() {
         project_id: projectId,
         telegram_bot_id: botId || null,
         name, text,
+        channel,
+        email_subject: emailSubject || null,
         segment_type: segmentType,
         segment_value: segmentValue || null,
       }),
@@ -85,6 +97,8 @@ export default function BroadcastsPage() {
     setName('')
     setText('')
     setBotId('')
+    setChannel('telegram')
+    setEmailSubject('')
     setSegmentType('all')
     setSegmentValue('')
     setSaving(false)
@@ -195,14 +209,48 @@ export default function BroadcastsPage() {
                   placeholder="Например: Скидка 20% на курс"
                   className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
               </div>
+
+              {/* Channel selector */}
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Бот</label>
-                <select value={botId} onChange={e => setBotId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                  <option value="">— Выбери бота —</option>
-                  {bots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Канал</label>
+                <div className="flex gap-2">
+                  {([
+                    { id: 'telegram' as const, label: '💬 Telegram' },
+                    { id: 'email' as const, label: '✉️ Email' },
+                    { id: 'both' as const, label: '📢 Оба' },
+                  ]).map(ch => (
+                    <button key={ch.id} type="button" onClick={() => setChannel(ch.id)}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                        channel === ch.id
+                          ? 'bg-[#6A55F8] text-white border-[#6A55F8]'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-[#6A55F8]/40'
+                      }`}>
+                      {ch.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {(channel === 'telegram' || channel === 'both') && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Бот</label>
+                  <select value={botId} onChange={e => setBotId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                    <option value="">— Выбери бота —</option>
+                    {bots.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {(channel === 'email' || channel === 'both') && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Тема письма</label>
+                  <input type="text" value={emailSubject} onChange={e => setEmailSubject(e.target.value)}
+                    placeholder="Например: Старт нового курса уже скоро"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
                 <textarea value={text} onChange={e => setText(e.target.value)}

@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   telegram_bot_id uuid REFERENCES telegram_bots(id) ON DELETE CASCADE,
   name text NOT NULL,
   status text NOT NULL DEFAULT 'draft', -- draft | sending | sent | failed
+  -- Канал отправки
+  channel text NOT NULL DEFAULT 'telegram', -- telegram | email | both
+  email_subject text,                 -- тема письма (если channel включает email)
   -- Контент
   text text,
   media_id uuid REFERENCES media_library(id) ON DELETE SET NULL,
@@ -26,6 +29,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   created_by uuid,
   created_at timestamptz DEFAULT now()
 );
+
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS channel text NOT NULL DEFAULT 'telegram';
+ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS email_subject text;
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_project ON broadcasts(project_id);
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts(status);
