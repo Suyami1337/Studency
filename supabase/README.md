@@ -39,9 +39,18 @@
   - customer_notes table
 
 ## Блок 7 — Рассылки
-- `APPLY-BROADCASTS.sql` ← **запустить**
-  - broadcasts table
+- `APPLY-BROADCASTS.sql` ← **запустить** (обновлён с channel + email_subject)
+  - broadcasts table (+ colums channel, email_subject)
   - broadcast_deliveries table
+
+## Ночная сессия — мастер-аккаунты
+- `APPLY-KINESCOPE-FOLDERS.sql` ← **запустить**
+  - projects.kinescope_folder_id
+  - projects.player_settings (jsonb)
+- `APPLY-EMAIL-UNSUBSCRIBES.sql` ← **запустить**
+  - email_unsubscribes table (GDPR compliance)
+- `APPLY-USAGE-TRACKING.sql` ← **запустить**
+  - usage_events table (мониторинг расхода мастер-ресурсов)
 
 ## Блок 8 — Продамус
 SQL не требуется. Используется существующая таблица orders.
@@ -63,12 +72,31 @@ SQL не требуется. Только env var:
 - `SUPABASE_SERVICE_ROLE_KEY`
 
 Для интеграций (опционально):
-- `KINESCOPE_API_TOKEN` — для загрузки видео
-- `RESEND_API_KEY` — для email-дублирования дожимов
-- `RESEND_FROM_EMAIL` — адрес отправителя (по умолчанию `noreply@studency.app`)
+- `KINESCOPE_API_TOKEN` — мастер-токен Kinescope (все клиенты видео грузят сюда)
+- `RESEND_API_KEY` — мастер-ключ Resend для email-рассылок
+- `RESEND_MASTER_DOMAIN` — домен отправителя (по умолчанию `studency.app`)
+- `RESEND_REPLY_TO` — опциональный Reply-To адрес
+- `UNSUBSCRIBE_SECRET` — секрет для HMAC подписи unsubscribe-токенов
+- `NEXT_PUBLIC_APP_URL` — базовый URL платформы (для unsubscribe ссылок)
 - `PRODAMUS_BASE_URL` — базовый URL формы оплаты
 - `PRODAMUS_SECRET_KEY` — секретный ключ для подписи
-- `ANTHROPIC_API_KEY` — для AI-помощников
+- `ANTHROPIC_API_KEY` — мастер-ключ Claude для AI-помощников
+
+## Архитектура мастер-аккаунтов
+
+Все "общие" интеграции работают через ОДИН мастер-аккаунт у владельца платформы.
+Клиенты даже не знают о существовании этих сервисов.
+
+| Сервис | Изоляция между клиентами |
+|---|---|
+| Kinescope | Папки per-project (projects.kinescope_folder_id) |
+| Resend | Один мастер-домен + friendly fromName из имени проекта |
+| Claude AI | Все используют твой ключ, биллинг через usage_events |
+| Supabase Storage | Папки per-project ({project_id}/...) в bucket chatbot-media |
+
+Клиенты привязывают свои:
+- Telegram-боты (их бренд)
+- Prodamus (деньги идут им)
 
 ## Сторонние сервисы
 
