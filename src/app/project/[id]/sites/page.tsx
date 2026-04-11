@@ -165,6 +165,8 @@ function LandingDetail({
   const [fullscreen, setFullscreen] = useState(false)
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop')
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const htmlTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const [showVideoPicker, setShowVideoPicker] = useState(false)
 
   // Sync visual edits from iframe into html state (called on save/tab switch)
   function syncFromIframe() {
@@ -485,9 +487,18 @@ function LandingDetail({
             <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between bg-gray-50">
                 <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">HTML</span>
-                <span className="text-xs text-gray-400">index.html</span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowVideoPicker(true)}
+                    className="text-xs text-[#6A55F8] font-medium hover:underline flex items-center gap-1"
+                  >
+                    🎬 Вставить видео
+                  </button>
+                  <span className="text-xs text-gray-400">index.html</span>
+                </div>
               </div>
               <textarea
+                ref={htmlTextareaRef}
                 value={html}
                 onChange={(e) => setHtml(e.target.value)}
                 className="w-full h-[600px] p-4 text-sm font-mono text-gray-800 resize-none focus:outline-none leading-relaxed"
@@ -868,6 +879,132 @@ function LandingDetail({
           },
         ]}
       />
+
+      {showVideoPicker && (
+        <VideoPickerModal
+          projectId={landing.project_id}
+          onClose={() => setShowVideoPicker(false)}
+          onPick={(videoId) => {
+            const shortcode = `{{video:${videoId}}}`
+            // Вставляем в textarea в позицию курсора или в конец
+            const textarea = htmlTextareaRef.current
+            if (textarea && editorMode === 'code') {
+              const start = textarea.selectionStart ?? html.length
+              const end = textarea.selectionEnd ?? html.length
+              const next = html.slice(0, start) + shortcode + html.slice(end)
+              setHtml(next)
+              // Восстанавливаем курсор после вставленного шорткода
+              setTimeout(() => {
+                textarea.focus()
+                textarea.selectionStart = textarea.selectionEnd = start + shortcode.length
+              }, 0)
+            } else {
+              // Если редактор в визуальном режиме — просто добавляем в конец
+              setHtml(html + '\n' + shortcode + '\n')
+            }
+            setShowVideoPicker(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VIDEO PICKER MODAL — выбор видео для вставки шорткода в HTML
+// ═══════════════════════════════════════════════════════════════════════════
+function VideoPickerModal({
+  projectId,
+  onClose,
+  onPick,
+}: {
+  projectId: string
+  onClose: () => void
+  onPick: (videoId: string) => void
+}) {
+  const supabase = createClient()
+  const [videos, setVideos] = useState<Array<{
+    id: string
+    title: string
+    kinescope_status: string
+    thumbnail_url: string | null
+    duration_seconds: number | null
+  }>>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    supabase.from('videos')
+      .select('id, title, kinescope_status, thumbnail_url, duration_seconds')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        setVideos((data ?? []) as typeof videos)
+        setLoading(false)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl max-w-3xl w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Вставить видео</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Выбери видео — в HTML вставится шорткод <code className="bg-gray-100 px-1 rounded">{'{{video:ID}}'}</code>, он заменится на плеер</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <div className="text-center py-12 text-sm text-gray-400">Загрузка…</div>
+          ) : videos.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="text-3xl mb-2">🎬</div>
+              <p className="text-sm text-gray-500">В проекте пока нет видео</p>
+              <p className="text-xs text-gray-400 mt-1">Загрузи видео во вкладке Видеохостинг</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {videos.map(v => {
+                const isReady = v.kinescope_status === 'done' || v.kinescope_status === 'ready'
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => isReady && onPick(v.id)}
+                    disabled={!isReady}
+                    className={`bg-white rounded-lg border-2 overflow-hidden text-left transition-colors ${
+                      isReady ? 'border-gray-200 hover:border-[#6A55F8] cursor-pointer' : 'border-gray-100 opacity-60 cursor-not-allowed'
+                    }`}
+                  >
+                    <div className="aspect-video bg-gray-900 flex items-center justify-center relative">
+                      {v.thumbnail_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={v.thumbnail_url} alt={v.title} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-3xl opacity-50">🎬</div>
+                      )}
+                      {!isReady && (
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                          <span className="text-white text-[10px] font-semibold bg-amber-500 px-2 py-0.5 rounded-full">Обработка</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-2">
+                      <p className="text-xs font-medium text-gray-900 truncate">{v.title}</p>
+                      {v.duration_seconds && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">
+                          {Math.floor(v.duration_seconds / 60)}:{(v.duration_seconds % 60).toString().padStart(2, '0')}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
