@@ -26,20 +26,29 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabase()
 
-    // Берём только видео проекта, у которых статус ещё не финальный
-    const { data: videos } = await supabase
+    // Берём все видео проекта с kinescope_id, фильтруем на JS
+    const { data: allVideos, error: selectErr } = await supabase
       .from('videos')
       .select('id, kinescope_id, kinescope_status, embed_url, thumbnail_url, duration_seconds')
       .eq('project_id', projectId)
-      .not('kinescope_status', 'in', '(done,ready)')
       .not('kinescope_id', 'is', null)
-      .limit(20)
+      .limit(50)
 
-    if (!videos || videos.length === 0) {
-      return NextResponse.json({ ok: true, synced: 0 })
+    if (selectErr) {
+      console.error('select error:', selectErr)
+      return NextResponse.json({ error: selectErr.message }, { status: 500 })
+    }
+
+    const videos = (allVideos ?? []).filter(
+      v => v.kinescope_status !== 'done' && v.kinescope_status !== 'ready'
+    )
+
+    if (videos.length === 0) {
+      return NextResponse.json({ ok: true, synced: 0, total: 0 })
     }
 
     let synced = 0
+    const errors: string[] = []
     for (const v of videos) {
       try {
         const fresh = await getKinescopeVideo(v.kinescope_id as string)
@@ -53,20 +62,28 @@ export async function POST(request: NextRequest) {
         if (fresh.poster?.url && fresh.poster.url !== v.thumbnail_url) {
           updates.thumbnail_url = fresh.poster.url
         }
-        if (fresh.duration && fresh.duration !== v.duration_seconds) {
-          updates.duration_seconds = fresh.duration
+        // duration_seconds колонка int, Kinescope возвращает float (4.5)
+        if (fresh.duration && Math.round(fresh.duration) !== v.duration_seconds) {
+          updates.duration_seconds = Math.round(fresh.duration)
         }
         if (Object.keys(updates).length > 0) {
           updates.updated_at = new Date().toISOString()
-          await supabase.from('videos').update(updates).eq('id', v.id)
-          synced++
+          const { error: upErr } = await supabase.from('videos').update(updates).eq('id', v.id)
+          if (upErr) {
+            errors.push(`${v.id}: ${upErr.message}`)
+            console.error('update error:', v.id, upErr)
+          } else {
+            synced++
+          }
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown'
+        errors.push(`${v.id}: ${msg}`)
         console.error('sync video error:', v.id, err)
       }
     }
 
-    return NextResponse.json({ ok: true, synced, total: videos.length })
+    return NextResponse.json({ ok: true, synced, total: videos.length, errors })
   } catch (err) {
     console.error('sync route error:', err)
     return NextResponse.json({ error: 'Internal' }, { status: 500 })
