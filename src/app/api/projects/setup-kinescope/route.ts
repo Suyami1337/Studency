@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { createKinescopeFolder } from '@/lib/kinescope'
+import { createKinescopeFolder, getDefaultKinescopeProjectId } from '@/lib/kinescope'
 
 export const runtime = 'nodejs'
 
@@ -37,20 +37,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, folder_id: project.kinescope_folder_id, already: true })
     }
 
-    // Создаём папку в Kinescope
+    // Получаем ID дефолтного Kinescope-проекта и создаём в нём папку
     try {
-      const folder = await createKinescopeFolder(`Studency · ${project.name}`)
+      const kinescopeProjectId = await getDefaultKinescopeProjectId()
+      if (!kinescopeProjectId) {
+        return NextResponse.json({
+          ok: false,
+          error: 'No Kinescope projects found',
+          hint: 'Создай хотя бы один проект в Kinescope dashboard',
+        }, { status: 500 })
+      }
+
+      let folderId: string
+      try {
+        const folder = await createKinescopeFolder(
+          `Studency · ${project.name}`,
+          kinescopeProjectId
+        )
+        folderId = folder.id
+      } catch {
+        // Fallback: если папку создать не удалось, используем сам Kinescope-проект как parent
+        folderId = kinescopeProjectId
+      }
+
       await supabase.from('projects')
-        .update({ kinescope_folder_id: folder.id })
+        .update({ kinescope_folder_id: folderId })
         .eq('id', projectId)
-      return NextResponse.json({ ok: true, folder_id: folder.id })
+      return NextResponse.json({ ok: true, folder_id: folderId })
     } catch (err) {
-      // Если Kinescope не настроен — тихо пропускаем, видео работать не будут, но ничего не падает
       console.error('kinescope folder create error:', err)
       return NextResponse.json({
         ok: false,
         error: err instanceof Error ? err.message : 'Failed',
-        hint: 'KINESCOPE_API_TOKEN не установлен — видео будет без папки',
+        hint: 'KINESCOPE_API_TOKEN не установлен — видео не загружаются',
       }, { status: 500 })
     }
   } catch (err) {

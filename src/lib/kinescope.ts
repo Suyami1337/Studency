@@ -5,6 +5,7 @@
 // Architecture: один мастер-аккаунт, каждому project — своя папка (parent)
 
 const KINESCOPE_API = 'https://api.kinescope.io/v1'
+const KINESCOPE_UPLOADER = 'https://uploader.kinescope.io/v2'
 
 export type KinescopeVideo = {
   id: string
@@ -69,8 +70,12 @@ async function kinescopeRequest<T>(
 }
 
 /**
- * Create a new video by uploading a file.
- * Kinescope supports multipart upload via POST /videos
+ * Upload a video file to Kinescope via the uploader service.
+ *
+ * IMPORTANT: uploader.kinescope.io is a SEPARATE host from api.kinescope.io.
+ * Method: raw binary POST (NOT multipart). Metadata goes into X-* headers.
+ *
+ * Docs: https://docs.kinescope.ru/instrukcii-dlya-razrabotchikov/zagruzka-faylov-cherez-api/
  */
 export async function uploadVideoToKinescope(
   file: Blob,
@@ -79,22 +84,44 @@ export async function uploadVideoToKinescope(
   parentId?: string
 ): Promise<KinescopeVideo> {
   const token = getToken()
-  const formData = new FormData()
-  formData.append('file', file, fileName)
-  if (title) formData.append('title', title)
-  if (parentId) formData.append('parent_id', parentId)
 
-  const res = await fetch(`${KINESCOPE_API}/videos`, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const headers: any = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': file.type || 'video/mp4',
+    // Non-ASCII-safe header values — base64 fallback for Cyrillic titles
+    'X-File-Name': encodeHeader(fileName),
+  }
+  if (title) headers['X-Video-Title'] = encodeHeader(title)
+  if (parentId) headers['X-Parent-ID'] = parentId
+
+  // Convert Blob to ArrayBuffer for raw body upload
+  const buffer = await file.arrayBuffer()
+
+  const res = await fetch(`${KINESCOPE_UPLOADER}/video`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
+    headers,
+    body: buffer,
   })
+
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`Kinescope upload ${res.status}: ${text}`)
   }
+
   const json = await res.json() as { data: KinescopeVideo }
   return json.data
+}
+
+/**
+ * Encode HTTP header value that may contain non-ASCII characters.
+ * Uses percent-encoding so Cyrillic titles don't break the request.
+ */
+function encodeHeader(value: string): string {
+  // Basic ASCII — return as-is
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x00-\x7F]*$/.test(value)) return value
+  return encodeURIComponent(value)
 }
 
 export async function getKinescopeVideo(videoId: string): Promise<KinescopeVideo> {
@@ -160,26 +187,45 @@ export function getKinescopeEmbedUrl(videoId: string): string {
 }
 
 /**
- * Create a parent folder in Kinescope. Used when a new Studency project is created.
- * Returns the parent/folder ID to save into projects.kinescope_folder_id.
+ * Get the default Kinescope project ID (first project in the master account).
+ * Used as parent for video uploads until we implement proper per-Studency-project
+ * folder isolation.
+ */
+export async function getDefaultKinescopeProjectId(): Promise<string | null> {
+  try {
+    const json = await kinescopeRequest<{ data: Array<{ id: string; name: string }> }>('/projects')
+    return json.data?.[0]?.id ?? null
+  } catch (err) {
+    console.error('getDefaultKinescopeProjectId error:', err)
+    return null
+  }
+}
+
+/**
+ * Create a folder inside a Kinescope project.
+ * Used for per-Studency-project isolation.
  */
 export async function createKinescopeFolder(
   name: string,
-  parentId?: string
+  kinescopeProjectId: string,
+  parentFolderId?: string
 ): Promise<KinescopeFolder> {
-  const json = await kinescopeRequest<{ data: KinescopeFolder }>('/parents', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, parent_id: parentId ?? null }),
-  })
+  const json = await kinescopeRequest<{ data: KinescopeFolder }>(
+    `/projects/${kinescopeProjectId}/folders`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, parent_id: parentFolderId ?? null }),
+    }
+  )
   return json.data
 }
 
 /**
- * Delete a parent folder (cascades on Kinescope side — all videos inside go too).
+ * Delete a folder. Cascades on Kinescope side — all videos inside go too.
  */
 export async function deleteKinescopeFolder(folderId: string): Promise<void> {
-  await kinescopeRequest(`/parents/${folderId}`, { method: 'DELETE' })
+  await kinescopeRequest(`/folders/${folderId}`, { method: 'DELETE' })
 }
 
 /**

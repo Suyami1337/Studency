@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import {
-  uploadVideoToKinescope, createKinescopeFolder,
+  uploadVideoToKinescope, createKinescopeFolder, getDefaultKinescopeProjectId,
   applyPlayerSettingsToVideo, PlayerSettings,
 } from '@/lib/kinescope'
 import { trackUsage } from '@/lib/usage'
@@ -39,14 +39,25 @@ export async function POST(request: NextRequest) {
 
     let folderId = project.kinescope_folder_id as string | null
     if (!folderId) {
-      // Создаём папку лениво при первой загрузке видео
+      // Lazy: при первой загрузке создаём папку внутри дефолтного Kinescope-проекта
       try {
-        const folder = await createKinescopeFolder(`Studency · ${project.name}`)
-        folderId = folder.id
-        await supabase.from('projects').update({ kinescope_folder_id: folderId }).eq('id', projectId)
+        const kinescopeProjectId = await getDefaultKinescopeProjectId()
+        if (kinescopeProjectId) {
+          try {
+            const folder = await createKinescopeFolder(
+              `Studency · ${project.name}`,
+              kinescopeProjectId
+            )
+            folderId = folder.id
+          } catch (folderErr) {
+            // Папка не создалась — не страшно, загружаем прямо в проект
+            console.error('folder create error, using project root:', folderErr)
+            folderId = kinescopeProjectId
+          }
+          await supabase.from('projects').update({ kinescope_folder_id: folderId }).eq('id', projectId)
+        }
       } catch (err) {
-        console.error('folder create error (continuing without folder):', err)
-        // Продолжаем без папки, видео просто окажется в корне
+        console.error('folder setup error (continuing without folder):', err)
       }
     }
 
