@@ -45,6 +45,21 @@ export default function VideosPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    // Синхронизируем статусы processing-видео с Kinescope (не блокирует первичную отрисовку)
+    fetch('/api/videos/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: projectId }),
+    }).then(() => {
+      // После синка перечитаем список
+      supabase.from('videos')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setVideos((data ?? []) as Video[]))
+    }).catch(() => { /* ignore */ })
+
+    // Первичная загрузка — сразу показываем что есть в БД
     const { data } = await supabase.from('videos')
       .select('*')
       .eq('project_id', projectId)
@@ -54,7 +69,15 @@ export default function VideosPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
+  // Автообновление списка каждые 5 секунд пока есть видео в обработке
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const hasProcessing = videos.some(v => v.kinescope_status !== 'done' && v.kinescope_status !== 'ready')
+    if (!hasProcessing) return
+    const interval = setInterval(load, 5000)
+    return () => clearInterval(interval)
+  }, [videos, load])
 
   async function handleFile(file: File) {
     setUploadError(null)

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { deleteKinescopeVideo, getKinescopeStatistics, updateKinescopeVideo } from '@/lib/kinescope'
+import {
+  deleteKinescopeVideo, getKinescopeStatistics, updateKinescopeVideo,
+  getKinescopeVideo,
+} from '@/lib/kinescope'
 
 export const runtime = 'nodejs'
 
@@ -18,8 +21,45 @@ export async function GET(
   const { id } = await params
   const supabase = getSupabase()
 
-  const { data: video } = await supabase.from('videos').select('*').eq('id', id).single()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let { data: video } = await supabase.from('videos').select('*').eq('id', id).single() as any
   if (!video) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // Если видео ещё processing — синхронизируем статус из Kinescope
+  const isDone = video.kinescope_status === 'done' || video.kinescope_status === 'ready'
+  if (video.kinescope_id && !isDone) {
+    try {
+      const fresh = await getKinescopeVideo(video.kinescope_id)
+      const newStatus = fresh.status ?? video.kinescope_status
+      const newEmbed = fresh.embed_link ?? `https://kinescope.io/embed/${video.kinescope_id}`
+      const newThumb = fresh.poster?.url ?? null
+      const newDuration = fresh.duration ?? null
+
+      const needsUpdate =
+        newStatus !== video.kinescope_status ||
+        newEmbed !== video.embed_url ||
+        newThumb !== video.thumbnail_url ||
+        newDuration !== video.duration_seconds
+
+      if (needsUpdate) {
+        const { data: updated } = await supabase
+          .from('videos')
+          .update({
+            kinescope_status: newStatus,
+            embed_url: newEmbed,
+            thumbnail_url: newThumb,
+            duration_seconds: newDuration,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .select()
+          .single()
+        if (updated) video = updated
+      }
+    } catch (err) {
+      console.error('kinescope sync error:', err)
+    }
+  }
 
   // Подгружаем свежую статистику из Kinescope
   let stats = null
