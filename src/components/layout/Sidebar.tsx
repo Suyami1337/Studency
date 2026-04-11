@@ -17,6 +17,7 @@ const navItems = [
   { id: 'analytics', label: 'Аналитика', icon: '📈' },
   { id: 'users', label: 'Пользователи', icon: '👤' },
   { id: 'media', label: 'Медиа', icon: '🖼' },
+  { id: 'ai', label: 'AI-помощник', icon: '✨' },
 ]
 
 const bottomItems = [
