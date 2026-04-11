@@ -40,6 +40,25 @@ function formatDuration(seconds: number | null): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+type PlayerSettings = {
+  accent_color?: string
+  autoplay?: boolean
+  muted?: boolean
+  show_title?: boolean
+}
+
+function buildPlayerUrl(kinescopeId: string, settings: PlayerSettings | null): string {
+  const base = `https://kinescope.io/embed/${kinescopeId}`
+  if (!settings) return base
+  const params = new URLSearchParams()
+  if (settings.accent_color) params.set('color', settings.accent_color.replace('#', ''))
+  if (settings.autoplay) params.set('autoplay', '1')
+  if (settings.muted) params.set('muted', '1')
+  if (settings.show_title === false) params.set('title', '0')
+  const qs = params.toString()
+  return qs ? `${base}?${qs}` : base
+}
+
 export default function VideoDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -52,6 +71,7 @@ export default function VideoDetailPage() {
   const [loading, setLoading] = useState(true)
   const [views, setViews] = useState<VideoView[]>([])
   const [customers, setCustomers] = useState<Map<string, CustomerInfo>>(new Map())
+  const [playerSettings, setPlayerSettings] = useState<PlayerSettings | null>(null)
 
   // Settings form state
   const [title, setTitle] = useState('')
@@ -66,6 +86,13 @@ export default function VideoDetailPage() {
       setVideo(v as Video)
       setTitle(v.title)
       setDescription(v.description ?? '')
+    }
+
+    // Загружаем player_settings проекта
+    const { data: proj } = await supabase.from('projects')
+      .select('player_settings').eq('id', projectId).single()
+    if (proj?.player_settings) {
+      setPlayerSettings(proj.player_settings as PlayerSettings)
     }
 
     const { data: vw } = await supabase.from('video_views')
@@ -162,9 +189,9 @@ export default function VideoDetailPage() {
       {tab === 'player' && (
         <div className="bg-white rounded-xl border border-gray-100 p-5">
           <div className="aspect-video bg-black rounded-lg overflow-hidden mb-4">
-            {video.embed_url ? (
+            {video.kinescope_id ? (
               <iframe
-                src={video.embed_url}
+                src={buildPlayerUrl(video.kinescope_id, playerSettings)}
                 className="w-full h-full"
                 allow="autoplay; fullscreen; picture-in-picture; encrypted-media;"
                 allowFullScreen

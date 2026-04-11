@@ -62,6 +62,14 @@ export default function ProjectsPage() {
         user_id: user.id,
         role: 'owner',
       })
+
+      // Создаём Kinescope папку (не блокируем если недоступно)
+      fetch('/api/projects/setup-kinescope', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: data.id }),
+      }).catch(err => console.error('kinescope setup failed:', err))
+
       router.push(`/project/${data.id}`)
     }
 

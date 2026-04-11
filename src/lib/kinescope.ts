@@ -2,7 +2,7 @@
 // Docs: https://docs.kinescope.io/api
 //
 // Required env var: KINESCOPE_API_TOKEN (Bearer token from Kinescope dashboard)
-// Optional: KINESCOPE_PARENT_ID (default parent folder ID for uploads)
+// Architecture: один мастер-аккаунт, каждому project — своя папка (parent)
 
 const KINESCOPE_API = 'https://api.kinescope.io/v1'
 
@@ -18,12 +18,28 @@ export type KinescopeVideo = {
   quality_map?: unknown[]
 }
 
+export type KinescopeFolder = {
+  id: string
+  name: string
+  parent_id?: string | null
+}
+
 export type KinescopeStatistics = {
   views?: number
   unique_views?: number
-  watch_time?: number  // в секундах
+  watch_time?: number
   avg_view_duration?: number
   completion_rate?: number
+}
+
+export type PlayerSettings = {
+  accent_color?: string      // HEX без решётки: "6A55F8"
+  logo_url?: string          // URL логотипа
+  logo_media_id?: string     // ID файла в медиа-библиотеке (для отслеживания usage)
+  watermark?: boolean
+  autoplay?: boolean
+  muted?: boolean
+  show_title?: boolean
 }
 
 function getToken(): string {
@@ -119,8 +135,78 @@ export async function getKinescopeStatistics(videoId: string): Promise<Kinescope
 }
 
 /**
- * Build embed URL for a video (client-safe).
+ * Build embed URL for a video with player customization query params.
+ * Настройки плеера передаются как query string к iframe src.
+ * Client-safe — не требует токена.
  */
+export function buildEmbedUrl(videoId: string, settings?: PlayerSettings | null): string {
+  const base = `https://kinescope.io/embed/${videoId}`
+  if (!settings) return base
+
+  const params = new URLSearchParams()
+  if (settings.accent_color) params.set('color', settings.accent_color.replace('#', ''))
+  if (settings.autoplay) params.set('autoplay', '1')
+  if (settings.muted) params.set('muted', '1')
+  if (settings.show_title === false) params.set('title', '0')
+  // logo и watermark применяются через Kinescope dashboard / API на уровне видео
+
+  const qs = params.toString()
+  return qs ? `${base}?${qs}` : base
+}
+
+/** Backward-compat alias. */
 export function getKinescopeEmbedUrl(videoId: string): string {
-  return `https://kinescope.io/embed/${videoId}`
+  return buildEmbedUrl(videoId)
+}
+
+/**
+ * Create a parent folder in Kinescope. Used when a new Studency project is created.
+ * Returns the parent/folder ID to save into projects.kinescope_folder_id.
+ */
+export async function createKinescopeFolder(
+  name: string,
+  parentId?: string
+): Promise<KinescopeFolder> {
+  const json = await kinescopeRequest<{ data: KinescopeFolder }>('/parents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, parent_id: parentId ?? null }),
+  })
+  return json.data
+}
+
+/**
+ * Delete a parent folder (cascades on Kinescope side — all videos inside go too).
+ */
+export async function deleteKinescopeFolder(folderId: string): Promise<void> {
+  await kinescopeRequest(`/parents/${folderId}`, { method: 'DELETE' })
+}
+
+/**
+ * Apply player settings to a specific video via the Kinescope API.
+ * Some settings like logo/watermark must be set server-side; color and
+ * autoplay can also be set via embed URL query params.
+ */
+export async function applyPlayerSettingsToVideo(
+  videoId: string,
+  settings: PlayerSettings
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload: any = {}
+  if (settings.accent_color) payload.color = settings.accent_color.replace('#', '')
+  if (typeof settings.watermark === 'boolean') payload.watermark = settings.watermark
+  if (settings.logo_url) payload.logo = { url: settings.logo_url }
+
+  if (Object.keys(payload).length === 0) return
+
+  try {
+    await kinescopeRequest(`/videos/${videoId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  } catch (err) {
+    // Не блокируем флоу если Kinescope не принял какое-то поле
+    console.error('applyPlayerSettingsToVideo error:', err)
+  }
 }

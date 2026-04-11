@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { uploadVideoToKinescope } from '@/lib/kinescope'
+import {
+  uploadVideoToKinescope, createKinescopeFolder,
+  applyPlayerSettingsToVideo, PlayerSettings,
+} from '@/lib/kinescope'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -24,20 +27,46 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabase()
 
-    // Отправляем в Kinescope
+    // 1. Загружаем / получаем Kinescope folder id для проекта (lazy)
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, name, kinescope_folder_id, player_settings')
+      .eq('id', projectId)
+      .single()
+
+    if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+
+    let folderId = project.kinescope_folder_id as string | null
+    if (!folderId) {
+      // Создаём папку лениво при первой загрузке видео
+      try {
+        const folder = await createKinescopeFolder(`Studency · ${project.name}`)
+        folderId = folder.id
+        await supabase.from('projects').update({ kinescope_folder_id: folderId }).eq('id', projectId)
+      } catch (err) {
+        console.error('folder create error (continuing without folder):', err)
+        // Продолжаем без папки, видео просто окажется в корне
+      }
+    }
+
+    // 2. Загружаем видео в папку проекта
     let kinescopeData
     try {
-      kinescopeData = await uploadVideoToKinescope(file, file.name, title ?? file.name)
+      kinescopeData = await uploadVideoToKinescope(file, file.name, title ?? file.name, folderId ?? undefined)
     } catch (err) {
       console.error('kinescope upload error:', err)
-      // Если Kinescope недоступен — сохраняем запись с ошибкой
       return NextResponse.json({
         error: err instanceof Error ? err.message : 'Kinescope upload failed',
         hint: 'Проверь что KINESCOPE_API_TOKEN установлен в Vercel env vars',
       }, { status: 500 })
     }
 
-    // Сохраняем в БД
+    // 3. Применяем настройки плеера проекта (цвет, лого, водяной знак)
+    if (project.player_settings && Object.keys(project.player_settings).length > 0) {
+      await applyPlayerSettingsToVideo(kinescopeData.id, project.player_settings as PlayerSettings)
+    }
+
+    // 4. Сохраняем в БД
     const { data: video, error } = await supabase.from('videos').insert({
       project_id: projectId,
       title: title ?? file.name,
