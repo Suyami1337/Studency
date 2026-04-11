@@ -1,12 +1,9 @@
 -- ============================================================================
 -- APPLY ALL — единый SQL файл для миграций Studency
--- Запусти этот файл целиком один раз в Supabase SQL Editor
--- Содержит все миграции 01-09 в правильном порядке
+-- Запусти целиком в Supabase SQL Editor. Идемпотентен.
 --
 -- ВАЖНО: перед запуском создай Storage bucket вручную:
---   Supabase Dashboard → Storage → New bucket
---   Name: chatbot-media
---   Public bucket: ДА (галочка)
+--   Supabase → Storage → New bucket → chatbot-media → Public ✅
 -- ============================================================================
 
 
@@ -369,14 +366,35 @@ CREATE POLICY "Users manage their field values" ON customer_field_values
   );
 
 -- 4. Заметки клиента (timeline)
+-- Старая таблица (если существовала) могла иметь колонку `text` вместо `content`
+-- и без project_id — обновляем схему idempotently.
 CREATE TABLE IF NOT EXISTS customer_notes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   customer_id uuid NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  author_id uuid,                       -- кто оставил заметку (auth.users)
-  content text NOT NULL,
   created_at timestamptz DEFAULT now()
 );
+
+-- Добавляем недостающие колонки для существующих таблиц
+ALTER TABLE customer_notes ADD COLUMN IF NOT EXISTS project_id uuid REFERENCES projects(id) ON DELETE CASCADE;
+ALTER TABLE customer_notes ADD COLUMN IF NOT EXISTS author_id uuid;
+ALTER TABLE customer_notes ADD COLUMN IF NOT EXISTS content text;
+
+-- Если существует старая колонка `text` — переносим данные в content
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_notes' AND column_name='text'
+  ) THEN
+    UPDATE customer_notes SET content = text WHERE content IS NULL AND text IS NOT NULL;
+  END IF;
+END $$;
+
+-- Backfill project_id из customers для старых записей
+UPDATE customer_notes cn
+SET project_id = c.project_id
+FROM customers c
+WHERE cn.customer_id = c.id AND cn.project_id IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_customer_notes_customer ON customer_notes(customer_id, created_at DESC);
 
