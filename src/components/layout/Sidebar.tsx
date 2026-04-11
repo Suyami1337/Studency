@@ -26,6 +26,11 @@ const navGroups: NavItem[][] = [
     { id: 'conversations', label: 'Переписки', icon: '✉️', disabled: true, tooltip: 'Скоро' },
     { id: 'sites', label: 'Сайты', icon: '🌐' },
   ],
+  // Медиа
+  [
+    { id: 'videos', label: 'Видеохостинг', icon: '🎬' },
+    { id: 'media', label: 'Хранилище', icon: '🗂' },
+  ],
   // Обучение
   [
     { id: 'learning', label: 'Обучение', icon: '📚' },
@@ -86,7 +91,7 @@ export default function Sidebar({ projectName }: { projectName?: string }) {
         {navGroups.map((group, groupIdx) => (
           <div
             key={groupIdx}
-            className={`space-y-0.5 ${groupIdx > 0 ? 'mt-4 pt-4 border-t border-gray-100' : ''}`}
+            className={`space-y-0.5 ${groupIdx > 0 ? 'mt-1.5 pt-1.5 border-t border-gray-100' : ''}`}
           >
             {group.map((item) => {
               const isActive = active === item.id
