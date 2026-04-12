@@ -81,7 +81,16 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
   - \`url\` — ссылка (нужен action_url)
   - \`trigger\` — запускает другой сценарий по триггерному слову (action_trigger_word)
   - \`goto_message\` — ведёт на другое сообщение этого сценария (action_goto_message_id)
-- Событийные триггеры (\`scenario_event_triggers\`) — запускают сценарий по событию: \`event_type\` ('form_submit' | 'video_watched' | 'channel_joined' | 'cart_abandoned' и т.п.), \`event_name\` (уточнение).
+- Событийные триггеры (\`scenario_event_triggers\`) — запускают сценарий по событию.
+  - **Позитивные** (is_negative: false): сценарий стартует когда событие произошло (например, досмотрел видео — отправить оффер).
+  - **Негативные** (is_negative: true): сценарий стартует если событие НЕ случилось за wait_minutes минут. Например: "начал видео, но за 3 часа не досмотрел" — event_type=video_start, cancel_on_event_type=video_complete, wait_minutes=180. Если за это время человек досмотрит — ожидание отменится автоматически.
+  - Типичные воронки дожима (используй негативные триггеры):
+    1. Отправили ссылку на видео → негативный триггер video_start без cancel — "не посмотрел за 1ч" → напомни
+    2. Начал смотреть, но не досмотрел → video_start + cancel video_complete + 3h → "последняя часть — самое важное"
+    3. Зашёл на сайт, но не купил → landing_visit + cancel order_created + 6h → работа с возражениями
+    4. Создал заказ, но не оплатил → order_created + cancel order_paid + 30min → напоминание о заказе
+    5. Оплатил → позитивный order_paid → поздравление + онбординг
+  - \`event_params\` задают **что именно** отслеживаем — videoId / landingSlug / productId. Без них триггер сработает на ЛЮБОЕ видео/сайт/продукт, что почти никогда не нужно. Перед созданием триггера всегда вызывай \`list_project_targets\` чтобы узнать какие объекты есть и какие id использовать.
 
 ## Стиль общения
 - На «ты», дружелюбно, по делу.
@@ -177,14 +186,46 @@ function getTools(): Anthropic.Messages.Tool[] {
       },
     },
     {
+      name: 'list_project_targets',
+      description: 'Прочитать доступные объекты проекта, на которые можно ставить триггеры: видео (id, title), лендинги (id, name, slug), продукты (id, name). Нужно перед тем как создавать триггер — чтобы понимать какие id использовать.',
+      input_schema: { type: 'object' as const, properties: {}, required: [] },
+    },
+    {
       name: 'create_trigger',
-      description: 'Создать событийный триггер: сценарий будет запускаться когда произойдёт событие. event_type — тип события (form_submit, video_watched, channel_joined, cart_abandoned, tag_added и т.д.). start_message_id — с какого сообщения начать.',
+      description: `Создать событийный триггер — сценарий запустится когда произойдёт событие.
+
+ПОЗИТИВНЫЕ триггеры (is_negative: false): запускаются СРАЗУ когда событие случилось.
+Типы событий:
+- video_start — начал смотреть видео (event_params: { videoId })
+- video_progress — досмотрел видео до X% (event_params: { videoId, minPercent })
+- video_complete — досмотрел видео до конца (event_params: { videoId })
+- landing_visit — зашёл на сайт (event_params: { landingSlug })
+- form_submit — отправил форму (event_params: { formSlug })
+- channel_joined — подписался на канал (event_params: { channelId })
+- order_created — создал заказ (event_params: { productId })
+- order_paid — оплатил заказ (event_params: { productId })
+
+НЕГАТИВНЫЕ триггеры (is_negative: true): запускаются ЧЕРЕЗ wait_minutes после события event_type, ЕСЛИ за это время не произошло cancel_on_event_type.
+Типичные конфигурации:
+- "начал видео, но не досмотрел": event_type=video_start, cancel_on_event_type=video_complete, wait_minutes=180, event_params={ videoId }
+- "зашёл на сайт, но не создал заказ": event_type=landing_visit, cancel_on_event_type=order_created, wait_minutes=360, event_params={ landingSlug }
+- "создал заказ, но не оплатил": event_type=order_created, cancel_on_event_type=order_paid, wait_minutes=30, event_params={ productId }
+
+Всегда указывай event_params когда выбираешь конкретный объект (videoId/landingSlug/productId) — иначе триггер сработает на любое видео/сайт/продукт. ID бери из list_project_targets.`,
       input_schema: {
         type: 'object' as const,
         properties: {
-          event_type: { type: 'string' },
-          event_name: { type: 'string', description: 'Уточнение (имя формы / slug видео / имя тега)' },
-          start_message_id: { type: 'string' },
+          event_type: { type: 'string', description: 'Тип события (см. описание)' },
+          is_negative: { type: 'boolean', description: 'true = триггер "НЕ произошло", false = позитивный' },
+          wait_minutes: { type: 'number', description: 'Только для is_negative=true: через сколько минут отправить дожим если отменяющее событие не случилось' },
+          cancel_on_event_type: { type: 'string', description: 'Только для is_negative=true: какое событие отменяет ожидание (video_complete, order_created, order_paid и т.п.)' },
+          event_params: {
+            type: 'object',
+            description: 'Параметры-фильтры. Ключи: videoId, landingSlug, productId, formSlug, channelId, minPercent. Пустой объект = сработает на любое событие этого типа.',
+          },
+          event_name: { type: 'string', description: 'Опциональное уточнение по имени события' },
+          start_message_id: { type: 'string', description: 'Какое сообщение отправить когда триггер сработает' },
+          label: { type: 'string', description: 'Понятное имя для UI (например "Недосмотрел видео про оффер")' },
         },
         required: ['event_type', 'start_message_id'],
       },
@@ -311,17 +352,50 @@ async function executeTool(
         return { content: JSON.stringify({ ok: true }), summary: `удалил кнопку`, ok: true, wrote: true }
       }
 
+      case 'list_project_targets': {
+        const [vids, lands, prods] = await Promise.all([
+          supabase.from('videos').select('id, title').eq('project_id', ctx.projectId),
+          supabase.from('landings').select('id, name, slug').eq('project_id', ctx.projectId),
+          supabase.from('products').select('id, name').eq('project_id', ctx.projectId),
+        ])
+        return {
+          content: JSON.stringify({
+            videos: vids.data ?? [],
+            landings: lands.data ?? [],
+            products: prods.data ?? [],
+          }, null, 2),
+          summary: `прочитал объекты проекта: ${(vids.data ?? []).length} видео, ${(lands.data ?? []).length} сайтов, ${(prods.data ?? []).length} продуктов`,
+          ok: true,
+          wrote: false,
+        }
+      }
+
       case 'create_trigger': {
         const { data: msg } = await supabase.from('scenario_messages').select('id').eq('id', input.start_message_id).eq('scenario_id', scenarioId).single()
         if (!msg) throw new Error('start_message_id not in this scenario')
+        const isNegative = Boolean(input.is_negative)
+        if (isNegative && !input.cancel_on_event_type) {
+          throw new Error('Для негативного триггера нужен cancel_on_event_type — что отменяет ожидание')
+        }
+        if (isNegative && (!input.wait_minutes || input.wait_minutes <= 0)) {
+          throw new Error('Для негативного триггера нужен wait_minutes > 0')
+        }
         const { data, error } = await supabase.from('scenario_event_triggers').insert({
           scenario_id: scenarioId,
           start_message_id: input.start_message_id,
           event_type: input.event_type,
           event_name: input.event_name ?? null,
+          is_negative: isNegative,
+          wait_minutes: isNegative ? Math.floor(input.wait_minutes) : 0,
+          cancel_on_event_type: isNegative ? input.cancel_on_event_type : null,
+          cancel_on_event_name: isNegative ? (input.cancel_on_event_name ?? null) : null,
+          event_params: input.event_params ?? {},
+          label: input.label ?? null,
         }).select().single()
         if (error) throw error
-        return { content: JSON.stringify({ id: data.id }), summary: `создал триггер на "${input.event_type}"`, ok: true, wrote: true }
+        const kindLabel = isNegative ? `НЕ случилось "${input.event_type}"` : `случилось "${input.event_type}"`
+        const waitSuffix = isNegative ? ` (жду ${input.wait_minutes} мин)` : ''
+        return { content: JSON.stringify({ id: data.id }), summary: `создал триггер: ${kindLabel}${waitSuffix}`, ok: true, wrote: true }
       }
 
       case 'delete_trigger': {

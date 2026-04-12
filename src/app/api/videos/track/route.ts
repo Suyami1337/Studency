@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
 
     const { data: video } = await supabase
       .from('videos')
-      .select('project_id, title')
+      .select('project_id, title, duration_seconds')
       .eq('id', video_id)
       .single()
     if (!video) return NextResponse.json({ error: 'Video not found' }, { status: 404 })
@@ -91,23 +91,30 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 3. Если указан event — дублируем в таблицу events (для триггеров ботов)
+    // 3. Если указан event — эмитим в систему триггеров (которая и в events пишет,
+    // и позитивные запускает, и негативные планирует, и отменяющие снимает)
     if (event && (event === 'start' || event === 'progress' || event === 'complete')) {
       const eventType = `video_${event}`
-      await supabase.from('events').insert({
-        project_id: video.project_id,
-        customer_id: customerId,
-        event_type: eventType,
-        event_name: video.title,
+      const percent = (video.duration_seconds && max_position_seconds)
+        ? (max_position_seconds / video.duration_seconds) * 100
+        : undefined
+      const { emitEvent } = await import('@/lib/event-triggers')
+      emitEvent(supabase, {
+        projectId: video.project_id,
+        customerId: customerId ?? null,
+        eventType,
+        eventName: video.title,
         source: 'video_player',
-        source_id: video_id,
-        session_id,
+        sourceId: video_id,
+        sessionId: session_id,
         metadata: {
           watch_time_seconds,
           max_position_seconds,
+          duration_seconds: video.duration_seconds ?? null,
+          percent,
           completed,
         },
-      })
+      }).catch(err => console.error('emitEvent video error:', err))
     }
 
     // 4. CRM автоматизация

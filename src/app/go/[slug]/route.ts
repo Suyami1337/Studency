@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { createHash, randomUUID } from 'crypto'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
+import { emitEvent } from '@/lib/event-triggers'
 
 export const dynamic = 'force-dynamic'
 
@@ -108,6 +109,18 @@ export async function GET(
           eventType: 'landing_visit',
           eventData: { source_slug: source.slug, source_name: source.name, landing_url: source.destination_url },
         }).catch(err => console.error('CRM auto error:', err))
+
+        // Event triggers — landing_visit (запустит сценарии и запланирует негативные)
+        await emitEvent(supabase, {
+          projectId: source.project_id,
+          customerId: customer.id,
+          eventType: 'landing_visit',
+          eventName: source.name,
+          source: 'traffic_source',
+          sourceId: source.slug,
+          sessionId: visitorToken,
+          metadata: { source_slug: source.slug, landing_url: source.destination_url },
+        }).catch(err => console.error('emitEvent landing_visit error:', err))
       }
     }
   })()

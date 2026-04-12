@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { verifyWebhookSignature } from '@/lib/prodamus'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
+import { emitEvent } from '@/lib/event-triggers'
 
 export const runtime = 'nodejs'
 
@@ -103,6 +104,18 @@ export async function POST(request: NextRequest) {
           tariff_id: order.tariff_id,
         },
       }).catch(err => console.error('CRM auto error:', err))
+
+      // Event triggers — order_paid (запустит сценарии "поздравляем" и отменит
+      // негативные "не оплатил / не досмотрел")
+      emitEvent(supabase, {
+        projectId: order.project_id,
+        customerId: order.customer_id,
+        eventType: 'order_paid',
+        eventName: order.product_name ?? null,
+        source: 'prodamus',
+        sourceId: order.product_id ?? null,
+        metadata: { order_id: orderId, amount: sum, tariff_id: order.tariff_id },
+      }).catch(err => console.error('emitEvent order_paid error:', err))
     }
 
     return NextResponse.json({ ok: true })

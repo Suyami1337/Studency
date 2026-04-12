@@ -819,7 +819,7 @@ function MessageCard({
 }
 
 // =============================================
-// EVENT TRIGGERS TAB — триггеры сценария по событиям с сайта
+// EVENT TRIGGERS TAB — триггеры сценария по событиям
 // =============================================
 type EventTrigger = {
   id: string
@@ -827,18 +827,69 @@ type EventTrigger = {
   event_name: string | null
   source: string | null
   start_message_id: string
-  conditions: unknown
+  is_negative: boolean
+  wait_minutes: number
+  event_params: Record<string, unknown>
+  cancel_on_event_type: string | null
+  cancel_on_event_name: string | null
+  label: string | null
 }
 
-function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messages: Message[] }) {
+type TargetKind = 'video' | 'landing' | 'product' | 'channel' | 'form' | null
+
+type TriggerPreset = {
+  key: string
+  label: string
+  emoji: string
+  isNegative: boolean
+  eventType: string
+  targetKind: TargetKind
+  defaultWaitMinutes?: number
+  extraParams?: Array<{ key: string; label: string; suffix?: string; default?: number }>
+  cancelOnEventType?: string
+  description: string
+}
+
+const TRIGGER_PRESETS: TriggerPreset[] = [
+  // ПОЗИТИВНЫЕ
+  { key: 'video_start',    label: 'Начал смотреть видео',       emoji: '▶️', isNegative: false, eventType: 'video_start',    targetKind: 'video',   description: 'Клиент запустил видео' },
+  { key: 'video_percent',  label: 'Досмотрел видео до X%',       emoji: '📊', isNegative: false, eventType: 'video_progress', targetKind: 'video',   extraParams: [{ key: 'minPercent', label: 'Процент', suffix: '%', default: 50 }], description: 'Дошёл до заданного процента' },
+  { key: 'video_complete', label: 'Досмотрел видео до конца',    emoji: '✅', isNegative: false, eventType: 'video_complete', targetKind: 'video',   description: 'Видео просмотрено полностью' },
+  { key: 'landing_visit',  label: 'Зашёл на сайт',               emoji: '🌐', isNegative: false, eventType: 'landing_visit',  targetKind: 'landing', description: 'Открыл лендинг' },
+  { key: 'form_submit',    label: 'Отправил форму',              emoji: '📝', isNegative: false, eventType: 'form_submit',    targetKind: 'form',    description: 'Заполнил форму' },
+  { key: 'channel_joined', label: 'Подписался на канал',         emoji: '📣', isNegative: false, eventType: 'channel_joined', targetKind: 'channel', description: 'Вступил в Telegram-канал' },
+  { key: 'order_created',  label: 'Создал заказ',                emoji: '🛒', isNegative: false, eventType: 'order_created',  targetKind: 'product', description: 'Оформил заказ (не факт что оплатил)' },
+  { key: 'order_paid',     label: 'Оплатил заказ',               emoji: '💰', isNegative: false, eventType: 'order_paid',     targetKind: 'product', description: 'Заказ успешно оплачен' },
+  // НЕГАТИВНЫЕ
+  { key: 'video_started_not_completed', label: 'Начал видео, но НЕ досмотрел', emoji: '⏸️', isNegative: true, eventType: 'video_start', cancelOnEventType: 'video_complete', targetKind: 'video', defaultWaitMinutes: 180, description: 'Через N минут после старта, если видео не досмотрено до конца' },
+  { key: 'landing_not_ordered',         label: 'Зашёл на сайт, но НЕ создал заказ', emoji: '🚪', isNegative: true, eventType: 'landing_visit', cancelOnEventType: 'order_created', targetKind: 'landing', defaultWaitMinutes: 360, description: 'Через N минут после визита, если не оформил заказ' },
+  { key: 'order_not_paid',              label: 'Создал заказ, но НЕ оплатил',        emoji: '💸', isNegative: true, eventType: 'order_created', cancelOnEventType: 'order_paid', targetKind: 'product', defaultWaitMinutes: 30, description: 'Через N минут после создания заказа, если не оплачен' },
+]
+
+type VideoOpt = { id: string; title: string }
+type LandingOpt = { id: string; name: string; slug: string }
+type ProductOpt = { id: string; name: string }
+
+function EventTriggersTab({ scenarioId, messages, projectId }: { scenarioId: string; messages: Message[]; projectId: string }) {
   const supabase = createClient()
   const [triggers, setTriggers] = useState<EventTrigger[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
-  const [newEventType, setNewEventType] = useState('page_view')
-  const [newEventName, setNewEventName] = useState('')
-  const [newSource, setNewSource] = useState('')
-  const [newStartMsgId, setNewStartMsgId] = useState('')
+
+  // Targets
+  const [videos, setVideos] = useState<VideoOpt[]>([])
+  const [landings, setLandings] = useState<LandingOpt[]>([])
+  const [products, setProducts] = useState<ProductOpt[]>([])
+
+  // Draft
+  const [presetKey, setPresetKey] = useState<string>('video_start')
+  const [targetId, setTargetId] = useState('')
+  const [waitMinutes, setWaitMinutes] = useState<number>(60)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [extraValues, setExtraValues] = useState<Record<string, any>>({})
+  const [startMsgId, setStartMsgId] = useState('')
+
+  const preset = TRIGGER_PRESETS.find(p => p.key === presetKey)!
 
   async function load() {
     setLoading(true)
@@ -848,21 +899,59 @@ function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messag
     setLoading(false)
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [scenarioId])
+  async function loadTargets() {
+    const [vids, lands, prods] = await Promise.all([
+      supabase.from('videos').select('id, title').eq('project_id', projectId).order('created_at', { ascending: false }),
+      supabase.from('landings').select('id, name, slug').eq('project_id', projectId).order('created_at', { ascending: false }),
+      supabase.from('products').select('id, name').eq('project_id', projectId).order('created_at', { ascending: false }),
+    ])
+    setVideos((vids.data ?? []) as VideoOpt[])
+    setLandings((lands.data ?? []) as LandingOpt[])
+    setProducts((prods.data ?? []) as ProductOpt[])
+  }
+
+  useEffect(() => { load(); loadTargets(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [scenarioId, projectId])
+
+  // When preset changes — reset draft
+  useEffect(() => {
+    setTargetId('')
+    setWaitMinutes(preset.defaultWaitMinutes ?? 60)
+    const ext: Record<string, number> = {}
+    for (const p of preset.extraParams ?? []) ext[p.key] = p.default ?? 0
+    setExtraValues(ext)
+  }, [presetKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleAdd() {
-    if (!newStartMsgId) { alert('Выбери сообщение запуска'); return }
+    if (!startMsgId) { alert('Выбери сообщение для запуска'); return }
+    if (preset.targetKind && !targetId) { alert('Выбери объект (видео / сайт / продукт)'); return }
+
+    // Build event_params
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const event_params: Record<string, any> = { ...extraValues }
+    if (preset.targetKind === 'video') event_params.videoId = targetId
+    if (preset.targetKind === 'landing') {
+      const l = landings.find(x => x.id === targetId)
+      event_params.landingSlug = l?.slug ?? targetId
+    }
+    if (preset.targetKind === 'product') event_params.productId = targetId
+
     await supabase.from('scenario_event_triggers').insert({
       scenario_id: scenarioId,
-      event_type: newEventType,
-      event_name: newEventName || null,
-      source: newSource || null,
-      start_message_id: newStartMsgId,
+      event_type: preset.eventType,
+      event_name: null,
+      source: null,
+      start_message_id: startMsgId,
+      is_negative: preset.isNegative,
+      wait_minutes: preset.isNegative ? waitMinutes : 0,
+      event_params,
+      cancel_on_event_type: preset.isNegative ? preset.cancelOnEventType ?? null : null,
+      cancel_on_event_name: null,
+      label: preset.label,
     })
-    setNewEventName('')
-    setNewSource('')
-    setNewStartMsgId('')
+
     setAdding(false)
+    setStartMsgId('')
+    setTargetId('')
     await load()
   }
 
@@ -872,12 +961,33 @@ function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messag
     await load()
   }
 
+  function describeTrigger(t: EventTrigger): string {
+    const preset = TRIGGER_PRESETS.find(p => p.eventType === t.event_type && p.isNegative === t.is_negative && (p.cancelOnEventType ?? null) === (t.cancel_on_event_type ?? null))
+    const base = t.label ?? preset?.label ?? t.event_type
+    const p = t.event_params ?? {}
+    const parts: string[] = []
+    if (p.videoId) {
+      const v = videos.find(x => x.id === p.videoId)
+      parts.push(v ? `видео «${v.title}»` : `video:${String(p.videoId).slice(0, 6)}`)
+    }
+    if (p.landingSlug) {
+      const l = landings.find(x => x.slug === p.landingSlug)
+      parts.push(l ? `сайт «${l.name}»` : `landing:${p.landingSlug}`)
+    }
+    if (p.productId) {
+      const prod = products.find(x => x.id === p.productId)
+      parts.push(prod ? `продукт «${prod.name}»` : `product:${String(p.productId).slice(0, 6)}`)
+    }
+    if (p.minPercent) parts.push(`от ${p.minPercent}%`)
+    return parts.length ? `${base} (${parts.join(', ')})` : base
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-gray-900">Триггеры событий</h2>
-          <p className="text-xs text-gray-500">Запуск сценария при событии на сайте, лендинге или в другом месте</p>
+          <p className="text-xs text-gray-500">Запуск сценария когда клиент сделал (или НЕ сделал) какое-то действие</p>
         </div>
         <button onClick={() => setAdding(true)}
           className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
@@ -886,49 +996,109 @@ function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messag
       </div>
 
       {adding && (
-        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Тип события</label>
-              <select value={newEventType} onChange={e => setNewEventType(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                <option value="page_view">Просмотр страницы</option>
-                <option value="button_click">Клик по кнопке</option>
-                <option value="form_submit">Отправка формы</option>
-                <option value="video_start">Начало просмотра видео</option>
-                <option value="video_complete">Досмотр видео</option>
-                <option value="custom">Кастомное</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Имя события (опционально)</label>
-              <input type="text" value={newEventName} onChange={e => setNewEventName(e.target.value)}
-                placeholder="например: pricing"
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-2">Когда запустить сценарий</label>
+            <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto">
+              <div className="text-[11px] font-semibold uppercase text-gray-400 px-1">Когда действие произошло</div>
+              {TRIGGER_PRESETS.filter(p => !p.isNegative).map(p => (
+                <label key={p.key} className={`flex items-start gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${presetKey === p.key ? 'border-[#6A55F8] bg-[#F0EDFF]' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <input type="radio" checked={presetKey === p.key} onChange={() => setPresetKey(p.key)} className="mt-1" />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">{p.emoji} {p.label}</div>
+                    <div className="text-xs text-gray-500">{p.description}</div>
+                  </div>
+                </label>
+              ))}
+              <div className="text-[11px] font-semibold uppercase text-gray-400 px-1 mt-2">Когда действие НЕ произошло за время</div>
+              {TRIGGER_PRESETS.filter(p => p.isNegative).map(p => (
+                <label key={p.key} className={`flex items-start gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${presetKey === p.key ? 'border-[#6A55F8] bg-[#F0EDFF]' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <input type="radio" checked={presetKey === p.key} onChange={() => setPresetKey(p.key)} className="mt-1" />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">{p.emoji} {p.label}</div>
+                    <div className="text-xs text-gray-500">{p.description}</div>
+                  </div>
+                </label>
+              ))}
             </div>
           </div>
+
+          {preset.targetKind && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                {preset.targetKind === 'video' && 'Какое видео'}
+                {preset.targetKind === 'landing' && 'Какой сайт'}
+                {preset.targetKind === 'product' && 'Какой продукт'}
+                {preset.targetKind === 'form' && 'Какая форма (slug)'}
+                {preset.targetKind === 'channel' && 'Какой канал (id)'}
+              </label>
+              {preset.targetKind === 'video' && (
+                <select value={targetId} onChange={e => setTargetId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                  <option value="">— Выбери видео —</option>
+                  {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
+                </select>
+              )}
+              {preset.targetKind === 'landing' && (
+                <select value={targetId} onChange={e => setTargetId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                  <option value="">— Выбери сайт —</option>
+                  {landings.map(l => <option key={l.id} value={l.id}>{l.name} ({l.slug})</option>)}
+                </select>
+              )}
+              {preset.targetKind === 'product' && (
+                <select value={targetId} onChange={e => setTargetId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                  <option value="">— Выбери продукт —</option>
+                  {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              )}
+              {(preset.targetKind === 'form' || preset.targetKind === 'channel') && (
+                <input value={targetId} onChange={e => setTargetId(e.target.value)} placeholder="slug / id"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+              )}
+            </div>
+          )}
+
+          {preset.extraParams && preset.extraParams.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              {preset.extraParams.map(p => (
+                <div key={p.key}>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">{p.label}{p.suffix ? ` (${p.suffix})` : ''}</label>
+                  <input type="number" value={extraValues[p.key] ?? ''} onChange={e => setExtraValues(v => ({ ...v, [p.key]: Number(e.target.value) }))}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {preset.isNegative && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Сколько ждать прежде чем отправить дожим</label>
+              <div className="flex items-center gap-2">
+                <input type="number" value={waitMinutes} onChange={e => setWaitMinutes(Number(e.target.value))}
+                  className="w-32 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                <span className="text-sm text-gray-500">минут (= {(waitMinutes / 60).toFixed(1)} ч)</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Если за это время отменяющее событие случится — дожим не отправится</p>
+            </div>
+          )}
+
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Источник (опционально)</label>
-            <input type="text" value={newSource} onChange={e => setNewSource(e.target.value)}
-              placeholder="landing, site, bot…"
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Сообщение для запуска</label>
-            <select value={newStartMsgId} onChange={e => setNewStartMsgId(e.target.value)}
+            <label className="block text-xs font-medium text-gray-700 mb-1">Какое сообщение отправить</label>
+            <select value={startMsgId} onChange={e => setStartMsgId(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
               <option value="">— Выбери сообщение —</option>
               {messages.map(m => (
-                <option key={m.id} value={m.id}>
-                  #{m.order_position + 1}: {(m.text ?? '').slice(0, 50)}
-                </option>
+                <option key={m.id} value={m.id}>#{m.order_position + 1}: {(m.text ?? '').slice(0, 60)}</option>
               ))}
             </select>
           </div>
+
           <div className="flex gap-2">
             <button onClick={handleAdd}
               className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
-              Создать
+              Создать триггер
             </button>
             <button onClick={() => setAdding(false)}
               className="px-4 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
@@ -944,7 +1114,7 @@ function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messag
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-2">⚡</div>
           <p className="text-sm text-gray-500">Нет триггеров</p>
-          <p className="text-xs text-gray-400 mt-1">Добавь чтобы бот запускался от действий на сайте</p>
+          <p className="text-xs text-gray-400 mt-1">Добавь чтобы бот запускался от событий на сайте, видео или заказах</p>
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
@@ -954,11 +1124,11 @@ function EventTriggersTab({ scenarioId, messages }: { scenarioId: string; messag
               <div key={t.id} className="flex items-center justify-between px-5 py-3 border-b border-gray-50 last:border-0">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-900">
-                    ⚡ {t.event_type}{t.event_name ? `: ${t.event_name}` : ''}
+                    {t.is_negative ? '⏸️' : '⚡'} {describeTrigger(t)}
                   </p>
                   <p className="text-xs text-gray-500">
                     → Сообщение {msg ? `#${msg.order_position + 1}` : '(не найдено)'}
-                    {t.source && <span className="ml-2">· источник: {t.source}</span>}
+                    {t.is_negative && <span className="ml-2">· через {t.wait_minutes} мин ({(t.wait_minutes / 60).toFixed(1)} ч)</span>}
                   </p>
                 </div>
                 <button onClick={() => handleDelete(t.id)}
@@ -1640,7 +1810,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       )}
 
       {activeTab === 'triggers' && (
-        <EventTriggersTab scenarioId={scenario.id} messages={messages} />
+        <EventTriggersTab scenarioId={scenario.id} messages={messages} projectId={projectId} />
       )}
 
       {activeTab === 'settings' && (
