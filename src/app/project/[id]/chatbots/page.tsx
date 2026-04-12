@@ -582,7 +582,8 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
 // MESSAGE EDITOR (карточка сообщения)
 // =============================================
 function MessageCard({
-  projectId, msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton
+  projectId, msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton,
+  initialExpanded = false,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -591,9 +592,10 @@ function MessageCard({
   onAddButton: (messageId: string) => void
   onDeleteButton: (id: string) => void
   onUpdateButton: (id: string, data: Partial<Button>) => void
+  initialExpanded?: boolean
 }) {
   const supabase = createClient()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(initialExpanded)
   const [draft, setDraft] = useState<Partial<Message>>({})
   const [followupsDirty, setFollowupsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1339,6 +1341,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                           const msgButtons = allButtons.filter(b => b.message_id === msg.id)
                           return (
                             <MessageCard key={msg.id} projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                              initialExpanded
                               onUpdate={() => { void load() }}
                               onDelete={() => removeMessageFromGroup(msg.id)}
                               onAddButton={async () => {
@@ -1377,6 +1380,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                                 <div key={msg.id} className="space-y-1">
                                   <TriggerWaitEditor trigger={t} onChange={() => load()} />
                                   <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                                    initialExpanded
                                     onUpdate={() => { void load() }}
                                     onDelete={() => removeMessageFromGroup(msg.id)}
                                     onAddButton={async () => {
