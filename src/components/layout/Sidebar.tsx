@@ -44,6 +44,7 @@ const navGroups: NavItem[][] = [
   // Инструменты
   [
     { id: 'analytics', label: 'Аналитика', icon: '📈' },
+    { id: 'journal', label: 'Журнал', icon: '📋' },
     { id: 'ai', label: 'AI-помощник', icon: '✨' },
   ],
 ]
