@@ -38,8 +38,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
-    // Set webhook
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
+    // Set webhook — используем www-версию домена (studency.ru редиректит 307, Telegram не следует)
+    let baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
+    // Если домен без www — добавляем www чтобы избежать 307 redirect
+    baseUrl = baseUrl.replace('://studency.ru', '://www.studency.ru')
     const webhookUrl = `${baseUrl}/api/telegram/webhook?token=${token}`
 
     const webhookResult = await setTelegramWebhook(token, webhookUrl)
