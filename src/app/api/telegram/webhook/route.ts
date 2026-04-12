@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
 
         if (bot && (bot.channel_id === String(chatId) || bot.channel_id === cm.chat?.username)) {
           // Ищем customer или создаём нового
-          let { data: customer } = await supabase.from('customers')
+          const { data: customer } = await supabase.from('customers')
             .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
 
           if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
@@ -243,38 +243,60 @@ export async function POST(request: NextRequest) {
       sourceSlugFromStart = text.replace('/start src_', '').trim().replace(/_/g, '-') || null
     }
 
-    // Find or create customer
+    // Find or create customer (проверяем по telegram_id чтобы не плодить дубликаты)
     let customerId = conversation.customer_id
     if (!customerId) {
-      const { data: customer } = await supabase
-        .from('customers')
-        .insert({
-          project_id: projectId,
-          telegram_id: String(userId),
-          telegram_username: username,
-          full_name: firstName,
-          bot_subscribed: true,
-          bot_subscribed_at: new Date().toISOString(),
-        })
-        .select()
-        .single()
+      // Сначала ищем existing customer по telegram_id (мог быть создан через подписку на канал)
+      const { data: existingByTgId } = await supabase.from('customers')
+        .select('id').eq('telegram_id', String(userId)).eq('project_id', projectId).maybeSingle()
 
-      if (customer) {
-        customerId = customer.id
-        await supabase.from('chatbot_conversations').update({ customer_id: customer.id }).eq('id', conversation.id)
+      if (existingByTgId) {
+        // Customer уже есть — привязываем к conversation, обновляем данные
+        customerId = existingByTgId.id
+        await supabase.from('chatbot_conversations').update({ customer_id: existingByTgId.id }).eq('id', conversation.id)
+        await supabase.from('customers').update({
+          telegram_username: username, full_name: firstName,
+          bot_subscribed: true, bot_subscribed_at: new Date().toISOString(),
+        }).eq('id', existingByTgId.id)
         await supabase.from('customer_actions').insert({
-          customer_id: customer.id, project_id: projectId, action: 'bot_start',
+          customer_id: existingByTgId.id, project_id: projectId, action: 'bot_start',
           data: { bot_name: bot.name, telegram_username: username },
         })
-
-        // CRM автоматизация — bot_start
         evaluateAutoBoards(supabase, {
-          projectId, customerId: customer.id,
+          projectId, customerId: existingByTgId.id,
           eventType: 'bot_start',
           eventData: { bot_name: bot.name, bot_id: bot.id },
         }).catch(err => console.error('CRM auto error:', err))
+      } else {
+        // Новый customer
+        const { data: customer } = await supabase
+          .from('customers')
+          .insert({
+            project_id: projectId,
+            telegram_id: String(userId),
+            telegram_username: username,
+            full_name: firstName,
+            bot_subscribed: true,
+            bot_subscribed_at: new Date().toISOString(),
+          })
+          .select()
+          .single()
 
-        if (sourceSlugFromStart) {
+        if (customer) {
+          customerId = customer.id
+          await supabase.from('chatbot_conversations').update({ customer_id: customer.id }).eq('id', conversation.id)
+          await supabase.from('customer_actions').insert({
+            customer_id: customer.id, project_id: projectId, action: 'bot_start',
+            data: { bot_name: bot.name, telegram_username: username },
+          })
+
+          evaluateAutoBoards(supabase, {
+            projectId, customerId: customer.id,
+            eventType: 'bot_start',
+            eventData: { bot_name: bot.name, bot_id: bot.id },
+          }).catch(err => console.error('CRM auto error:', err))
+        }
+        if (sourceSlugFromStart && customerId) {
           const { data: source } = await supabase
             .from('traffic_sources')
             .select('id, name, slug')
