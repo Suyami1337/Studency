@@ -1,12 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/scheduled-triggers",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cron/followups",
-      "schedule": "* * * * *"
-    }
-  ]
-}
+{}
