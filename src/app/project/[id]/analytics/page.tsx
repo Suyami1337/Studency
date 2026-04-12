@@ -503,99 +503,268 @@ function FunnelsTab({ projectId }: { projectId: string }) {
 function CrossAnalyticsTab({ projectId }: { projectId: string }) {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
+  const [sourceFilter, setSourceFilter] = useState<string>('')
+  const [sources, setSources] = useState<Array<{ id: string; name: string; slug: string; click_count: number }>>([])
   const [stats, setStats] = useState({
-    totalLeads: 0,
-    engagedInBot: 0,
-    visitedLanding: 0,
-    createdOrder: 0,
-    paidOrder: 0,
+    totalLeads: 0, botSubscribed: 0, channelSubscribed: 0,
+    engagedInBot: 0, visitedLanding: 0, watchedVideo: 0,
+    createdOrder: 0, paidOrder: 0, formSubmit: 0,
   })
 
   useEffect(() => {
+    supabase.from('traffic_sources').select('id, name, slug, click_count')
+      .eq('project_id', projectId).order('click_count', { ascending: false })
+      .then(({ data }) => setSources((data ?? []) as typeof sources))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  useEffect(() => {
     async function load() {
-      const { count: leads } = await supabase
-        .from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId)
+      setLoading(true)
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let custQuery: any = supabase.from('customers').select('id', { count: 'exact' }).eq('project_id', projectId)
+      if (sourceFilter) custQuery = custQuery.eq('source_id', sourceFilter)
+      const { data: customerRows, count: leads } = await custQuery
+
+      const customerIds = (customerRows ?? []).map((c: { id: string }) => c.id)
+      if (customerIds.length === 0) {
+        setStats({ totalLeads: 0, botSubscribed: 0, channelSubscribed: 0, engagedInBot: 0, visitedLanding: 0, watchedVideo: 0, createdOrder: 0, paidOrder: 0, formSubmit: 0 })
+        setLoading(false)
+        return
+      }
+
+      // Bot/channel subscription counts
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let botSubQuery: any = supabase.from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId).eq('bot_subscribed', true)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let chanSubQuery: any = supabase.from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId).eq('channel_subscribed', true)
+      if (sourceFilter) { botSubQuery = botSubQuery.eq('source_id', sourceFilter); chanSubQuery = chanSubQuery.eq('source_id', sourceFilter) }
+
+      const [botSubRes, chanSubRes] = await Promise.all([botSubQuery, chanSubQuery])
 
       const { data: actions } = await supabase
-        .from('customer_actions')
-        .select('customer_id, action')
-        .eq('project_id', projectId)
+        .from('customer_actions').select('customer_id, action')
+        .eq('project_id', projectId).in('customer_id', customerIds)
 
       const engagedSet = new Set<string>()
       const visitedSet = new Set<string>()
+      const formSet = new Set<string>()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const a of (actions ?? []) as any[]) {
         if (a.action === 'bot_start' || a.action === 'bot_button_click') engagedSet.add(a.customer_id)
         if (a.action === 'landing_visit' || a.action === 'landing_button_click') visitedSet.add(a.customer_id)
+        if (a.action === 'form_submit') formSet.add(a.customer_id)
       }
 
-      const { data: orders } = await supabase
-        .from('orders').select('customer_id, status').eq('project_id', projectId)
+      const { data: views } = await supabase
+        .from('video_views').select('customer_id').eq('project_id', projectId).in('customer_id', customerIds)
+      const watchedSet = new Set((views ?? []).map((v: { customer_id: string }) => v.customer_id).filter(Boolean))
 
+      const { data: orders } = await supabase
+        .from('orders').select('customer_id, status').eq('project_id', projectId).in('customer_id', customerIds)
       const createdSet = new Set<string>()
       const paidSet = new Set<string>()
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const o of (orders ?? []) as any[]) {
-        if (o.customer_id) {
-          createdSet.add(o.customer_id)
-          if (o.status === 'paid') paidSet.add(o.customer_id)
-        }
+        if (o.customer_id) { createdSet.add(o.customer_id); if (o.status === 'paid') paidSet.add(o.customer_id) }
       }
 
       setStats({
         totalLeads: leads ?? 0,
+        botSubscribed: botSubRes.count ?? 0,
+        channelSubscribed: chanSubRes.count ?? 0,
         engagedInBot: engagedSet.size,
         visitedLanding: visitedSet.size,
+        watchedVideo: watchedSet.size,
         createdOrder: createdSet.size,
         paidOrder: paidSet.size,
+        formSubmit: formSet.size,
       })
       setLoading(false)
     }
     load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId])
-
-  if (loading) return <SkeletonList count={1} />
+  }, [projectId, sourceFilter])
 
   const steps = [
-    { label: 'Всего клиентов в базе', count: stats.totalLeads, icon: '👥' },
-    { label: 'Запустили бота / кликали кнопки', count: stats.engagedInBot, icon: '🤖' },
+    { label: 'Всего клиентов', count: stats.totalLeads, icon: '👥' },
+    { label: 'Подписаны на бота', count: stats.botSubscribed, icon: '🤖' },
+    { label: 'Подписаны на канал', count: stats.channelSubscribed, icon: '📢' },
+    { label: 'Взаимодействовали с ботом', count: stats.engagedInBot, icon: '💬' },
     { label: 'Посещали лендинги', count: stats.visitedLanding, icon: '🌐' },
+    { label: 'Смотрели видео', count: stats.watchedVideo, icon: '🎬' },
+    { label: 'Заполнили форму', count: stats.formSubmit, icon: '📝' },
     { label: 'Создали заказ', count: stats.createdOrder, icon: '🛒' },
     { label: 'Оплатили', count: stats.paidOrder, icon: '💰' },
   ]
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-5">
-      <h3 className="text-base font-semibold text-gray-900 mb-1">Сквозная воронка</h3>
-      <p className="text-xs text-gray-500 mb-5">От первого касания до оплаты</p>
+    <div className="space-y-5">
+      {/* Фильтр по источнику */}
+      <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-medium text-gray-700">Источник трафика:</span>
+        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+          <option value="">Все источники</option>
+          {sources.map(s => (
+            <option key={s.id} value={s.id}>{s.name} ({s.click_count} кликов)</option>
+          ))}
+        </select>
+        {sourceFilter && (
+          <button onClick={() => setSourceFilter('')} className="text-xs text-[#6A55F8] hover:underline">Сбросить</button>
+        )}
+      </div>
 
-      <div className="space-y-2">
-        {steps.map((s, i) => {
-          const prev = i > 0 ? steps[i - 1].count : stats.totalLeads
-          const conversion = prev > 0 ? Math.round((s.count / prev) * 100) : 0
-          const total = stats.totalLeads || 1
-          const width = Math.max(5, (s.count / total) * 100)
-          return (
-            <div key={i}>
-              <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                <span className="font-medium flex items-center gap-2">
-                  <span>{s.icon}</span>
-                  {s.label}
-                </span>
-                <span>{s.count} ({conversion}%)</span>
-              </div>
-              <div className="h-10 bg-gray-100 rounded-lg overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-sm font-semibold transition-all"
-                  style={{ width: `${width}%` }}
-                >
-                  {s.count}
+      {/* Воронка */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h3 className="text-base font-semibold text-gray-900 mb-1">
+          Сквозная воронка
+          {sourceFilter && <span className="font-normal text-[#6A55F8] ml-2">· {sources.find(s => s.id === sourceFilter)?.name}</span>}
+        </h3>
+        <p className="text-xs text-gray-500 mb-5">От первого касания до оплаты</p>
+
+        {loading ? <SkeletonList count={1} /> : (
+          <div className="space-y-2">
+            {steps.map((s, i) => {
+              const prev = i > 0 ? steps[i - 1].count : stats.totalLeads
+              const conversion = prev > 0 ? Math.round((s.count / prev) * 100) : 0
+              const total = stats.totalLeads || 1
+              const width = Math.max(5, (s.count / total) * 100)
+              return (
+                <div key={i}>
+                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                    <span className="font-medium flex items-center gap-2">
+                      <span>{s.icon}</span>{s.label}
+                    </span>
+                    <span>{s.count} ({conversion}%)</span>
+                  </div>
+                  <div className="h-10 bg-gray-100 rounded-lg overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-sm font-semibold transition-all"
+                      style={{ width: `${width}%` }}>{s.count}</div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Таблица сравнения источников */}
+      {!sourceFilter && sources.length > 0 && (
+        <SourceComparisonTable projectId={projectId} sources={sources} />
+      )}
+    </div>
+  )
+}
+
+// ─── Таблица сравнения источников трафика ────────────────────────────────────
+function SourceComparisonTable({ projectId, sources }: {
+  projectId: string
+  sources: Array<{ id: string; name: string; slug: string; click_count: number }>
+}) {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  const [rows, setRows] = useState<Array<{
+    id: string; name: string; clicks: number
+    leads: number; bot: number; channel: number; landing: number; video: number; orders: number; paid: number
+  }>>([])
+
+  useEffect(() => {
+    async function load() {
+      const result = await Promise.all(sources.map(async (src) => {
+        const { count: leads } = await supabase.from('customers')
+          .select('*', { count: 'exact', head: true }).eq('project_id', projectId).eq('source_id', src.id)
+
+        if ((leads ?? 0) === 0) {
+          return { id: src.id, name: src.name, clicks: src.click_count, leads: 0, bot: 0, channel: 0, landing: 0, video: 0, orders: 0, paid: 0 }
+        }
+
+        const { data: custs } = await supabase.from('customers').select('id').eq('project_id', projectId).eq('source_id', src.id)
+        const ids = (custs ?? []).map((c: { id: string }) => c.id)
+
+        const [botRes, chanRes] = await Promise.all([
+          supabase.from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId).eq('source_id', src.id).eq('bot_subscribed', true),
+          supabase.from('customers').select('*', { count: 'exact', head: true }).eq('project_id', projectId).eq('source_id', src.id).eq('channel_subscribed', true),
+        ])
+
+        const { data: actions } = await supabase.from('customer_actions').select('customer_id, action').eq('project_id', projectId).in('customer_id', ids)
+        const landingSet = new Set<string>()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const a of (actions ?? []) as any[]) {
+          if (a.action === 'landing_visit') landingSet.add(a.customer_id)
+        }
+
+        const { data: views } = await supabase.from('video_views').select('customer_id').eq('project_id', projectId).in('customer_id', ids)
+        const videoSet = new Set((views ?? []).map((v: { customer_id: string }) => v.customer_id).filter(Boolean))
+
+        const { data: ordersData } = await supabase.from('orders').select('customer_id, status').eq('project_id', projectId).in('customer_id', ids)
+        let ordersCount = 0; let paidCount = 0
+        const orderSeen = new Set<string>(); const paidSeen = new Set<string>()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const o of (ordersData ?? []) as any[]) {
+          if (o.customer_id && !orderSeen.has(o.customer_id)) { orderSeen.add(o.customer_id); ordersCount++ }
+          if (o.customer_id && o.status === 'paid' && !paidSeen.has(o.customer_id)) { paidSeen.add(o.customer_id); paidCount++ }
+        }
+
+        return {
+          id: src.id, name: src.name, clicks: src.click_count,
+          leads: leads ?? 0, bot: botRes.count ?? 0, channel: chanRes.count ?? 0,
+          landing: landingSet.size, video: videoSet.size, orders: ordersCount, paid: paidCount,
+        }
+      }))
+
+      setRows(result.sort((a, b) => b.paid - a.paid || b.leads - a.leads))
+      setLoading(false)
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, sources])
+
+  if (loading) return <SkeletonList count={2} />
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h3 className="text-base font-semibold text-gray-900">Сравнение источников</h3>
+        <p className="text-xs text-gray-500 mt-0.5">Какой трафик окупается лучше</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left font-semibold text-gray-500 px-4 py-3">Источник</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Клики</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Лиды</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">В бота</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Канал</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Лендинг</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Видео</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Заказы</th>
+              <th className="text-right font-semibold text-[#6A55F8] px-3 py-3">Оплаты</th>
+              <th className="text-right font-semibold text-gray-500 px-3 py-3">Конверсия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const conv = r.clicks > 0 ? ((r.paid / r.clicks) * 100).toFixed(1) : '0'
+              return (
+                <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium text-gray-900">{r.name}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.clicks}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.leads}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.bot}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.channel}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.landing}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.video}</td>
+                  <td className="px-3 py-3 text-right text-gray-600">{r.orders}</td>
+                  <td className="px-3 py-3 text-right font-bold text-[#6A55F8]">{r.paid}</td>
+                  <td className="px-3 py-3 text-right text-gray-500">{conv}%</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
