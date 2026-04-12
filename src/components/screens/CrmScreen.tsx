@@ -33,6 +33,7 @@ const DEFAULT_STAGE_COLORS = ['#6A55F8', '#F59E0B', '#10B981', '#3B82F6', '#EF44
 const EVENT_TYPES = [
   { value: 'bot_start', label: 'Запуск бота' },
   { value: 'bot_button_click', label: 'Нажал кнопку в боте' },
+  { value: 'bot_message_received', label: 'Получил сообщение в боте' },
   { value: 'landing_visit', label: 'Посетил лендинг' },
   { value: 'form_submit', label: 'Заполнил форму' },
   { value: 'video_start', label: 'Начал смотреть видео' },
@@ -51,7 +52,8 @@ function getInitials(name: string) {
 // CRM DETAIL — внутри одной доски
 // ═══════════════════════════════════════════════════════════════════════════
 function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<'kanban' | 'table' | 'automation' | 'settings'>('kanban')
+  const [activeTab, setActiveTab] = useState<'board' | 'stages' | 'settings'>('board')
+  const [viewMode, setViewMode] = useState<'kanban' | 'table'>('kanban')
   const [stages, setStages] = useState<Stage[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [rules, setRules] = useState<StageRule[]>([])
@@ -156,9 +158,8 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
 
   // ── Tabs ───────────────────────────────────────────────────
   const tabs = [
-    { id: 'kanban' as const, label: 'Канбан' },
-    { id: 'table' as const, label: 'Таблица' },
-    { id: 'automation' as const, label: 'Автоматизация' },
+    { id: 'board' as const, label: 'Доска' },
+    { id: 'stages' as const, label: 'Этапы' },
     { id: 'settings' as const, label: 'Настройки' },
   ]
 
@@ -186,8 +187,24 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
 
       {loading ? <SkeletonList count={3} /> : (
         <>
-          {/* ═══════════ KANBAN ═══════════ */}
-          {activeTab === 'kanban' && (
+          {/* ═══════════ BOARD (Канбан / Таблица) ═══════════ */}
+          {activeTab === 'board' && (
+            <>
+            {/* View mode toggle */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5 w-fit mb-3">
+              <button onClick={() => setViewMode('kanban')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'kanban' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                Канбан
+              </button>
+              <button onClick={() => setViewMode('table')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'table' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>
+                Таблица
+              </button>
+            </div>
+            </>
+          )}
+
+          {activeTab === 'board' && viewMode === 'kanban' && (
             <div className="flex gap-3 overflow-x-auto pb-4">
               {stages.map(stage => {
                 const stageCustomers = customers.filter(c => c.stage_id === stage.id)
@@ -257,7 +274,7 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
           )}
 
           {/* ═══════════ TABLE ═══════════ */}
-          {activeTab === 'table' && (
+          {activeTab === 'board' && viewMode === 'table' && (
             customers.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-100 p-12 text-center text-gray-400 text-sm">Нет клиентов</div>
             ) : (
@@ -306,8 +323,8 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
             )
           )}
 
-          {/* ═══════════ AUTOMATION (столбцы + правила) ═══════════ */}
-          {activeTab === 'automation' && (
+          {/* ═══════════ STAGES (столбцы + правила) ═══════════ */}
+          {activeTab === 'stages' && (
             <SettingsTab boardId={board.id} stages={stages} rules={rules} onReload={loadBoardData} />
           )}
 
@@ -420,52 +437,141 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
   // Rule editor state
   const [addingRuleForStage, setAddingRuleForStage] = useState<string | null>(null)
   const [newRuleEventType, setNewRuleEventType] = useState('bot_start')
-  const [newRuleFilterKey, setNewRuleFilterKey] = useState('')
-  const [newRuleFilterValue, setNewRuleFilterValue] = useState('')
+  const [newRuleFilters, setNewRuleFilters] = useState<Record<string, string>>({})
 
   // Контекстные данные для визуальных dropdown (лениво загружаются)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [contextData, setContextData] = useState<Record<string, any[]>>({})
 
   async function loadContextData() {
-    const [botsRes, landingsRes, videosRes, scenariosRes] = await Promise.all([
-      supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId),
+    const botsRes = await supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId)
+    const botIds = (botsRes.data ?? []).map((b: { id: string }) => b.id)
+
+    const [landingsRes, videosRes, scenariosRes, productsRes, tariffsRes] = await Promise.all([
       supabase.from('landings').select('id, name, slug').eq('project_id', projectId),
       supabase.from('videos').select('id, title').eq('project_id', projectId),
-      supabase.from('chatbot_scenarios').select('id, name').in('telegram_bot_id',
-        (await supabase.from('telegram_bots').select('id').eq('project_id', projectId)).data?.map((b: {id: string}) => b.id) ?? []
-      ),
+      botIds.length > 0
+        ? supabase.from('chatbot_scenarios').select('id, name, telegram_bot_id').in('telegram_bot_id', botIds)
+        : Promise.resolve({ data: [] }),
+      supabase.from('products').select('id, name').eq('project_id', projectId),
+      supabase.from('tariffs').select('id, name, product_id'),
     ])
+
+    // Загружаем сообщения и кнопки для всех сценариев
+    const scenarioIds = ((scenariosRes.data ?? []) as { id: string }[]).map(s => s.id)
+    let messages: { id: string; text: string | null; order_position: number; scenario_id: string }[] = []
+    let buttons: { id: string; text: string; message_id: string }[] = []
+    if (scenarioIds.length > 0) {
+      const [msgsRes, btnsRes] = await Promise.all([
+        supabase.from('scenario_messages').select('id, text, order_position, scenario_id').in('scenario_id', scenarioIds).order('order_position'),
+        supabase.from('scenario_buttons').select('id, text, message_id').in('message_id',
+          (await supabase.from('scenario_messages').select('id').in('scenario_id', scenarioIds)).data?.map((m: { id: string }) => m.id) ?? []
+        ),
+      ])
+      messages = (msgsRes.data ?? []) as typeof messages
+      buttons = (btnsRes.data ?? []) as typeof buttons
+    }
+
     setContextData({
       bots: botsRes.data ?? [],
       landings: landingsRes.data ?? [],
       videos: videosRes.data ?? [],
-      scenarios: scenariosRes.data ?? [],
+      scenarios: (scenariosRes.data ?? []),
+      products: productsRes.data ?? [],
+      tariffs: tariffsRes.data ?? [],
+      messages,
+      buttons,
     })
   }
   useEffect(() => { loadContextData() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId])
 
-  // Контекстные фильтры для каждого event_type
-  function getFilterOptions(eventType: string): Array<{ key: string; label: string; options?: Array<{ value: string; label: string }> }> {
+  // Каскадные фильтры — для каждого event_type свой набор шагов выбора
+  // Каждый шаг может зависеть от предыдущего (parentKey → фильтруем options)
+  type FilterStep = { key: string; label: string; options?: Array<{ value: string; label: string }>; parentKey?: string }
+
+  function getFilterSteps(eventType: string, currentFilters: Record<string, string>): FilterStep[] {
+    const bots = (contextData.bots ?? []) as Array<{ id: string; name: string; bot_username: string }>
+    const scenarios = (contextData.scenarios ?? []) as Array<{ id: string; name: string; telegram_bot_id: string }>
+    const messages = (contextData.messages ?? []) as Array<{ id: string; text: string | null; order_position: number; scenario_id: string }>
+    const buttons = (contextData.buttons ?? []) as Array<{ id: string; text: string; message_id: string }>
+    const landings = (contextData.landings ?? []) as Array<{ id: string; name: string; slug: string }>
+    const videos = (contextData.videos ?? []) as Array<{ id: string; title: string }>
+    const products = (contextData.products ?? []) as Array<{ id: string; name: string }>
+    const tariffs = (contextData.tariffs ?? []) as Array<{ id: string; name: string; product_id: string }>
+
     switch (eventType) {
       case 'bot_start':
-        return [{ key: 'bot_name', label: 'Какой бот?', options: (contextData.bots ?? []).map(b => ({ value: b.name, label: `@${b.bot_username ?? b.name}` })) }]
-      case 'bot_button_click':
-        return [{ key: 'button_text', label: 'Текст кнопки' }]
+        return [
+          { key: 'bot_name', label: 'Какой бот?', options: bots.map(b => ({ value: b.name, label: `@${b.bot_username || b.name}` })) },
+        ]
+
+      case 'bot_button_click': {
+        const steps: FilterStep[] = [
+          { key: 'bot_id', label: 'Какой бот?', options: bots.map(b => ({ value: b.id, label: `@${b.bot_username || b.name}` })) },
+        ]
+        if (currentFilters.bot_id) {
+          const botScenarios = scenarios.filter(s => s.telegram_bot_id === currentFilters.bot_id)
+          steps.push({ key: 'scenario_id', label: 'Какой сценарий?', options: botScenarios.map(s => ({ value: s.id, label: s.name })), parentKey: 'bot_id' })
+        }
+        if (currentFilters.scenario_id) {
+          const scenarioMsgs = messages.filter(m => m.scenario_id === currentFilters.scenario_id)
+          steps.push({ key: 'message_id', label: 'Какое сообщение?', options: scenarioMsgs.map(m => ({ value: m.id, label: `#${m.order_position + 1}: ${(m.text ?? '').slice(0, 50) || 'Пустое'}` })), parentKey: 'scenario_id' })
+        }
+        if (currentFilters.message_id) {
+          const msgButtons = buttons.filter(b => b.message_id === currentFilters.message_id)
+          steps.push({ key: 'button_text', label: 'Какая кнопка?', options: msgButtons.map(b => ({ value: b.text, label: b.text })), parentKey: 'message_id' })
+        }
+        return steps
+      }
+
+      case 'bot_message_received': {
+        const steps: FilterStep[] = [
+          { key: 'bot_id', label: 'Какой бот?', options: bots.map(b => ({ value: b.id, label: `@${b.bot_username || b.name}` })) },
+        ]
+        if (currentFilters.bot_id) {
+          const botScenarios = scenarios.filter(s => s.telegram_bot_id === currentFilters.bot_id)
+          steps.push({ key: 'scenario_id', label: 'Какой сценарий?', options: botScenarios.map(s => ({ value: s.id, label: s.name })), parentKey: 'bot_id' })
+        }
+        if (currentFilters.scenario_id) {
+          const scenarioMsgs = messages.filter(m => m.scenario_id === currentFilters.scenario_id)
+          steps.push({ key: 'message_id', label: 'Какое сообщение?', options: scenarioMsgs.map(m => ({ value: m.id, label: `#${m.order_position + 1}: ${(m.text ?? '').slice(0, 50) || 'Пустое'}` })), parentKey: 'scenario_id' })
+        }
+        return steps
+      }
+
       case 'landing_visit':
-        return [{ key: 'source_slug', label: 'Какой лендинг?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+        return [{ key: 'source_slug', label: 'Какой лендинг?', options: landings.map(l => ({ value: l.slug, label: l.name })) }]
+
       case 'form_submit':
-        return [{ key: 'landing_slug', label: 'На каком лендинге?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+        return [{ key: 'landing_slug', label: 'На каком лендинге?', options: landings.map(l => ({ value: l.slug, label: l.name })) }]
+
       case 'video_start':
       case 'video_complete':
-        return [{ key: 'video_id', label: 'Какое видео?', options: (contextData.videos ?? []).map(v => ({ value: v.id, label: v.title })) }]
+        return [{ key: 'video_id', label: 'Какое видео?', options: videos.map(v => ({ value: v.id, label: v.title })) }]
+
       case 'order_created':
-      case 'order_paid':
-        return [{ key: 'product_name', label: 'Какой продукт? (название)' }]
+      case 'order_paid': {
+        const steps: FilterStep[] = [
+          { key: 'product_id', label: 'Какой продукт?', options: products.map(p => ({ value: p.id, label: p.name })) },
+        ]
+        if (currentFilters.product_id) {
+          const productTariffs = tariffs.filter(t => t.product_id === currentFilters.product_id)
+          if (productTariffs.length > 0) {
+            steps.push({ key: 'tariff_id', label: 'Какой тариф?', options: productTariffs.map(t => ({ value: t.id, label: t.name })), parentKey: 'product_id' })
+          }
+        }
+        return steps
+      }
+
       case 'button_click':
-        return [{ key: 'button_text', label: 'Текст кнопки' }]
+        return [
+          { key: 'landing_slug', label: 'На каком сайте?', options: landings.map(l => ({ value: l.slug, label: l.name })) },
+          { key: 'button_text', label: 'Текст кнопки' },
+        ]
+
       case 'page_view':
-        return [{ key: 'landing_slug', label: 'Какая страница?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+        return [{ key: 'landing_slug', label: 'Какая страница?', options: landings.map(l => ({ value: l.slug, label: l.name })) }]
+
       default:
         return []
     }
@@ -506,18 +612,25 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
   }
 
   async function addRule(stageId: string) {
+    // Собираем только непустые фильтры
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const filters: Record<string, any> = {}
-    if (newRuleFilterKey && newRuleFilterValue) {
-      filters[newRuleFilterKey] = newRuleFilterValue
+    for (const [k, v] of Object.entries(newRuleFilters)) {
+      if (v) filters[k] = v
     }
 
-    const filterOpts = getFilterOptions(newRuleEventType)
-    const filterLabel = filterOpts.length > 0 && newRuleFilterValue
-      ? filterOpts[0].options?.find(o => o.value === newRuleFilterValue)?.label ?? newRuleFilterValue
-      : ''
+    // Генерируем человекопонятное описание из последнего заполненного шага
+    const steps = getFilterSteps(newRuleEventType, newRuleFilters)
     const eventLabel = EVENT_TYPES.find(e => e.value === newRuleEventType)?.label ?? newRuleEventType
-    const description = filterLabel ? `${eventLabel}: ${filterLabel}` : eventLabel
+    let lastLabel = ''
+    for (const step of [...steps].reverse()) {
+      const val = newRuleFilters[step.key]
+      if (val) {
+        lastLabel = step.options?.find(o => o.value === val)?.label ?? val
+        break
+      }
+    }
+    const description = lastLabel ? `${eventLabel}: ${lastLabel}` : eventLabel
 
     const { data } = await supabase.from('crm_stage_rules').insert({
       stage_id: stageId,
@@ -529,8 +642,7 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
     if (data) setLocalRules(prev => [...prev, data as StageRule])
     setAddingRuleForStage(null)
     setNewRuleEventType('bot_start')
-    setNewRuleFilterKey('')
-    setNewRuleFilterValue('')
+    setNewRuleFilters({})
   }
 
   async function removeRule(ruleId: string) {
@@ -605,44 +717,55 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
                           </div>
                         ))}
 
-                        {/* Visual rule editor */}
+                        {/* Visual rule editor — каскадные dropdown */}
                         {addingRuleForStage === stage.id ? (
                           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
                             <div>
-                              <label className="text-xs font-medium text-gray-700 mb-1 block">Событие</label>
+                              <label className="text-xs font-medium text-gray-700 mb-1 block">Когда происходит</label>
                               <select value={newRuleEventType}
-                                onChange={e => { setNewRuleEventType(e.target.value); setNewRuleFilterKey(''); setNewRuleFilterValue('') }}
+                                onChange={e => { setNewRuleEventType(e.target.value); setNewRuleFilters({}) }}
                                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
                                 {EVENT_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
                               </select>
                             </div>
 
-                            {/* Контекстный фильтр — зависит от выбранного event_type */}
-                            {getFilterOptions(newRuleEventType).map(fo => (
-                              <div key={fo.key}>
-                                <label className="text-xs font-medium text-gray-700 mb-1 block">{fo.label}</label>
-                                {fo.options ? (
+                            {/* Каскадные фильтры — каждый шаг зависит от предыдущего */}
+                            {getFilterSteps(newRuleEventType, newRuleFilters).map(step => (
+                              <div key={step.key}>
+                                <label className="text-xs font-medium text-gray-700 mb-1 block">{step.label}</label>
+                                {step.options ? (
                                   <select
-                                    value={newRuleFilterValue}
-                                    onChange={e => { setNewRuleFilterKey(fo.key); setNewRuleFilterValue(e.target.value) }}
+                                    value={newRuleFilters[step.key] ?? ''}
+                                    onChange={e => {
+                                      const val = e.target.value
+                                      setNewRuleFilters(prev => {
+                                        const next = { ...prev, [step.key]: val }
+                                        // Очищаем дочерние фильтры при смене родителя
+                                        const allSteps = getFilterSteps(newRuleEventType, next)
+                                        const thisIdx = allSteps.findIndex(s => s.key === step.key)
+                                        for (let i = thisIdx + 1; i < allSteps.length; i++) {
+                                          delete next[allSteps[i].key]
+                                        }
+                                        return next
+                                      })
+                                    }}
                                     className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
                                     <option value="">— Любой —</option>
-                                    {fo.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    {step.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
                                 ) : (
-                                  <input type="text" value={newRuleFilterValue}
-                                    onChange={e => { setNewRuleFilterKey(fo.key); setNewRuleFilterValue(e.target.value) }}
+                                  <input type="text" value={newRuleFilters[step.key] ?? ''}
+                                    onChange={e => setNewRuleFilters(prev => ({ ...prev, [step.key]: e.target.value }))}
                                     placeholder="Введите значение..."
                                     className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
                                 )}
-                                <p className="text-[10px] text-gray-400 mt-0.5">Оставьте пустым чтобы срабатывало на любой</p>
                               </div>
                             ))}
 
                             <div className="flex gap-2 pt-1">
                               <button onClick={() => addRule(stage.id)}
                                 className="px-4 py-2 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0]">Добавить правило</button>
-                              <button onClick={() => setAddingRuleForStage(null)}
+                              <button onClick={() => { setAddingRuleForStage(null); setNewRuleFilters({}) }}
                                 className="px-4 py-2 text-gray-500 text-xs rounded-lg border border-gray-200 hover:bg-gray-100">Отмена</button>
                             </div>
                           </div>
