@@ -798,7 +798,7 @@ export default function CrmScreen() {
   }
 
   if (selectedBoard) {
-    return <CrmDetail board={selectedBoard} onBack={clearSelection} />
+    return <CrmDetail board={selectedBoard} onBack={() => { clearSelection(); loadBoards() }} />
   }
 
   return (
