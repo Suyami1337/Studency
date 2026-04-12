@@ -955,26 +955,18 @@ function BoardSettingsTab({ board, onBack, onReload }: {
 
       {/* Удаление */}
       <div className="bg-white rounded-xl border border-red-100 p-5">
-        <h3 className="text-sm font-semibold text-red-700 mb-1">Удалить доску</h3>
-        <p className="text-xs text-gray-500 mb-3">Удалит доску, все столбцы, правила и позиции клиентов на этой доске. Сами клиенты не удалятся.</p>
-        {confirmDelete ? (
-          <div className="flex gap-2 items-center">
-            <span className="text-xs text-red-600">Точно удалить «{board.name}»?</span>
-            <button onClick={handleDelete}
-              className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600">
-              Да, удалить
-            </button>
-            <button onClick={() => setConfirmDelete(false)}
-              className="px-4 py-2 text-sm text-gray-500 rounded-lg border border-gray-200 hover:bg-gray-50">
-              Отмена
-            </button>
-          </div>
-        ) : (
-          <button onClick={() => setConfirmDelete(true)}
-            className="px-4 py-2 bg-white border border-red-200 text-sm font-medium text-red-600 rounded-lg hover:bg-red-50">
-            🗑 Удалить доску
-          </button>
-        )}
+        <h3 className="text-sm font-semibold text-red-600 mb-2">Опасная зона</h3>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-700">Удалить доску и все этапы</p>
+          {!confirmDelete ? (
+            <button onClick={() => setConfirmDelete(true)} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={handleDelete} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Да, удалить</button>
+              <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
