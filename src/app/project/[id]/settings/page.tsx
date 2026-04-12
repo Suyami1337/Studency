@@ -11,6 +11,153 @@ type TelegramBot = {
   bot_username: string | null
   is_active: boolean
   created_at: string
+  channel_id: string | null
+  channel_username: string | null
+}
+
+function BotCard({ bot, projectId, onReload }: { bot: TelegramBot; projectId: string; onReload: () => void }) {
+  const supabase = createClient()
+  const [expanded, setExpanded] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [channelId, setChannelId] = useState(bot.channel_id ?? '')
+  const [channelUsername, setChannelUsername] = useState(bot.channel_username ?? '')
+  const [channelDirty, setChannelDirty] = useState(false)
+  const [savingChannel, setSavingChannel] = useState(false)
+
+  async function toggleActive() {
+    const newActive = !bot.is_active
+    await supabase.from('telegram_bots').update({ is_active: newActive }).eq('id', bot.id)
+
+    if (newActive) {
+      // Переустановить webhook с обновлённым allowed_updates
+      await fetch('/api/telegram/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: bot.token, projectId, name: bot.name, botId: bot.id }),
+      })
+    } else {
+      // Удалить webhook
+      await fetch(`https://api.telegram.org/bot${bot.token}/deleteWebhook`, { method: 'POST' })
+    }
+    onReload()
+  }
+
+  async function handleDelete() {
+    // Удалить webhook
+    await fetch(`https://api.telegram.org/bot${bot.token}/deleteWebhook`, { method: 'POST' }).catch(() => {})
+    await supabase.from('telegram_bots').delete().eq('id', bot.id)
+    onReload()
+  }
+
+  async function saveChannel() {
+    setSavingChannel(true)
+    await supabase.from('telegram_bots').update({
+      channel_id: channelId.trim() || null,
+      channel_username: channelUsername.trim() || null,
+    }).eq('id', bot.id)
+    setChannelDirty(false)
+    setSavingChannel(false)
+    onReload()
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      {/* Header */}
+      <div className="p-5 flex items-center justify-between cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-center gap-4">
+          <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">🤖</div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900">{bot.name}</h3>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${bot.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                {bot.is_active ? 'Активен' : 'Отключён'}
+              </span>
+              {bot.channel_id && (
+                <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-600">
+                  📢 Канал привязан
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">@{bot.bot_username || '...'} · подключён {new Date(bot.created_at).toLocaleDateString('ru')}</p>
+          </div>
+        </div>
+        <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
+      </div>
+
+      {/* Expanded settings */}
+      {expanded && (
+        <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
+          {/* Включить/выключить */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-gray-700">Бот активен</p>
+              <p className="text-[10px] text-gray-400">Отключение удалит webhook, бот перестанет отвечать</p>
+            </div>
+            <button onClick={toggleActive}
+              className={`w-10 h-5 rounded-full transition-colors relative ${bot.is_active ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${bot.is_active ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          {/* Привязка канала */}
+          <div>
+            <p className="text-xs font-medium text-gray-700 mb-1">Telegram-канал</p>
+            <p className="text-[10px] text-gray-400 mb-2">Бот должен быть администратором канала. Тогда подписки/отписки будут фиксироваться автоматически.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500 mb-0.5 block">ID канала</label>
+                <input type="text" value={channelId}
+                  onChange={e => { setChannelId(e.target.value); setChannelDirty(true) }}
+                  placeholder="-1001234567890"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:border-[#6A55F8]" />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500 mb-0.5 block">Username канала</label>
+                <input type="text" value={channelUsername}
+                  onChange={e => { setChannelUsername(e.target.value); setChannelDirty(true) }}
+                  placeholder="@mychannel"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+              </div>
+            </div>
+            {channelDirty && (
+              <div className="flex gap-2 mt-2">
+                <button onClick={saveChannel} disabled={savingChannel}
+                  className="px-3 py-1.5 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0] disabled:opacity-50">
+                  {savingChannel ? '...' : 'Сохранить канал'}
+                </button>
+                <button onClick={() => { setChannelId(bot.channel_id ?? ''); setChannelUsername(bot.channel_username ?? ''); setChannelDirty(false) }}
+                  className="px-3 py-1.5 text-xs text-gray-500 rounded-lg hover:bg-gray-100">Отменить</button>
+              </div>
+            )}
+            {bot.channel_id && !channelDirty && (
+              <p className="text-[10px] text-green-600 mt-1">✓ Канал привязан: {bot.channel_username || bot.channel_id}</p>
+            )}
+          </div>
+
+          {/* Токен */}
+          <div>
+            <p className="text-xs font-medium text-gray-700 mb-1">Токен</p>
+            <code className="block bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-600 break-all">{bot.token}</code>
+          </div>
+
+          {/* Удалить */}
+          <div className="pt-3 border-t border-gray-100">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-700">Удалить бота</p>
+              {!confirmDelete ? (
+                <button onClick={() => setConfirmDelete(true)} className="px-3 py-1.5 rounded-lg border border-red-300 text-sm text-red-600 hover:bg-red-50">Удалить</button>
+              ) : (
+                <div className="flex gap-2">
+                  <button onClick={handleDelete} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">Да, удалить</button>
+                  <button onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function SettingsPage() {
@@ -139,20 +286,7 @@ export default function SettingsPage() {
           ) : (
             <div className="space-y-3">
               {bots.map(bot => (
-                <div key={bot.id} className="bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">🤖</div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">{bot.name}</h3>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${bot.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {bot.is_active ? 'Активен' : 'Отключён'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-500">@{bot.bot_username || '...'} · подключён {new Date(bot.created_at).toLocaleDateString('ru')}</p>
-                    </div>
-                  </div>
-                </div>
+                <BotCard key={bot.id} bot={bot} projectId={projectId} onReload={loadBots} />
               ))}
             </div>
           )}
