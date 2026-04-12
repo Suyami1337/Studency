@@ -15,6 +15,93 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabase()
     const body = await request.json()
 
+    const botToken = request.nextUrl.searchParams.get('token')
+    if (!botToken) return NextResponse.json({ error: 'No token' }, { status: 400 })
+
+    // =============================================
+    // HANDLE my_chat_member — подписка/блокировка бота
+    // =============================================
+    if (body.my_chat_member) {
+      const mcm = body.my_chat_member
+      const tgUserId = mcm.from?.id
+      const newStatus = mcm.new_chat_member?.status // 'member' | 'kicked' | 'left' | 'restricted'
+      if (tgUserId && newStatus) {
+        const { data: bot } = await supabase.from('telegram_bots').select('project_id').eq('token', botToken).single()
+        if (bot) {
+          const { data: customer } = await supabase.from('customers')
+            .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
+          if (customer) {
+            if (newStatus === 'member') {
+              await supabase.from('customers').update({
+                bot_subscribed: true, bot_blocked: false,
+                bot_subscribed_at: new Date().toISOString(),
+              }).eq('id', customer.id)
+              await supabase.from('customer_actions').insert({
+                customer_id: customer.id, project_id: bot.project_id,
+                action: 'bot_subscribed', data: {},
+              })
+            } else if (newStatus === 'kicked' || newStatus === 'left') {
+              await supabase.from('customers').update({
+                bot_subscribed: false, bot_blocked: newStatus === 'kicked',
+                bot_blocked_at: new Date().toISOString(),
+              }).eq('id', customer.id)
+              await supabase.from('customer_actions').insert({
+                customer_id: customer.id, project_id: bot.project_id,
+                action: newStatus === 'kicked' ? 'bot_blocked' : 'bot_unsubscribed', data: {},
+              })
+            }
+          }
+        }
+      }
+      return NextResponse.json({ ok: true })
+    }
+
+    // =============================================
+    // HANDLE chat_member — подписка/отписка на КАНАЛ
+    // =============================================
+    if (body.chat_member) {
+      const cm = body.chat_member
+      const tgUserId = cm.from?.id
+      const chatId = cm.chat?.id
+      const newStatus = cm.new_chat_member?.status
+      if (tgUserId && chatId && newStatus) {
+        // Проверяем что этот канал привязан к нашему боту
+        const { data: bot } = await supabase.from('telegram_bots')
+          .select('project_id, channel_id')
+          .eq('token', botToken)
+          .single()
+        if (bot && (bot.channel_id === String(chatId) || bot.channel_id === cm.chat?.username)) {
+          const { data: customer } = await supabase.from('customers')
+            .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
+          if (customer) {
+            if (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator') {
+              await supabase.from('customers').update({
+                channel_subscribed: true,
+                channel_subscribed_at: new Date().toISOString(),
+              }).eq('id', customer.id)
+              await supabase.from('customer_actions').insert({
+                customer_id: customer.id, project_id: bot.project_id,
+                action: 'channel_subscribed', data: { channel_id: String(chatId) },
+              })
+            } else if (newStatus === 'left' || newStatus === 'kicked') {
+              await supabase.from('customers').update({
+                channel_subscribed: false,
+                channel_left_at: new Date().toISOString(),
+              }).eq('id', customer.id)
+              await supabase.from('customer_actions').insert({
+                customer_id: customer.id, project_id: bot.project_id,
+                action: 'channel_unsubscribed', data: { channel_id: String(chatId) },
+              })
+            }
+          }
+        }
+      }
+      return NextResponse.json({ ok: true })
+    }
+
+    // =============================================
+    // HANDLE message / callback_query (основной flow)
+    // =============================================
     const isCallback = !!body.callback_query
     const message = isCallback ? body.callback_query.message : body.message
     if (!message) return NextResponse.json({ ok: true })
@@ -25,9 +112,6 @@ export async function POST(request: NextRequest) {
     const firstName = isCallback ? body.callback_query.from?.first_name : message.from?.first_name
     const text = isCallback ? '' : (message.text || '')
     const callbackData = isCallback ? body.callback_query.data : null
-
-    const botToken = request.nextUrl.searchParams.get('token')
-    if (!botToken) return NextResponse.json({ error: 'No token' }, { status: 400 })
 
     // Find bot
     const { data: bot } = await supabase
@@ -113,6 +197,8 @@ export async function POST(request: NextRequest) {
           telegram_id: String(userId),
           telegram_username: username,
           full_name: firstName,
+          bot_subscribed: true,
+          bot_subscribed_at: new Date().toISOString(),
         })
         .select()
         .single()

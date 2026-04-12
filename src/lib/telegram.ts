@@ -89,7 +89,10 @@ export async function sendTelegramAudio(token: string, chatId: number | string, 
 }
 
 export async function setTelegramWebhook(token: string, webhookUrl: string) {
-  return telegramRequest(token, 'setWebhook', { url: webhookUrl })
+  return telegramRequest(token, 'setWebhook', {
+    url: webhookUrl,
+    allowed_updates: ['message', 'callback_query', 'my_chat_member', 'chat_member'],
+  })
 }
 
 export async function deleteTelegramWebhook(token: string) {
