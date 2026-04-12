@@ -433,6 +433,34 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
   const [addingStage, setAddingStage] = useState(false)
   const [savingStage, setSavingStage] = useState(false)
   const [editingStageId, setEditingStageId] = useState<string | null>(null)
+  const [savingSettings, setSavingSettings] = useState(false)
+
+  // Draft state per-stage — изменения не сохраняются до кнопки Save
+  const [stageDrafts, setStageDrafts] = useState<Record<string, Partial<Stage>>>({})
+  function getStageDraft(stageId: string): Stage {
+    const base = localStages.find(s => s.id === stageId)!
+    return { ...base, ...stageDrafts[stageId] }
+  }
+  function updateStageDraft(stageId: string, updates: Partial<Stage>) {
+    setStageDrafts(prev => ({ ...prev, [stageId]: { ...(prev[stageId] ?? {}), ...updates } }))
+  }
+  const hasStageDraft = (stageId: string) => Object.keys(stageDrafts[stageId] ?? {}).length > 0
+  const hasAnyDraft = Object.values(stageDrafts).some(d => Object.keys(d).length > 0)
+
+  async function saveAllDrafts() {
+    setSavingSettings(true)
+    for (const [stageId, draft] of Object.entries(stageDrafts)) {
+      if (Object.keys(draft).length === 0) continue
+      await supabase.from('crm_board_stages').update(draft).eq('id', stageId)
+    }
+    // Применяем drafts в local state
+    setLocalStages(prev => prev.map(s => stageDrafts[s.id] ? { ...s, ...stageDrafts[s.id] } : s))
+    setStageDrafts({})
+    setSavingSettings(false)
+  }
+  function discardAllDrafts() {
+    setStageDrafts({})
+  }
 
   // Rule editor state
   const [addingRuleForStage, setAddingRuleForStage] = useState<string | null>(null)
@@ -600,15 +628,11 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
 
   function toggleAutomation(stageId: string, currentMode: string) {
     const newMode = currentMode === 'auto' ? 'manual' : 'auto'
-    // Мгновенное обновление
-    setLocalStages(prev => prev.map(s => s.id === stageId ? { ...s, automation_mode: newMode } : s))
-    // Фоновое сохранение
-    supabase.from('crm_board_stages').update({ automation_mode: newMode }).eq('id', stageId)
+    updateStageDraft(stageId, { automation_mode: newMode } as Partial<Stage>)
   }
 
   function toggleRequirePrevious(stageId: string, currentValue: boolean) {
-    setLocalStages(prev => prev.map(s => s.id === stageId ? { ...s, require_from_previous: !currentValue } : s))
-    supabase.from('crm_board_stages').update({ require_from_previous: !currentValue }).eq('id', stageId)
+    updateStageDraft(stageId, { require_from_previous: !currentValue } as Partial<Stage>)
   }
 
   async function addRule(stageId: string) {
@@ -656,21 +680,39 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
         <h3 className="text-sm font-semibold text-gray-900 mb-1">Этапы CRM-доски</h3>
         <p className="text-xs text-gray-500 mb-4">Настройте столбцы, включите автоматизацию и задайте правила для каждого этапа</p>
 
+        {/* Save / Discard bar */}
+        {hasAnyDraft && (
+          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-3">
+            <span className="text-xs text-amber-700 font-medium">● Есть несохранённые изменения</span>
+            <div className="flex gap-2">
+              <button onClick={discardAllDrafts}
+                className="px-3 py-1.5 text-xs text-gray-500 rounded-lg hover:bg-white">Отменить</button>
+              <button onClick={saveAllDrafts} disabled={savingSettings}
+                className="px-4 py-1.5 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0] disabled:opacity-50">
+                {savingSettings ? 'Сохраняю…' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3">
           {localStages.map((stage, idx) => {
+            const e = getStageDraft(stage.id) // effective values (saved + draft)
             const stageRules = localRules.filter(r => r.stage_id === stage.id)
-            const isAuto = stage.automation_mode === 'auto'
+            const isAuto = e.automation_mode === 'auto'
             const isExpanded = editingStageId === stage.id
+            const isDirty = hasStageDraft(stage.id)
 
             return (
-              <div key={stage.id} className={`border rounded-xl overflow-hidden ${isAuto ? 'border-[#6A55F8]/20 bg-[#F8F7FF]/30' : 'border-gray-100'}`}>
+              <div key={stage.id} className={`border rounded-xl overflow-hidden ${isDirty ? 'border-amber-300 bg-amber-50/20' : isAuto ? 'border-[#6A55F8]/20 bg-[#F8F7FF]/30' : 'border-gray-100'}`}>
                 {/* Stage header */}
                 <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => setEditingStageId(isExpanded ? null : stage.id)}>
-                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: stage.color }} />
-                  <span className="text-sm font-medium text-gray-800 flex-1">{stage.name}</span>
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: e.color }} />
+                  <span className="text-sm font-medium text-gray-800 flex-1">{e.name}</span>
                   {isAuto && <span className="text-[9px] font-semibold text-[#6A55F8] bg-[#F0EDFF] px-1.5 py-0.5 rounded-full">⚡ AUTO</span>}
                   {stageRules.length > 0 && <span className="text-[9px] text-gray-400">{stageRules.length} правил</span>}
-                  {stage.require_from_previous && <span className="text-[9px] text-gray-400">из предыд.</span>}
+                  {e.require_from_previous && <span className="text-[9px] text-gray-400">из предыд.</span>}
+                  {isDirty && <span className="text-[9px] text-amber-600 font-medium">● изменено</span>}
                   <span className="text-xs text-gray-400">#{idx + 1}</span>
                   <span className="text-gray-400 text-xs">{isExpanded ? '▲' : '▼'}</span>
                 </div>
@@ -684,7 +726,7 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
                         <p className="text-xs font-medium text-gray-700">Автоматизация</p>
                         <p className="text-[10px] text-gray-400">Клиенты попадают сюда автоматически по правилам</p>
                       </div>
-                      <button onClick={() => toggleAutomation(stage.id, stage.automation_mode)}
+                      <button onClick={() => toggleAutomation(stage.id, e.automation_mode)}
                         className={`w-10 h-5 rounded-full transition-colors relative ${isAuto ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
                         <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isAuto ? 'translate-x-5' : 'translate-x-0.5'}`} />
                       </button>
@@ -692,8 +734,8 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
 
                     {/* Require from previous */}
                     <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={stage.require_from_previous}
-                        onChange={() => toggleRequirePrevious(stage.id, stage.require_from_previous)}
+                      <input type="checkbox" checked={e.require_from_previous}
+                        onChange={() => toggleRequirePrevious(stage.id, e.require_from_previous)}
                         className="rounded border-gray-300 text-[#6A55F8]" />
                       <span className="text-xs text-gray-700">Только из предыдущего столбца</span>
                     </label>
