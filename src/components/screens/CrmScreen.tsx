@@ -396,13 +396,22 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS TAB — настройки столбцов + правила автоматизации
 // ═══════════════════════════════════════════════════════════════════════════
-function SettingsTab({ boardId, stages, rules, onReload }: {
+function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onReload }: {
   boardId: string
   stages: Stage[]
   rules: StageRule[]
   onReload: () => void
 }) {
   const supabase = createClient()
+  const params = useParams()
+  const projectId = params?.id as string
+
+  // Local optimistic state — мгновенное отображение
+  const [localStages, setLocalStages] = useState(initialStages)
+  const [localRules, setLocalRules] = useState(initialRules)
+  useEffect(() => { setLocalStages(initialStages) }, [initialStages])
+  useEffect(() => { setLocalRules(initialRules) }, [initialRules])
+
   const [newStageName, setNewStageName] = useState('')
   const [addingStage, setAddingStage] = useState(false)
   const [savingStage, setSavingStage] = useState(false)
@@ -411,60 +420,122 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
   // Rule editor state
   const [addingRuleForStage, setAddingRuleForStage] = useState<string | null>(null)
   const [newRuleEventType, setNewRuleEventType] = useState('bot_start')
-  const [newRuleFilters, setNewRuleFilters] = useState<string>('{}')
-  const [newRuleDescription, setNewRuleDescription] = useState('')
+  const [newRuleFilterKey, setNewRuleFilterKey] = useState('')
+  const [newRuleFilterValue, setNewRuleFilterValue] = useState('')
+
+  // Контекстные данные для визуальных dropdown (лениво загружаются)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [contextData, setContextData] = useState<Record<string, any[]>>({})
+
+  async function loadContextData() {
+    const [botsRes, landingsRes, videosRes, scenariosRes] = await Promise.all([
+      supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId),
+      supabase.from('landings').select('id, name, slug').eq('project_id', projectId),
+      supabase.from('videos').select('id, title').eq('project_id', projectId),
+      supabase.from('chatbot_scenarios').select('id, name').in('telegram_bot_id',
+        (await supabase.from('telegram_bots').select('id').eq('project_id', projectId)).data?.map((b: {id: string}) => b.id) ?? []
+      ),
+    ])
+    setContextData({
+      bots: botsRes.data ?? [],
+      landings: landingsRes.data ?? [],
+      videos: videosRes.data ?? [],
+      scenarios: scenariosRes.data ?? [],
+    })
+  }
+  useEffect(() => { loadContextData() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId])
+
+  // Контекстные фильтры для каждого event_type
+  function getFilterOptions(eventType: string): Array<{ key: string; label: string; options?: Array<{ value: string; label: string }> }> {
+    switch (eventType) {
+      case 'bot_start':
+        return [{ key: 'bot_name', label: 'Какой бот?', options: (contextData.bots ?? []).map(b => ({ value: b.name, label: `@${b.bot_username ?? b.name}` })) }]
+      case 'bot_button_click':
+        return [{ key: 'button_text', label: 'Текст кнопки' }]
+      case 'landing_visit':
+        return [{ key: 'source_slug', label: 'Какой лендинг?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+      case 'form_submit':
+        return [{ key: 'landing_slug', label: 'На каком лендинге?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+      case 'video_start':
+      case 'video_complete':
+        return [{ key: 'video_id', label: 'Какое видео?', options: (contextData.videos ?? []).map(v => ({ value: v.id, label: v.title })) }]
+      case 'order_created':
+      case 'order_paid':
+        return [{ key: 'product_name', label: 'Какой продукт? (название)' }]
+      case 'button_click':
+        return [{ key: 'button_text', label: 'Текст кнопки' }]
+      case 'page_view':
+        return [{ key: 'landing_slug', label: 'Какая страница?', options: (contextData.landings ?? []).map(l => ({ value: l.slug, label: l.name })) }]
+      default:
+        return []
+    }
+  }
 
   async function addStage() {
     if (!newStageName.trim()) return
-    const color = DEFAULT_STAGE_COLORS[stages.length % DEFAULT_STAGE_COLORS.length]
+    const color = DEFAULT_STAGE_COLORS[localStages.length % DEFAULT_STAGE_COLORS.length]
     setSavingStage(true)
-    await supabase.from('crm_board_stages').insert({
-      board_id: boardId, name: newStageName.trim(), color, order_position: stages.length,
+    const { data } = await supabase.from('crm_board_stages').insert({
+      board_id: boardId, name: newStageName.trim(), color, order_position: localStages.length,
       automation_mode: 'manual', require_from_previous: false,
-    })
+    }).select().single()
+    if (data) setLocalStages(prev => [...prev, data as Stage])
     setNewStageName('')
     setAddingStage(false)
     setSavingStage(false)
-    onReload()
   }
 
   async function removeStage(stageId: string) {
     if (!confirm('Удалить этап? Все клиенты с этого этапа будут потеряны.')) return
+    setLocalStages(prev => prev.filter(s => s.id !== stageId))
+    setLocalRules(prev => prev.filter(r => r.stage_id !== stageId))
     await supabase.from('crm_board_stages').delete().eq('id', stageId)
-    onReload()
   }
 
-  async function toggleAutomation(stageId: string, currentMode: string) {
+  function toggleAutomation(stageId: string, currentMode: string) {
     const newMode = currentMode === 'auto' ? 'manual' : 'auto'
-    await supabase.from('crm_board_stages').update({ automation_mode: newMode }).eq('id', stageId)
-    onReload()
+    // Мгновенное обновление
+    setLocalStages(prev => prev.map(s => s.id === stageId ? { ...s, automation_mode: newMode } : s))
+    // Фоновое сохранение
+    supabase.from('crm_board_stages').update({ automation_mode: newMode }).eq('id', stageId)
   }
 
-  async function toggleRequirePrevious(stageId: string, currentValue: boolean) {
-    await supabase.from('crm_board_stages').update({ require_from_previous: !currentValue }).eq('id', stageId)
-    onReload()
+  function toggleRequirePrevious(stageId: string, currentValue: boolean) {
+    setLocalStages(prev => prev.map(s => s.id === stageId ? { ...s, require_from_previous: !currentValue } : s))
+    supabase.from('crm_board_stages').update({ require_from_previous: !currentValue }).eq('id', stageId)
   }
 
   async function addRule(stageId: string) {
-    let filters = {}
-    try { filters = JSON.parse(newRuleFilters) } catch { /* ignore parse error */ }
-    await supabase.from('crm_stage_rules').insert({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filters: Record<string, any> = {}
+    if (newRuleFilterKey && newRuleFilterValue) {
+      filters[newRuleFilterKey] = newRuleFilterValue
+    }
+
+    const filterOpts = getFilterOptions(newRuleEventType)
+    const filterLabel = filterOpts.length > 0 && newRuleFilterValue
+      ? filterOpts[0].options?.find(o => o.value === newRuleFilterValue)?.label ?? newRuleFilterValue
+      : ''
+    const eventLabel = EVENT_TYPES.find(e => e.value === newRuleEventType)?.label ?? newRuleEventType
+    const description = filterLabel ? `${eventLabel}: ${filterLabel}` : eventLabel
+
+    const { data } = await supabase.from('crm_stage_rules').insert({
       stage_id: stageId,
       event_type: newRuleEventType,
       filters,
-      description: newRuleDescription || null,
-      order_index: rules.filter(r => r.stage_id === stageId).length,
-    })
+      description,
+      order_index: localRules.filter(r => r.stage_id === stageId).length,
+    }).select().single()
+    if (data) setLocalRules(prev => [...prev, data as StageRule])
     setAddingRuleForStage(null)
     setNewRuleEventType('bot_start')
-    setNewRuleFilters('{}')
-    setNewRuleDescription('')
-    onReload()
+    setNewRuleFilterKey('')
+    setNewRuleFilterValue('')
   }
 
   async function removeRule(ruleId: string) {
+    setLocalRules(prev => prev.filter(r => r.id !== ruleId))
     await supabase.from('crm_stage_rules').delete().eq('id', ruleId)
-    onReload()
   }
 
   return (
@@ -474,8 +545,8 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
         <p className="text-xs text-gray-500 mb-4">Настройте столбцы, включите автоматизацию и задайте правила для каждого этапа</p>
 
         <div className="space-y-3">
-          {stages.map((stage, idx) => {
-            const stageRules = rules.filter(r => r.stage_id === stage.id)
+          {localStages.map((stage, idx) => {
+            const stageRules = localRules.filter(r => r.stage_id === stage.id)
             const isAuto = stage.automation_mode === 'auto'
             const isExpanded = editingStageId === stage.id
 
@@ -486,7 +557,8 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
                   <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: stage.color }} />
                   <span className="text-sm font-medium text-gray-800 flex-1">{stage.name}</span>
                   {isAuto && <span className="text-[9px] font-semibold text-[#6A55F8] bg-[#F0EDFF] px-1.5 py-0.5 rounded-full">⚡ AUTO</span>}
-                  {stage.require_from_previous && <span className="text-[9px] text-gray-400">из предыдущего</span>}
+                  {stageRules.length > 0 && <span className="text-[9px] text-gray-400">{stageRules.length} правил</span>}
+                  {stage.require_from_previous && <span className="text-[9px] text-gray-400">из предыд.</span>}
                   <span className="text-xs text-gray-400">#{idx + 1}</span>
                   <span className="text-gray-400 text-xs">{isExpanded ? '▲' : '▼'}</span>
                 </div>
@@ -498,7 +570,7 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-xs font-medium text-gray-700">Автоматизация</p>
-                        <p className="text-[10px] text-gray-400">Клиенты перемещаются сюда автоматически по правилам</p>
+                        <p className="text-[10px] text-gray-400">Клиенты попадают сюда автоматически по правилам</p>
                       </div>
                       <button onClick={() => toggleAutomation(stage.id, stage.automation_mode)}
                         className={`w-10 h-5 rounded-full transition-colors relative ${isAuto ? 'bg-[#6A55F8]' : 'bg-gray-200'}`}>
@@ -517,62 +589,77 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
                     {/* Rules (only if auto) */}
                     {isAuto && (
                       <div className="space-y-2">
-                        <p className="text-xs font-medium text-gray-700">Правила входа <span className="font-normal text-gray-400">(OR — достаточно одного)</span></p>
+                        <p className="text-xs font-medium text-gray-700">Когда клиент попадает сюда? <span className="font-normal text-gray-400">(достаточно одного правила)</span></p>
 
                         {stageRules.length === 0 && (
-                          <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Нет правил — автоматизация не сработает, добавьте хотя бы одно</p>
+                          <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">Добавьте хотя бы одно правило — без него автоматизация не сработает</p>
                         )}
 
                         {stageRules.map(rule => (
-                          <div key={rule.id} className="flex items-start gap-2 bg-white border border-gray-100 rounded-lg p-2.5">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-gray-800">
-                                {EVENT_TYPES.find(e => e.value === rule.event_type)?.label ?? rule.event_type}
-                              </p>
-                              {rule.description && <p className="text-[10px] text-gray-500">{rule.description}</p>}
-                              {Object.keys(rule.filters).length > 0 && (
-                                <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-                                  {Object.entries(rule.filters).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' AND ')}
-                                </p>
-                              )}
-                            </div>
-                            <button onClick={() => removeRule(rule.id)} className="text-xs text-gray-400 hover:text-red-500 mt-0.5">✕</button>
+                          <div key={rule.id} className="flex items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
+                            <span className="text-xs text-[#6A55F8]">⚡</span>
+                            <span className="text-xs text-gray-800 flex-1">
+                              {rule.description || EVENT_TYPES.find(e => e.value === rule.event_type)?.label || rule.event_type}
+                            </span>
+                            <button onClick={() => removeRule(rule.id)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
                           </div>
                         ))}
 
-                        {/* Add rule form */}
+                        {/* Visual rule editor */}
                         {addingRuleForStage === stage.id ? (
-                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
-                            <select value={newRuleEventType} onChange={e => setNewRuleEventType(e.target.value)}
-                              className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs">
-                              {EVENT_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
-                            </select>
-                            <input type="text" value={newRuleDescription} onChange={e => setNewRuleDescription(e.target.value)}
-                              placeholder="Описание (опционально)"
-                              className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs" />
+                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
                             <div>
-                              <label className="text-[10px] text-gray-500">Фильтры (JSON, AND)</label>
-                              <input type="text" value={newRuleFilters} onChange={e => setNewRuleFilters(e.target.value)}
-                                placeholder='{"landing_slug":"vsl"}'
-                                className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs font-mono" />
+                              <label className="text-xs font-medium text-gray-700 mb-1 block">Событие</label>
+                              <select value={newRuleEventType}
+                                onChange={e => { setNewRuleEventType(e.target.value); setNewRuleFilterKey(''); setNewRuleFilterValue('') }}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                {EVENT_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
+                              </select>
                             </div>
-                            <div className="flex gap-2">
+
+                            {/* Контекстный фильтр — зависит от выбранного event_type */}
+                            {getFilterOptions(newRuleEventType).map(fo => (
+                              <div key={fo.key}>
+                                <label className="text-xs font-medium text-gray-700 mb-1 block">{fo.label}</label>
+                                {fo.options ? (
+                                  <select
+                                    value={newRuleFilterValue}
+                                    onChange={e => { setNewRuleFilterKey(fo.key); setNewRuleFilterValue(e.target.value) }}
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                                    <option value="">— Любой —</option>
+                                    {fo.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                  </select>
+                                ) : (
+                                  <input type="text" value={newRuleFilterValue}
+                                    onChange={e => { setNewRuleFilterKey(fo.key); setNewRuleFilterValue(e.target.value) }}
+                                    placeholder="Введите значение..."
+                                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                                )}
+                                <p className="text-[10px] text-gray-400 mt-0.5">Оставьте пустым чтобы срабатывало на любой</p>
+                              </div>
+                            ))}
+
+                            <div className="flex gap-2 pt-1">
                               <button onClick={() => addRule(stage.id)}
-                                className="px-3 py-1 bg-[#6A55F8] text-white text-xs rounded font-medium">Добавить</button>
+                                className="px-4 py-2 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0]">Добавить правило</button>
                               <button onClick={() => setAddingRuleForStage(null)}
-                                className="px-3 py-1 text-gray-500 text-xs rounded border border-gray-200">Отмена</button>
+                                className="px-4 py-2 text-gray-500 text-xs rounded-lg border border-gray-200 hover:bg-gray-100">Отмена</button>
                             </div>
                           </div>
                         ) : (
                           <button onClick={() => setAddingRuleForStage(stage.id)}
-                            className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить правило</button>
+                            className="w-full py-2 rounded-lg border border-dashed border-[#6A55F8]/30 text-xs text-[#6A55F8] font-medium hover:bg-[#F8F7FF] transition-colors">
+                            + Добавить правило
+                          </button>
                         )}
                       </div>
                     )}
 
                     {/* Delete stage */}
-                    <button onClick={() => removeStage(stage.id)}
-                      className="text-xs text-red-400 hover:text-red-600 hover:underline mt-2">Удалить этап</button>
+                    <div className="pt-2 border-t border-gray-100">
+                      <button onClick={() => removeStage(stage.id)}
+                        className="text-xs text-red-400 hover:text-red-600 hover:underline">Удалить этап</button>
+                    </div>
                   </div>
                 )}
               </div>
