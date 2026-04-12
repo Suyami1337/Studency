@@ -86,26 +86,54 @@ export async function POST(request: NextRequest) {
 
     // =============================================
     // HANDLE chat_member — подписка/отписка на КАНАЛ
+    // Создаёт customer если его нет в БД (человек подписался на канал
+    // но никогда не писал боту — всё равно фиксируем).
     // =============================================
     if (body.chat_member) {
       const cm = body.chat_member
-      const tgUserId = cm.from?.id
+      // new_chat_member.user — кто подписался/отписался
+      const memberUser = cm.new_chat_member?.user ?? cm.from
+      const tgUserId = memberUser?.id
+      const tgUsername = memberUser?.username ?? null
+      const tgFirstName = memberUser?.first_name ?? null
       const chatId = cm.chat?.id
       const newStatus = cm.new_chat_member?.status
+
       if (tgUserId && chatId && newStatus) {
-        // Проверяем что этот канал привязан к нашему боту
         const { data: bot } = await supabase.from('telegram_bots')
           .select('project_id, channel_id')
           .eq('token', botToken)
           .single()
+
         if (bot && (bot.channel_id === String(chatId) || bot.channel_id === cm.chat?.username)) {
-          const { data: customer } = await supabase.from('customers')
+          // Ищем customer или создаём нового
+          let { data: customer } = await supabase.from('customers')
             .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
-          if (customer) {
+
+          if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
+            // Новый подписчик канала — создаём customer запись
+            const { data: newCustomer } = await supabase.from('customers').insert({
+              project_id: bot.project_id,
+              telegram_id: String(tgUserId),
+              telegram_username: tgUsername,
+              full_name: tgFirstName,
+              channel_subscribed: true,
+              channel_subscribed_at: new Date().toISOString(),
+            }).select('id').single()
+            if (newCustomer) {
+              await supabase.from('customer_actions').insert({
+                customer_id: newCustomer.id, project_id: bot.project_id,
+                action: 'channel_subscribed', data: { channel_id: String(chatId), auto_created: true },
+              })
+            }
+          } else if (customer) {
             if (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator') {
               await supabase.from('customers').update({
                 channel_subscribed: true,
                 channel_subscribed_at: new Date().toISOString(),
+                // Обновляем username/имя если изменились
+                ...(tgUsername ? { telegram_username: tgUsername } : {}),
+                ...(tgFirstName ? { full_name: tgFirstName } : {}),
               }).eq('id', customer.id)
               await supabase.from('customer_actions').insert({
                 customer_id: customer.id, project_id: bot.project_id,
