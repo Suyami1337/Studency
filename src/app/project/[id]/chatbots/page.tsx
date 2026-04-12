@@ -1650,9 +1650,10 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       <AiAssistantOverlay
         isOpen={showAI}
         onClose={() => setShowAI(false)}
-        title="AI-помощник чат-бота"
-        placeholder="Описать сценарий бота..."
-        initialMessages={[{ from: 'ai' as const, text: 'Привет! Опиши сценарий — я создам сообщения и кнопки автоматически.' }]}
+        title={`AI-помощник · ${scenario.name}`}
+        placeholder="Как улучшить этот сценарий..."
+        context={`Ты помогаешь настроить Telegram-сценарий чат-бота "${scenario.name}" (id: ${scenario.id}). В сценарии сейчас ${messages.length} сообщений. Отвечай конкретными советами: какие добавить сообщения, кнопки, триггеры. Можешь предлагать готовые тексты на "ты", с эмодзи. Пользователь — маркетолог, не разработчик: избегай технических терминов.`}
+        initialMessages={[{ from: 'ai' as const, text: `Привет! Я помогу с сценарием "${scenario.name}". Сейчас в нём ${messages.length} ${messages.length === 1 ? 'сообщение' : 'сообщений'}. Что улучшим — добавить новые реплики, кнопки, триггеры, или переписать существующие?` }]}
       />
     </div>
   )

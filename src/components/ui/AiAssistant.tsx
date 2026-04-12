@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 type Message = { from: 'ai' | 'user'; text: string }
 
@@ -24,22 +24,48 @@ export function AiAssistantOverlay({
   title = 'AI-помощник',
   placeholder = 'Описать что нужно...',
   initialMessages = [{ from: 'ai' as const, text: 'Привет! Чем могу помочь?' }],
+  context,
 }: {
   isOpen: boolean
   onClose: () => void
   title?: string
   placeholder?: string
   initialMessages?: Message[]
+  context?: string
 }) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages, loading])
 
   if (!isOpen) return null
 
-  function send() {
-    if (!input.trim()) return
-    setMessages(prev => [...prev, { from: 'user', text: input }, { from: 'ai', text: 'Понял! Обрабатываю...' }])
+  async function send() {
+    const question = input.trim()
+    if (!question || loading) return
+    setMessages(prev => [...prev, { from: 'user', text: question }])
     setInput('')
+    setLoading(true)
+    try {
+      const res = await fetch('/api/ai/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, context }),
+      })
+      const json = await res.json()
+      const text = json.error
+        ? `⚠️ Ошибка: ${json.error}${json.hint ? '\n' + json.hint : ''}`
+        : (json.answer || 'Пустой ответ')
+      setMessages(prev => [...prev, { from: 'ai', text }])
+    } catch (err) {
+      setMessages(prev => [...prev, { from: 'ai', text: '⚠️ Ошибка сети: ' + (err instanceof Error ? err.message : 'unknown') }])
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -54,16 +80,25 @@ export function AiAssistantOverlay({
             </div>
             <button onClick={onClose} className="text-white/70 hover:text-white transition-colors text-lg">✕</button>
           </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-3">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-3">
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                <div className={`max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
                   msg.from === 'user' ? 'bg-[#6A55F8] text-white rounded-br-none' : 'bg-gray-100 text-gray-800 rounded-bl-none'
                 }`}>
                   {msg.text}
                 </div>
               </div>
             ))}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 text-gray-500 rounded-xl px-4 py-3 text-sm rounded-bl-none flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            )}
           </div>
           <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
             <input
@@ -72,9 +107,16 @@ export function AiAssistantOverlay({
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && send()}
               placeholder={placeholder}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+              disabled={loading}
+              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 disabled:bg-gray-50"
             />
-            <button onClick={send} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors">Отправить</button>
+            <button
+              onClick={send}
+              disabled={loading || !input.trim()}
+              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? '...' : 'Отправить'}
+            </button>
           </div>
         </div>
       </div>

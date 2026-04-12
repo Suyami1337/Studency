@@ -581,9 +581,11 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
         </div>
       )}
 
-      <AiAssistantOverlay isOpen={aiOpen} onClose={() => setAiOpen(false)} title="AI-помощник курса"
-        placeholder="Описать программу курса..."
-        initialMessages={[{ from: 'ai' as const, text: 'Привет! Опиши курс — я создам модули, уроки и тарифы.' }]} />
+      <AiAssistantOverlay isOpen={aiOpen} onClose={() => setAiOpen(false)}
+        title={`AI-помощник · ${course.name}`}
+        placeholder="Что улучшим в курсе..."
+        context={`Ты помогаешь с курсом "${course.name}" на учебной платформе. Сейчас в курсе ${modules.length} модулей. Пользователь может попросить предложить структуру модулей и уроков, описания, домашние задания, тарифы. Отвечай конкретными пунктами списком, готовыми текстами. Пользователь — маркетолог-методист, не разработчик.`}
+        initialMessages={[{ from: 'ai' as const, text: `Привет! Я помогу с курсом "${course.name}". Сейчас ${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}. Что делаем — структура уроков, тексты описаний, домашки, тарифы?` }]} />
     </div>
   )
 }
