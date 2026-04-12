@@ -51,7 +51,7 @@ function getInitials(name: string) {
 // CRM DETAIL — внутри одной доски
 // ═══════════════════════════════════════════════════════════════════════════
 function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
-  const [activeTab, setActiveTab] = useState<'kanban' | 'table' | 'settings'>('kanban')
+  const [activeTab, setActiveTab] = useState<'kanban' | 'table' | 'automation' | 'settings'>('kanban')
   const [stages, setStages] = useState<Stage[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [rules, setRules] = useState<StageRule[]>([])
@@ -158,6 +158,7 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
   const tabs = [
     { id: 'kanban' as const, label: 'Канбан' },
     { id: 'table' as const, label: 'Таблица' },
+    { id: 'automation' as const, label: 'Автоматизация' },
     { id: 'settings' as const, label: 'Настройки' },
   ]
 
@@ -305,9 +306,14 @@ function CrmDetail({ board, onBack }: { board: Board; onBack: () => void }) {
             )
           )}
 
-          {/* ═══════════ SETTINGS ═══════════ */}
-          {activeTab === 'settings' && (
+          {/* ═══════════ AUTOMATION (столбцы + правила) ═══════════ */}
+          {activeTab === 'automation' && (
             <SettingsTab boardId={board.id} stages={stages} rules={rules} onReload={loadBoardData} />
+          )}
+
+          {/* ═══════════ SETTINGS (управление доской) ═══════════ */}
+          {activeTab === 'settings' && (
+            <BoardSettingsTab board={board} onBack={onBack} onReload={loadBoardData} />
           )}
         </>
       )}
@@ -593,6 +599,128 @@ function SettingsTab({ boardId, stages, rules, onReload }: {
           <button onClick={() => setAddingStage(true)}
             className="mt-3 w-full py-2.5 rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
             + Добавить этап
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOARD SETTINGS TAB — удаление, дублирование, переименование доски
+// ═══════════════════════════════════════════════════════════════════════════
+function BoardSettingsTab({ board, onBack, onReload }: {
+  board: Board; onBack: () => void; onReload: () => void
+}) {
+  const supabase = createClient()
+  const [name, setName] = useState(board.name)
+  const [saving, setSaving] = useState(false)
+  const [duplicating, setDuplicating] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  async function handleRename() {
+    if (!name.trim() || name === board.name) return
+    setSaving(true)
+    await supabase.from('crm_boards').update({ name: name.trim(), updated_at: new Date().toISOString() }).eq('id', board.id)
+    setSaving(false)
+    onReload()
+  }
+
+  async function handleDuplicate() {
+    setDuplicating(true)
+    // 1. Копируем доску
+    const { data: newBoard } = await supabase.from('crm_boards')
+      .insert({ project_id: board.project_id, name: `${board.name} (копия)` })
+      .select().single()
+
+    if (newBoard) {
+      // 2. Копируем столбцы
+      const { data: stages } = await supabase.from('crm_board_stages')
+        .select('*').eq('board_id', board.id).order('order_position')
+
+      if (stages && stages.length > 0) {
+        const idMap = new Map<string, string>()
+        for (const s of stages) {
+          const { data: newStage } = await supabase.from('crm_board_stages').insert({
+            board_id: newBoard.id, name: s.name, color: s.color,
+            order_position: s.order_position, automation_mode: s.automation_mode,
+            require_from_previous: s.require_from_previous,
+          }).select().single()
+          if (newStage) idMap.set(s.id, newStage.id)
+        }
+
+        // 3. Копируем правила
+        const { data: rules } = await supabase.from('crm_stage_rules')
+          .select('*').in('stage_id', stages.map(s => s.id))
+
+        if (rules) {
+          for (const r of rules) {
+            const newStageId = idMap.get(r.stage_id)
+            if (newStageId) {
+              await supabase.from('crm_stage_rules').insert({
+                stage_id: newStageId, event_type: r.event_type,
+                filters: r.filters, description: r.description, order_index: r.order_index,
+              })
+            }
+          }
+        }
+      }
+    }
+
+    setDuplicating(false)
+    onBack() // Вернуться к списку досок чтобы увидеть копию
+  }
+
+  async function handleDelete() {
+    await supabase.from('crm_boards').delete().eq('id', board.id)
+    onBack()
+  }
+
+  return (
+    <div className="max-w-xl space-y-5">
+      {/* Переименование */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-3">Название доски</h3>
+        <div className="flex gap-2">
+          <input type="text" value={name} onChange={e => setName(e.target.value)}
+            className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+          <button onClick={handleRename} disabled={saving || !name.trim() || name === board.name}
+            className="px-4 py-2 bg-[#6A55F8] text-white text-sm font-medium rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+            {saving ? '...' : 'Сохранить'}
+          </button>
+        </div>
+      </div>
+
+      {/* Дублирование */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Дублировать доску</h3>
+        <p className="text-xs text-gray-500 mb-3">Создаст копию доски со всеми столбцами и правилами автоматизации. Клиенты не копируются.</p>
+        <button onClick={handleDuplicate} disabled={duplicating}
+          className="px-4 py-2 bg-white border border-gray-200 text-sm font-medium text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+          {duplicating ? 'Копирую…' : '📋 Создать копию'}
+        </button>
+      </div>
+
+      {/* Удаление */}
+      <div className="bg-white rounded-xl border border-red-100 p-5">
+        <h3 className="text-sm font-semibold text-red-700 mb-1">Удалить доску</h3>
+        <p className="text-xs text-gray-500 mb-3">Удалит доску, все столбцы, правила и позиции клиентов на этой доске. Сами клиенты не удалятся.</p>
+        {confirmDelete ? (
+          <div className="flex gap-2 items-center">
+            <span className="text-xs text-red-600">Точно удалить «{board.name}»?</span>
+            <button onClick={handleDelete}
+              className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600">
+              Да, удалить
+            </button>
+            <button onClick={() => setConfirmDelete(false)}
+              className="px-4 py-2 text-sm text-gray-500 rounded-lg border border-gray-200 hover:bg-gray-50">
+              Отмена
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setConfirmDelete(true)}
+            className="px-4 py-2 bg-white border border-red-200 text-sm font-medium text-red-600 rounded-lg hover:bg-red-50">
+            🗑 Удалить доску
           </button>
         )}
       </div>
