@@ -249,7 +249,7 @@ export async function emitEvent(
     .from('scenario_event_triggers')
     .select(`
       id, scenario_id, start_message_id, event_type, event_name, is_negative,
-      wait_minutes, event_params, cancel_on_event_type, cancel_on_event_name,
+      wait_minutes, wait_value, wait_unit, event_params, cancel_on_event_type, cancel_on_event_name,
       chatbot_scenarios!inner(
         id, telegram_bot_id,
         telegram_bots!inner(project_id, is_active)
@@ -277,7 +277,11 @@ export async function emitEvent(
       if (ok) result.positiveFired++
     } else {
       // Negative → schedule
-      const scheduledAt = new Date(Date.now() + (Number(t.wait_minutes) || 0) * 60_000)
+      const unitMs: Record<string, number> = { sec: 1000, min: 60_000, hour: 3_600_000, day: 86_400_000 }
+      const waitMs = t.wait_value > 0
+        ? Number(t.wait_value) * (unitMs[t.wait_unit] ?? 60_000)
+        : Number(t.wait_minutes || 0) * 60_000
+      const scheduledAt = new Date(Date.now() + waitMs)
       const telegramBotId = t.chatbot_scenarios?.telegram_bot_id ?? null
 
       const { error: insErr } = await supabase.from('scheduled_triggers').insert({

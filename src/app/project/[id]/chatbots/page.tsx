@@ -829,6 +829,8 @@ type EventTrigger = {
   start_message_id: string
   is_negative: boolean
   wait_minutes: number
+  wait_value: number
+  wait_unit: string
   event_params: Record<string, unknown>
   cancel_on_event_type: string | null
   cancel_on_event_name: string | null
@@ -887,19 +889,21 @@ type TriggerGroup = {
   targetId: string
   extraParams: Record<string, unknown>
   triggers: EventTrigger[]
-  messages: Array<{ id: string; text: string | null; order_position: number }>
+  messages: Message[]
 }
 
 function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messages: Message[]; projectId: string }) {
   const supabase = createClient()
   const [groups, setGroups] = useState<TriggerGroup[]>([])
+  const [allButtons, setAllButtons] = useState<Button[]>([])
   const [loading, setLoading] = useState(true)
   const [videos, setVideos] = useState<VideoOpt[]>([])
   const [landings, setLandings] = useState<LandingOpt[]>([])
   const [products, setProducts] = useState<ProductOpt[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  // New group creation form
+  // New group creation form — упрощённая: только имя+тип+источник+галочки,
+  // тексты/медиа/кнопки/тайминги задаются после создания в полноценных карточках
   const [creating, setCreating] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newEventType, setNewEventType] = useState('video_start')
@@ -907,9 +911,8 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [newExtra, setNewExtra] = useState<Record<string, any>>({})
   const [newHasImmediate, setNewHasImmediate] = useState(true)
-  const [newImmediateText, setNewImmediateText] = useState('')
   const [newHasFollowups, setNewHasFollowups] = useState(false)
-  const [newFollowups, setNewFollowups] = useState<Array<{ text: string; waitMinutes: number }>>([])
+  const [newFollowupsCount, setNewFollowupsCount] = useState(2)
 
   const newEventDef = EVENT_TYPE_DEFS.find(e => e.key === newEventType)!
 
@@ -919,15 +922,22 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
       .select('*').eq('scenario_id', scenarioId).order('sort_in_group')
     const all = (trs ?? []) as EventTrigger[]
     const groupIds = [...new Set(all.filter(t => t.group_id).map(t => t.group_id as string))]
-    let msgList: Array<{ id: string; text: string | null; order_position: number; parent_trigger_group_id: string | null }> = []
+    let msgList: (Message & { parent_trigger_group_id: string | null })[] = []
+    let btnList: Button[] = []
     if (groupIds.length > 0) {
       const { data: msgs } = await supabase
         .from('scenario_messages')
-        .select('id, text, order_position, parent_trigger_group_id')
+        .select('*')
         .in('parent_trigger_group_id', groupIds)
         .order('order_position')
       msgList = (msgs ?? []) as typeof msgList
+      const msgIds = msgList.map(m => m.id)
+      if (msgIds.length > 0) {
+        const { data: btns } = await supabase.from('scenario_buttons').select('*').in('message_id', msgIds).order('order_position')
+        btnList = (btns ?? []) as Button[]
+      }
     }
+    setAllButtons(btnList)
 
     const byGroup = new Map<string, EventTrigger[]>()
     for (const t of all) {
@@ -952,7 +962,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
         targetId,
         extraParams: extra,
         triggers: trs,
-        messages: msgList.filter(m => m.parent_trigger_group_id === gid),
+        messages: msgList.filter(m => m.parent_trigger_group_id === gid) as Message[],
       })
     }
 
@@ -1010,7 +1020,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
       const { data: m } = await supabase.from('scenario_messages').insert({
         scenario_id: scenarioId,
         parent_trigger_group_id: groupId,
-        text: newImmediateText || '',
+        text: '',
         is_start: false,
         order_position: sort,
       }).select('id').single()
@@ -1021,7 +1031,8 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
           event_type: newEventType,
           event_params,
           is_negative: false,
-          wait_minutes: 0,
+          wait_value: 0,
+          wait_unit: 'min',
           label: newLabel,
           group_id: groupId,
           sort_in_group: sort,
@@ -1031,11 +1042,12 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
     }
 
     if (newHasFollowups && newEventDef.cancelOnEventType) {
-      for (const fu of newFollowups) {
+      const defaultWaits = [30, 60, 180, 360, 720, 1440]
+      for (let i = 0; i < newFollowupsCount; i++) {
         const { data: m } = await supabase.from('scenario_messages').insert({
           scenario_id: scenarioId,
           parent_trigger_group_id: groupId,
-          text: fu.text || '',
+          text: '',
           is_start: false,
           order_position: sort,
         }).select('id').single()
@@ -1046,7 +1058,8 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
           event_type: newEventType,
           event_params,
           is_negative: true,
-          wait_minutes: Math.max(1, fu.waitMinutes),
+          wait_value: defaultWaits[i] ?? 60,
+          wait_unit: 'min',
           cancel_on_event_type: newEventDef.cancelOnEventType,
           label: newLabel,
           group_id: groupId,
@@ -1057,12 +1070,12 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
     }
 
     setNewLabel('')
-    setNewImmediateText('')
-    setNewFollowups([])
+    setNewFollowupsCount(2)
     setNewHasFollowups(false)
     setNewHasImmediate(true)
     setNewTargetId('')
     setCreating(false)
+    setExpandedId(groupId)
     await load()
   }
 
@@ -1231,50 +1244,31 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
           )}
 
           {/* Immediate */}
-          <div className="border border-gray-200 rounded-lg p-3 space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={newHasImmediate} onChange={e => setNewHasImmediate(e.target.checked)} />
-              <span className="text-sm font-medium text-gray-900">Отправить сообщение сразу при событии</span>
-            </label>
-            {newHasImmediate && (
-              <textarea value={newImmediateText} onChange={e => setNewImmediateText(e.target.value)}
-                rows={3} placeholder="Текст сообщения, которое бот отправит когда событие случится..."
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-            )}
-          </div>
+          <label className="flex items-center gap-2 cursor-pointer border border-gray-200 rounded-lg p-3">
+            <input type="checkbox" checked={newHasImmediate} onChange={e => setNewHasImmediate(e.target.checked)} />
+            <div>
+              <div className="text-sm font-medium text-gray-900">Отправить сообщение сразу при событии</div>
+              <div className="text-xs text-gray-500">Сообщение, медиа, кнопки настроишь после создания</div>
+            </div>
+          </label>
 
           {/* Followups */}
           {newEventDef.cancelOnEventType ? (
             <div className="border border-gray-200 rounded-lg p-3 space-y-3">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={newHasFollowups} onChange={e => setNewHasFollowups(e.target.checked)} />
-                <span className="text-sm font-medium text-gray-900">Отправить дожимы если событие НЕ произошло</span>
+                <div>
+                  <div className="text-sm font-medium text-gray-900">Отправить дожимы если событие НЕ произошло</div>
+                  <div className="text-xs text-gray-500">Тексты и тайминги настроишь после создания. Если клиент {newEventDef.cancelOnEventType === 'video_complete' ? 'досмотрит видео' : newEventDef.cancelOnEventType === 'order_created' ? 'создаст заказ' : newEventDef.cancelOnEventType === 'order_paid' ? 'оплатит' : 'совершит отменяющее действие'} — дожимы отменятся</div>
+                </div>
               </label>
               {newHasFollowups && (
-                <>
-                  {newFollowups.map((fu, idx) => (
-                    <div key={idx} className="bg-gray-50 rounded-lg p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-700">Дожим {idx + 1}</span>
-                        <button onClick={() => setNewFollowups(arr => arr.filter((_, i) => i !== idx))} className="text-xs text-red-500">удалить</button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-600">Через</span>
-                        <input type="number" value={fu.waitMinutes} onChange={e => setNewFollowups(arr => arr.map((x, i) => i === idx ? { ...x, waitMinutes: Number(e.target.value) } : x))}
-                          className="w-24 px-2 py-1 rounded border border-gray-200 text-sm" />
-                        <span className="text-xs text-gray-600">минут ({(fu.waitMinutes / 60).toFixed(1)} ч)</span>
-                      </div>
-                      <textarea value={fu.text} onChange={e => setNewFollowups(arr => arr.map((x, i) => i === idx ? { ...x, text: e.target.value } : x))}
-                        rows={3} placeholder="Текст дожима..."
-                        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                    </div>
-                  ))}
-                  <button onClick={() => setNewFollowups(arr => [...arr, { text: '', waitMinutes: arr.length === 0 ? 60 : arr[arr.length - 1].waitMinutes * 2 }])}
-                    className="text-xs text-[#6A55F8] font-medium hover:underline">
-                    + Добавить дожим
-                  </button>
-                  <p className="text-xs text-gray-400">Если клиент {newEventDef.cancelOnEventType === 'video_complete' ? 'досмотрит видео' : newEventDef.cancelOnEventType === 'order_created' ? 'создаст заказ' : newEventDef.cancelOnEventType === 'order_paid' ? 'оплатит' : 'совершит отменяющее действие'} в течение этого времени — дожимы не отправятся</p>
-                </>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600">Сколько дожимов создать:</span>
+                  <input type="number" min={1} max={10} value={newFollowupsCount}
+                    onChange={e => setNewFollowupsCount(Math.max(1, Math.min(10, Number(e.target.value))))}
+                    className="w-20 px-2 py-1 rounded border border-gray-200 text-sm" />
+                </div>
               )}
             </div>
           ) : (
@@ -1285,7 +1279,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
             <button onClick={createGroup} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
               Создать триггер
             </button>
-            <button onClick={() => { setCreating(false); setNewLabel(''); setNewImmediateText(''); setNewFollowups([]) }}
+            <button onClick={() => { setCreating(false); setNewLabel('') }}
               className="px-4 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
               Отмена
             </button>
@@ -1341,7 +1335,25 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                       ) : (
                         immediateTriggers.map(t => {
                           const msg = g.messages.find(m => m.id === t.start_message_id)
-                          return msg ? <TriggerMessageEditor key={msg.id} msg={msg} onSaveText={text => updateMessage(msg.id, text)} onDelete={() => removeMessageFromGroup(msg.id)} /> : null
+                          if (!msg) return null
+                          const msgButtons = allButtons.filter(b => b.message_id === msg.id)
+                          return (
+                            <MessageCard key={msg.id} projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                              onUpdate={() => { void load() }}
+                              onDelete={() => removeMessageFromGroup(msg.id)}
+                              onAddButton={async () => {
+                                await supabase.from('scenario_buttons').insert({
+                                  message_id: msg.id,
+                                  order_position: msgButtons.length,
+                                  text: 'Кнопка',
+                                  action_type: 'url',
+                                })
+                                await load()
+                              }}
+                              onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
+                              onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
+                            />
+                          )
                         })
                       )}
                     </div>
@@ -1356,15 +1368,31 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                         {followupTriggers.length === 0 ? (
                           <div className="text-xs text-gray-400 italic">Выключено — дожимы не настроены</div>
                         ) : (
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             {followupTriggers.map(t => {
                               const msg = g.messages.find(m => m.id === t.start_message_id)
-                              return msg ? (
-                                <TriggerMessageEditor key={msg.id} msg={msg} wait={t.wait_minutes}
-                                  onWaitChange={minutes => updateFollowupWait(t.id, minutes)}
-                                  onSaveText={text => updateMessage(msg.id, text)}
-                                  onDelete={() => removeMessageFromGroup(msg.id)} />
-                              ) : null
+                              if (!msg) return null
+                              const msgButtons = allButtons.filter(b => b.message_id === msg.id)
+                              return (
+                                <div key={msg.id} className="space-y-1">
+                                  <TriggerWaitEditor trigger={t} onChange={() => load()} />
+                                  <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                                    onUpdate={() => { void load() }}
+                                    onDelete={() => removeMessageFromGroup(msg.id)}
+                                    onAddButton={async () => {
+                                      await supabase.from('scenario_buttons').insert({
+                                        message_id: msg.id,
+                                        order_position: msgButtons.length,
+                                        text: 'Кнопка',
+                                        action_type: 'url',
+                                      })
+                                      await load()
+                                    }}
+                                    onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
+                                    onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
+                                  />
+                                </div>
+                              )
                             })}
                           </div>
                         )}
@@ -1381,40 +1409,44 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
   )
 }
 
-function TriggerMessageEditor({ msg, wait, onWaitChange, onSaveText, onDelete }: {
-  msg: { id: string; text: string | null }
-  wait?: number
-  onWaitChange?: (minutes: number) => void
-  onSaveText: (text: string) => void
-  onDelete: () => void
+function TriggerWaitEditor({ trigger, onChange }: {
+  trigger: EventTrigger
+  onChange: () => void
 }) {
-  const [text, setText] = useState(msg.text ?? '')
-  const [waitVal, setWaitVal] = useState(wait ?? 0)
-  const [dirty, setDirty] = useState(false)
+  const supabase = createClient()
+  const initValue = trigger.wait_value > 0 ? trigger.wait_value : trigger.wait_minutes
+  const initUnit = trigger.wait_value > 0 ? trigger.wait_unit : 'min'
+  const [value, setValue] = useState(initValue)
+  const [unit, setUnit] = useState(initUnit)
+  const [saving, setSaving] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    const minutesEquiv = unit === 'sec' ? Math.max(1, Math.round(value / 60)) : unit === 'hour' ? value * 60 : unit === 'day' ? value * 1440 : value
+    await supabase.from('scenario_event_triggers').update({
+      wait_value: value,
+      wait_unit: unit,
+      wait_minutes: Math.max(1, minutesEquiv),
+    }).eq('id', trigger.id)
+    setSaving(false)
+    onChange()
+  }
 
   return (
-    <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-      {wait !== undefined && onWaitChange && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-600">Через</span>
-          <input type="number" value={waitVal} onChange={e => setWaitVal(Number(e.target.value))}
-            onBlur={() => { if (waitVal !== wait) onWaitChange(waitVal) }}
-            className="w-20 px-2 py-1 rounded border border-gray-200 text-sm" />
-          <span className="text-xs text-gray-600">мин ({(waitVal / 60).toFixed(1)} ч)</span>
-        </div>
-      )}
-      <textarea value={text} onChange={e => { setText(e.target.value); setDirty(true) }}
-        rows={3} placeholder="Текст сообщения..."
-        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-      <div className="flex items-center justify-between">
-        <button onClick={onDelete} className="text-xs text-red-500 hover:underline">Удалить</button>
-        {dirty && (
-          <button onClick={() => { onSaveText(text); setDirty(false) }}
-            className="text-xs bg-[#6A55F8] text-white px-3 py-1 rounded-md">
-            Сохранить
-          </button>
-        )}
-      </div>
+    <div className="flex items-center gap-2 bg-[#F0EDFF] rounded-lg px-3 py-2 text-xs">
+      <span className="text-gray-700 font-medium">⏱ Отправить через</span>
+      <input type="number" min={1} value={value} onChange={e => setValue(Number(e.target.value))}
+        onBlur={save} disabled={saving}
+        className="w-16 px-2 py-1 rounded border border-gray-200 text-sm" />
+      <select value={unit} onChange={e => { setUnit(e.target.value); setTimeout(save, 0) }}
+        disabled={saving}
+        className="px-2 py-1 rounded border border-gray-200 text-sm">
+        <option value="sec">секунд</option>
+        <option value="min">минут</option>
+        <option value="hour">часов</option>
+        <option value="day">дней</option>
+      </select>
+      <span className="text-gray-500">после события</span>
     </div>
   )
 }
