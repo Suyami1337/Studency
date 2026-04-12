@@ -415,101 +415,11 @@ function SourcesTab({ projectId }: { projectId: string }) {
   )
 }
 
-// ─── Вкладка Воронки (конверсии по этапам) ────────────────────────────────────
+// ─── Вкладка Воронки (сквозная воронка + воронки по этапам + сравнение источников) ──
 function FunnelsTab({ projectId }: { projectId: string }) {
   const supabase = createClient()
-  const [loading, setLoading] = useState(true)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [funnels, setFunnels] = useState<any[]>([])
-
-  useEffect(() => {
-    async function load() {
-      const { data: funnelsData } = await supabase
-        .from('funnels').select('id, name').eq('project_id', projectId)
-
-      const { data: stages } = await supabase
-        .from('funnel_stages').select('id, funnel_id, name, order_position')
-        .in('funnel_id', (funnelsData ?? []).map(f => f.id))
-        .order('order_position')
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const funnelsWithStages = await Promise.all((funnelsData ?? []).map(async (f: any) => {
-        const fStages = (stages ?? []).filter((s: { funnel_id: string }) => s.funnel_id === f.id)
-        const stagesWithCounts = await Promise.all(fStages.map(async (s: { id: string; name: string }) => {
-          const { count } = await supabase
-            .from('customers')
-            .select('*', { count: 'exact', head: true })
-            .eq('funnel_stage_id', s.id)
-          return { ...s, count: count ?? 0 }
-        }))
-        return { ...f, stages: stagesWithCounts }
-      }))
-
-      setFunnels(funnelsWithStages)
-      setLoading(false)
-    }
-    load()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId])
-
-  if (loading) return <SkeletonList count={2} />
-  if (funnels.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-        <p className="text-sm text-gray-500">Нет воронок в проекте</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      {funnels.map(f => {
-        const total = f.stages[0]?.count ?? 0
-        return (
-          <div key={f.id} className="bg-white rounded-xl border border-gray-100 p-5">
-            <h3 className="text-base font-semibold text-gray-900 mb-4">{f.name}</h3>
-            <div className="space-y-2">
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-              {f.stages.map((s: any, i: number) => {
-                const prevCount = i > 0 ? f.stages[i - 1].count : total
-                const conversion = prevCount > 0 ? Math.round((s.count / prevCount) * 100) : 0
-                const width = total > 0 ? Math.max(5, (s.count / total) * 100) : 5
-                return (
-                  <div key={s.id}>
-                    <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                      <span className="font-medium">{i + 1}. {s.name}</span>
-                      <span>{s.count} клиентов · {conversion}%</span>
-                    </div>
-                    <div className="h-8 bg-gray-100 rounded-lg overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-xs font-medium transition-all"
-                        style={{ width: `${width}%` }}
-                      >
-                        {s.count}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ─── Вкладка Сквозная (клиенты от первого касания до оплаты) ─────────────────
-function CrossAnalyticsTab({ projectId }: { projectId: string }) {
-  const supabase = createClient()
-  const [loading, setLoading] = useState(true)
-  const [sourceFilter, setSourceFilter] = useState<string>('')
+  const [sourceFilter, setSourceFilter] = useState('')
   const [sources, setSources] = useState<Array<{ id: string; name: string; slug: string; click_count: number }>>([])
-  const [stats, setStats] = useState({
-    totalLeads: 0, botSubscribed: 0, channelSubscribed: 0,
-    engagedInBot: 0, visitedLanding: 0, watchedVideo: 0,
-    createdOrder: 0, paidOrder: 0, formSubmit: 0,
-  })
 
   useEffect(() => {
     supabase.from('traffic_sources').select('id, name, slug, click_count')
@@ -517,6 +427,44 @@ function CrossAnalyticsTab({ projectId }: { projectId: string }) {
       .then(({ data }) => setSources((data ?? []) as typeof sources))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  return (
+    <div className="space-y-5">
+      {/* Фильтр по источнику — общий для всех секций */}
+      <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-medium text-gray-700">Источник трафика:</span>
+        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+          <option value="">Все источники</option>
+          {sources.map(s => (
+            <option key={s.id} value={s.id}>{s.name} ({s.click_count} кликов)</option>
+          ))}
+        </select>
+        {sourceFilter && (
+          <button onClick={() => setSourceFilter('')} className="text-xs text-[#6A55F8] hover:underline">Сбросить</button>
+        )}
+      </div>
+
+      {/* Сквозная воронка */}
+      <CrossAnalyticsTab projectId={projectId} sourceFilter={sourceFilter} sourceName={sources.find(s => s.id === sourceFilter)?.name} />
+
+      {/* Таблица сравнения (только когда фильтр не выбран) */}
+      {!sourceFilter && sources.length > 0 && (
+        <SourceComparisonTable projectId={projectId} sources={sources} />
+      )}
+    </div>
+  )
+}
+
+// ─── Сквозная воронка (используется внутри FunnelsTab) ─────────────────
+function CrossAnalyticsTab({ projectId, sourceFilter, sourceName }: { projectId: string; sourceFilter: string; sourceName?: string }) {
+  const supabase = createClient()
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({
+    totalLeads: 0, botSubscribed: 0, channelSubscribed: 0,
+    engagedInBot: 0, visitedLanding: 0, watchedVideo: 0,
+    createdOrder: 0, paidOrder: 0, formSubmit: 0,
+  })
 
   useEffect(() => {
     async function load() {
@@ -600,59 +548,36 @@ function CrossAnalyticsTab({ projectId }: { projectId: string }) {
   ]
 
   return (
-    <div className="space-y-5">
-      {/* Фильтр по источнику */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
-        <span className="text-xs font-medium text-gray-700">Источник трафика:</span>
-        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
-          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-          <option value="">Все источники</option>
-          {sources.map(s => (
-            <option key={s.id} value={s.id}>{s.name} ({s.click_count} кликов)</option>
-          ))}
-        </select>
-        {sourceFilter && (
-          <button onClick={() => setSourceFilter('')} className="text-xs text-[#6A55F8] hover:underline">Сбросить</button>
-        )}
-      </div>
+    <div className="bg-white rounded-xl border border-gray-100 p-5">
+      <h3 className="text-base font-semibold text-gray-900 mb-1">
+        Сквозная воронка
+        {sourceName && <span className="font-normal text-[#6A55F8] ml-2">· {sourceName}</span>}
+      </h3>
+      <p className="text-xs text-gray-500 mb-5">От первого касания до оплаты</p>
 
-      {/* Воронка */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
-        <h3 className="text-base font-semibold text-gray-900 mb-1">
-          Сквозная воронка
-          {sourceFilter && <span className="font-normal text-[#6A55F8] ml-2">· {sources.find(s => s.id === sourceFilter)?.name}</span>}
-        </h3>
-        <p className="text-xs text-gray-500 mb-5">От первого касания до оплаты</p>
-
-        {loading ? <SkeletonList count={1} /> : (
-          <div className="space-y-2">
-            {steps.map((s, i) => {
-              const prev = i > 0 ? steps[i - 1].count : stats.totalLeads
-              const conversion = prev > 0 ? Math.round((s.count / prev) * 100) : 0
-              const total = stats.totalLeads || 1
-              const width = Math.max(5, (s.count / total) * 100)
-              return (
-                <div key={i}>
-                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                    <span className="font-medium flex items-center gap-2">
-                      <span>{s.icon}</span>{s.label}
-                    </span>
-                    <span>{s.count} ({conversion}%)</span>
-                  </div>
-                  <div className="h-10 bg-gray-100 rounded-lg overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-sm font-semibold transition-all"
-                      style={{ width: `${width}%` }}>{s.count}</div>
-                  </div>
+      {loading ? <SkeletonList count={1} /> : (
+        <div className="space-y-2">
+          {steps.map((s, i) => {
+            const prev = i > 0 ? steps[i - 1].count : stats.totalLeads
+            const conversion = prev > 0 ? Math.round((s.count / prev) * 100) : 0
+            const total = stats.totalLeads || 1
+            const width = Math.max(5, (s.count / total) * 100)
+            return (
+              <div key={i}>
+                <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                  <span className="font-medium flex items-center gap-2">
+                    <span>{s.icon}</span>{s.label}
+                  </span>
+                  <span>{s.count} ({conversion}%)</span>
                 </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Таблица сравнения источников */}
-      {!sourceFilter && sources.length > 0 && (
-        <SourceComparisonTable projectId={projectId} sources={sources} />
+                <div className="h-10 bg-gray-100 rounded-lg overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center px-3 text-white text-sm font-semibold transition-all"
+                    style={{ width: `${width}%` }}>{s.count}</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )
@@ -774,12 +699,11 @@ function SourceComparisonTable({ projectId, sources }: {
 export default function AnalyticsPage() {
   const params = useParams()
   const projectId = params.id as string
-  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'cross' | 'sources'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'sources'>('overview')
 
   const tabs = [
     { id: 'overview' as const, label: 'Обзор' },
     { id: 'funnels' as const, label: 'Воронки' },
-    { id: 'cross' as const, label: 'Сквозная' },
     { id: 'sources' as const, label: 'Источники трафика' },
   ]
 
@@ -810,7 +734,6 @@ export default function AnalyticsPage() {
 
       {activeTab === 'overview' && <OverviewTab projectId={projectId} />}
       {activeTab === 'funnels' && <FunnelsTab projectId={projectId} />}
-      {activeTab === 'cross' && <CrossAnalyticsTab projectId={projectId} />}
       {activeTab === 'sources' && <SourcesTab projectId={projectId} />}
     </div>
   )
