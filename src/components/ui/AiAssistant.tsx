@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 type Message = { from: 'ai' | 'user'; text: string }
 
@@ -83,10 +84,36 @@ export function AiAssistantOverlay({
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-3">
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-                  msg.from === 'user' ? 'bg-[#6A55F8] text-white rounded-br-none' : 'bg-gray-100 text-gray-800 rounded-bl-none'
+                <div className={`max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
+                  msg.from === 'user'
+                    ? 'bg-[#6A55F8] text-white rounded-br-none whitespace-pre-wrap'
+                    : 'bg-gray-100 text-gray-800 rounded-bl-none ai-markdown'
                 }`}>
-                  {msg.text}
+                  {msg.from === 'user' ? (
+                    msg.text
+                  ) : (
+                    <ReactMarkdown
+                      components={{
+                        h1: ({ children }) => <div className="text-base font-bold text-gray-900 mt-2 mb-1.5 first:mt-0">{children}</div>,
+                        h2: ({ children }) => <div className="text-sm font-bold text-gray-900 mt-2 mb-1 first:mt-0">{children}</div>,
+                        h3: ({ children }) => <div className="text-sm font-semibold text-gray-900 mt-1.5 mb-1 first:mt-0">{children}</div>,
+                        h4: ({ children }) => <div className="text-sm font-semibold text-gray-800 mt-1.5 mb-1 first:mt-0">{children}</div>,
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ol>,
+                        li: ({ children }) => <li>{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                        em: ({ children }) => <em className="italic">{children}</em>,
+                        code: ({ children }) => <code className="bg-gray-200 text-[#6A55F8] px-1 py-0.5 rounded text-[13px] font-mono">{children}</code>,
+                        pre: ({ children }) => <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-[13px] mb-2">{children}</pre>,
+                        hr: () => <hr className="my-2 border-gray-300" />,
+                        blockquote: ({ children }) => <blockquote className="border-l-2 border-[#6A55F8] pl-3 text-gray-600 italic mb-2">{children}</blockquote>,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#6A55F8] underline">{children}</a>,
+                      }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  )}
                 </div>
               </div>
             ))}
