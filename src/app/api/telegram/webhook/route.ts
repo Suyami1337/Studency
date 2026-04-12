@@ -19,15 +19,43 @@ export async function POST(request: NextRequest) {
     if (!botToken) return NextResponse.json({ error: 'No token' }, { status: 400 })
 
     // =============================================
-    // HANDLE my_chat_member — подписка/блокировка бота
+    // HANDLE my_chat_member — подписка/блокировка бота ИЛИ добавление в канал как админа
     // =============================================
     if (body.my_chat_member) {
       const mcm = body.my_chat_member
+      const chatType = mcm.chat?.type // 'private' | 'channel' | 'group' | 'supergroup'
+      const newStatus = mcm.new_chat_member?.status
       const tgUserId = mcm.from?.id
-      const newStatus = mcm.new_chat_member?.status // 'member' | 'kicked' | 'left' | 'restricted'
-      if (tgUserId && newStatus) {
-        const { data: bot } = await supabase.from('telegram_bots').select('project_id').eq('token', botToken).single()
-        if (bot) {
+
+      const { data: bot } = await supabase.from('telegram_bots').select('id, project_id, channel_id').eq('token', botToken).single()
+
+      if (bot) {
+        // ── Бота добавили/удалили как администратора канала ──
+        if (chatType === 'channel' || chatType === 'supergroup') {
+          const channelChatId = String(mcm.chat?.id ?? '')
+          const channelUsername = mcm.chat?.username ?? null
+
+          if (newStatus === 'administrator' || newStatus === 'creator') {
+            // Автоматически привязываем канал к боту
+            await supabase.from('telegram_bots').update({
+              channel_id: channelChatId,
+              channel_username: channelUsername ? `@${channelUsername}` : null,
+            }).eq('id', bot.id)
+            console.log(`Channel auto-linked: ${channelUsername ?? channelChatId} → bot ${bot.id}`)
+          } else if (newStatus === 'left' || newStatus === 'kicked') {
+            // Бота удалили из администраторов канала — отвязываем
+            if (bot.channel_id === channelChatId) {
+              await supabase.from('telegram_bots').update({
+                channel_id: null, channel_username: null,
+              }).eq('id', bot.id)
+              console.log(`Channel auto-unlinked from bot ${bot.id}`)
+            }
+          }
+          return NextResponse.json({ ok: true })
+        }
+
+        // ── Пользователь подписался/заблокировал бота (private chat) ──
+        if (chatType === 'private' && tgUserId && newStatus) {
           const { data: customer } = await supabase.from('customers')
             .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
           if (customer) {

@@ -99,38 +99,24 @@ function BotCard({ bot, projectId, onReload }: { bot: TelegramBot; projectId: st
             </button>
           </div>
 
-          {/* Привязка канала */}
+          {/* Канал — привязывается автоматически */}
           <div>
             <p className="text-xs font-medium text-gray-700 mb-1">Telegram-канал</p>
-            <p className="text-[10px] text-gray-400 mb-2">Бот должен быть администратором канала. Тогда подписки/отписки будут фиксироваться автоматически.</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-gray-500 mb-0.5 block">ID канала</label>
-                <input type="text" value={channelId}
-                  onChange={e => { setChannelId(e.target.value); setChannelDirty(true) }}
-                  placeholder="-1001234567890"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:border-[#6A55F8]" />
+            {bot.channel_id ? (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-green-600 text-sm">✓</span>
+                  <div>
+                    <p className="text-sm font-medium text-green-800">Канал привязан: {bot.channel_username || bot.channel_id}</p>
+                    <p className="text-[10px] text-green-600 mt-0.5">Подписки и отписки фиксируются автоматически</p>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] text-gray-500 mb-0.5 block">Username канала</label>
-                <input type="text" value={channelUsername}
-                  onChange={e => { setChannelUsername(e.target.value); setChannelDirty(true) }}
-                  placeholder="@mychannel"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+            ) : (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-600 mb-1">Канал не привязан</p>
+                <p className="text-[10px] text-gray-400">Добавьте этого бота как <strong>администратора</strong> в ваш Telegram-канал — канал привяжется автоматически. Ничего вводить не нужно.</p>
               </div>
-            </div>
-            {channelDirty && (
-              <div className="flex gap-2 mt-2">
-                <button onClick={saveChannel} disabled={savingChannel}
-                  className="px-3 py-1.5 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0] disabled:opacity-50">
-                  {savingChannel ? '...' : 'Сохранить канал'}
-                </button>
-                <button onClick={() => { setChannelId(bot.channel_id ?? ''); setChannelUsername(bot.channel_username ?? ''); setChannelDirty(false) }}
-                  className="px-3 py-1.5 text-xs text-gray-500 rounded-lg hover:bg-gray-100">Отменить</button>
-              </div>
-            )}
-            {bot.channel_id && !channelDirty && (
-              <p className="text-[10px] text-green-600 mt-1">✓ Канал привязан: {bot.channel_username || bot.channel_id}</p>
             )}
           </div>
 
