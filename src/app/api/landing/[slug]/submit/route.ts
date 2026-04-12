@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 export const dynamic = 'force-dynamic'
 
@@ -180,6 +181,16 @@ export async function POST(
 
     // 6. Инкремент конверсий лендинга
     await supabase.rpc('increment_landing_conversions', { p_landing_id: landing.id })
+
+    // 7. CRM автоматизация
+    if (customerId && projectId) {
+      evaluateAutoBoards(supabase, {
+        projectId,
+        customerId,
+        eventType: 'form_submit',
+        eventData: { landing_slug: slug, landing_name: landing.name, email: body.email, phone: body.phone },
+      }).catch(err => console.error('CRM auto error:', err))
+    }
 
     return NextResponse.json(
       { ok: true, customerId },

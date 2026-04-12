@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import { createHash, randomUUID } from 'crypto'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,6 +100,14 @@ export async function GET(
             url: source.destination_url,
           },
         })
+
+        // CRM автоматизация — landing_visit
+        await evaluateAutoBoards(supabase, {
+          projectId: source.project_id,
+          customerId: customer.id,
+          eventType: 'landing_visit',
+          eventData: { source_slug: source.slug, source_name: source.name, landing_url: source.destination_url },
+        }).catch(err => console.error('CRM auto error:', err))
       }
     }
   })()

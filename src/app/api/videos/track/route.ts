@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 export const runtime = 'nodejs'
 
@@ -107,6 +108,16 @@ export async function POST(request: NextRequest) {
           completed,
         },
       })
+    }
+
+    // 4. CRM автоматизация
+    if (customerId && event) {
+      evaluateAutoBoards(supabase, {
+        projectId: video.project_id,
+        customerId,
+        eventType: `video_${event}`,
+        eventData: { video_id, video_title: video.title, watch_time_seconds, max_position_seconds, completed },
+      }).catch(err => console.error('CRM auto error:', err))
     }
 
     return NextResponse.json({ ok: true, customer_id: customerId })

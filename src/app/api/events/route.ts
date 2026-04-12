@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendScenarioMessage } from '@/lib/scenario-sender'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 export const runtime = 'nodejs'
 
@@ -108,6 +109,16 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    }
+
+    // 3. CRM автоматизация — двигаем клиента по доскам если правила совпали
+    if (customer_id && project_id) {
+      evaluateAutoBoards(supabase, {
+        projectId: project_id,
+        customerId: customer_id,
+        eventType: event_type,
+        eventData: { event_name, source, source_id, ...metadata },
+      }).catch(err => console.error('CRM auto error:', err))
     }
 
     return NextResponse.json({ ok: true, event_id: event.id })

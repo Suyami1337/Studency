@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendScenarioMessage } from '@/lib/scenario-sender'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 function getSupabase() {
   return createClient(
@@ -124,6 +125,13 @@ export async function POST(request: NextRequest) {
           data: { bot_name: bot.name, telegram_username: username },
         })
 
+        // CRM автоматизация — bot_start
+        evaluateAutoBoards(supabase, {
+          projectId, customerId: customer.id,
+          eventType: 'bot_start',
+          eventData: { bot_name: bot.name, bot_id: bot.id },
+        }).catch(err => console.error('CRM auto error:', err))
+
         if (sourceSlugFromStart) {
           const { data: source } = await supabase
             .from('traffic_sources')
@@ -189,6 +197,13 @@ export async function POST(request: NextRequest) {
             customer_id: customerId, project_id: projectId, action: 'bot_button_click',
             data: { button_text: btn.text, action_type: btn.action_type },
           })
+
+          // CRM автоматизация — bot_button_click
+          evaluateAutoBoards(supabase, {
+            projectId, customerId,
+            eventType: 'bot_button_click',
+            eventData: { button_text: btn.text, button_id: btn.id, action_type: btn.action_type },
+          }).catch(err => console.error('CRM auto error:', err))
         }
 
         if (btn.action_type === 'goto_message' && btn.action_goto_message_id) {

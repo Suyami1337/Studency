@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { verifyWebhookSignature } from '@/lib/prodamus'
+import { evaluateAutoBoards } from '@/lib/crm-automation'
 
 export const runtime = 'nodejs'
 
@@ -90,6 +91,18 @@ export async function POST(request: NextRequest) {
           }, { onConflict: 'customer_id,tariff_id' })
         }
       }
+
+      // CRM автоматизация
+      evaluateAutoBoards(supabase, {
+        projectId: order.project_id,
+        customerId: order.customer_id,
+        eventType: 'order_paid',
+        eventData: {
+          order_id: orderId, amount: sum,
+          product_id: order.product_id, product_name: order.product_name,
+          tariff_id: order.tariff_id,
+        },
+      }).catch(err => console.error('CRM auto error:', err))
     }
 
     return NextResponse.json({ ok: true })
