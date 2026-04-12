@@ -1167,20 +1167,18 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
 
       {creating && (
         <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-4">
-          <div className="grid grid-cols-[1fr_1fr] gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Имя триггера</label>
-              <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)}
-                placeholder="Например: Недосмотр видео про оффер"
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Тип события</label>
-              <select value={newEventType} onChange={e => setNewEventType(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                {EVENT_TYPE_DEFS.map(e => <option key={e.key} value={e.key}>{e.emoji} {e.label}</option>)}
-              </select>
-            </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Имя триггера</label>
+            <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)}
+              placeholder="Например: Недосмотр видео про оффер"
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Тип события</label>
+            <select value={newEventType} onChange={e => setNewEventType(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+              {EVENT_TYPE_DEFS.map(e => <option key={e.key} value={e.key}>{e.emoji} {e.label}</option>)}
+            </select>
           </div>
 
           {newEventDef.targetKind && (
