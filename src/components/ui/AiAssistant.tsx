@@ -3,7 +3,18 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 
-type Message = { from: 'ai' | 'user'; text: string }
+type ToolCallInfo = { name: string; summary: string; ok: boolean }
+type ChatEntry =
+  | { kind: 'user'; text: string }
+  | { kind: 'ai'; text: string; tools?: ToolCallInfo[] }
+  | { kind: 'system'; text: string }
+
+export type AgentConfig = {
+  endpoint: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: Record<string, any>
+  onChangesApplied?: () => void
+}
 
 export function AiAssistantButton({ isOpen, onClick }: { isOpen: boolean; onClick: () => void }) {
   return (
@@ -24,46 +35,76 @@ export function AiAssistantOverlay({
   onClose,
   title = 'AI-помощник',
   placeholder = 'Описать что нужно...',
-  initialMessages = [{ from: 'ai' as const, text: 'Привет! Чем могу помочь?' }],
+  initialMessages = [{ kind: 'ai' as const, text: 'Привет! Чем могу помочь?' }],
   context,
+  agent,
 }: {
   isOpen: boolean
   onClose: () => void
   title?: string
   placeholder?: string
-  initialMessages?: Message[]
+  initialMessages?: ChatEntry[]
   context?: string
+  /** If set — use agentic tool-use endpoint with conversation history */
+  agent?: AgentConfig
 }) {
-  const [messages, setMessages] = useState<Message[]>(initialMessages)
+  const [entries, setEntries] = useState<ChatEntry[]>(initialMessages)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [agentHistory, setAgentHistory] = useState<any[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, loading])
+  }, [entries, loading])
+
+  // Reset on reopen — fresh conversation each time overlay opens
+  useEffect(() => {
+    if (isOpen) {
+      setEntries(initialMessages)
+      setAgentHistory([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
 
   if (!isOpen) return null
 
   async function send() {
     const question = input.trim()
     if (!question || loading) return
-    setMessages(prev => [...prev, { from: 'user', text: question }])
+    setEntries(prev => [...prev, { kind: 'user', text: question }])
     setInput('')
     setLoading(true)
     try {
-      const res = await fetch('/api/ai/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, context }),
-      })
-      const json = await res.json()
-      const text = json.error
-        ? `⚠️ Ошибка: ${json.error}${json.hint ? '\n' + json.hint : ''}`
-        : (json.answer || 'Пустой ответ')
-      setMessages(prev => [...prev, { from: 'ai', text }])
+      if (agent) {
+        const res = await fetch(agent.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...agent.payload, history: agentHistory, userMessage: question }),
+        })
+        const json = await res.json()
+        if (json.error) {
+          setEntries(prev => [...prev, { kind: 'ai', text: `⚠️ Ошибка: ${json.error}${json.hint ? '\n' + json.hint : ''}` }])
+        } else {
+          setEntries(prev => [...prev, { kind: 'ai', text: json.assistantText || 'Готово.', tools: json.toolCalls }])
+          setAgentHistory(json.history ?? [])
+          if (json.changesApplied && agent.onChangesApplied) agent.onChangesApplied()
+        }
+      } else {
+        const res = await fetch('/api/ai/assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, context }),
+        })
+        const json = await res.json()
+        const text = json.error
+          ? `⚠️ Ошибка: ${json.error}${json.hint ? '\n' + json.hint : ''}`
+          : (json.answer || 'Пустой ответ')
+        setEntries(prev => [...prev, { kind: 'ai', text }])
+      }
     } catch (err) {
-      setMessages(prev => [...prev, { from: 'ai', text: '⚠️ Ошибка сети: ' + (err instanceof Error ? err.message : 'unknown') }])
+      setEntries(prev => [...prev, { kind: 'ai', text: '⚠️ Ошибка сети: ' + (err instanceof Error ? err.message : 'unknown') }])
     } finally {
       setLoading(false)
     }
@@ -77,46 +118,72 @@ export function AiAssistantOverlay({
           <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white text-sm font-bold">AI</div>
-              <span className="text-sm font-semibold text-white">{title}</span>
+              <div className="flex flex-col">
+                <span className="text-sm font-semibold text-white">{title}</span>
+                {agent && <span className="text-[10px] text-white/70">Агент · применяет изменения после подтверждения</span>}
+              </div>
             </div>
             <button onClick={onClose} className="text-white/70 hover:text-white transition-colors text-lg">✕</button>
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-3">
-            {messages.map((msg, i) => (
-              <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
-                  msg.from === 'user'
-                    ? 'bg-[#6A55F8] text-white rounded-br-none whitespace-pre-wrap'
-                    : 'bg-gray-100 text-gray-800 rounded-bl-none ai-markdown'
-                }`}>
-                  {msg.from === 'user' ? (
-                    msg.text
-                  ) : (
-                    <ReactMarkdown
-                      components={{
-                        h1: ({ children }) => <div className="text-base font-bold text-gray-900 mt-2 mb-1.5 first:mt-0">{children}</div>,
-                        h2: ({ children }) => <div className="text-sm font-bold text-gray-900 mt-2 mb-1 first:mt-0">{children}</div>,
-                        h3: ({ children }) => <div className="text-sm font-semibold text-gray-900 mt-1.5 mb-1 first:mt-0">{children}</div>,
-                        h4: ({ children }) => <div className="text-sm font-semibold text-gray-800 mt-1.5 mb-1 first:mt-0">{children}</div>,
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                        ul: ({ children }) => <ul className="list-disc pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ol>,
-                        li: ({ children }) => <li>{children}</li>,
-                        strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                        em: ({ children }) => <em className="italic">{children}</em>,
-                        code: ({ children }) => <code className="bg-gray-200 text-[#6A55F8] px-1 py-0.5 rounded text-[13px] font-mono">{children}</code>,
-                        pre: ({ children }) => <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-[13px] mb-2">{children}</pre>,
-                        hr: () => <hr className="my-2 border-gray-300" />,
-                        blockquote: ({ children }) => <blockquote className="border-l-2 border-[#6A55F8] pl-3 text-gray-600 italic mb-2">{children}</blockquote>,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#6A55F8] underline">{children}</a>,
-                      }}
-                    >
-                      {msg.text}
-                    </ReactMarkdown>
-                  )}
+            {entries.map((entry, i) => {
+              if (entry.kind === 'user') {
+                return (
+                  <div key={i} className="flex justify-end">
+                    <div className="max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#6A55F8] text-white rounded-br-none whitespace-pre-wrap">
+                      {entry.text}
+                    </div>
+                  </div>
+                )
+              }
+              if (entry.kind === 'system') {
+                return (
+                  <div key={i} className="flex justify-center">
+                    <div className="text-xs text-gray-500 italic">{entry.text}</div>
+                  </div>
+                )
+              }
+              return (
+                <div key={i} className="flex justify-start">
+                  <div className="max-w-[80%] flex flex-col gap-2">
+                    {entry.tools && entry.tools.length > 0 && (
+                      <div className="bg-[#F0EDFF] border border-[#6A55F8]/20 rounded-lg px-3 py-2 text-xs">
+                        {entry.tools.map((t, idx) => (
+                          <div key={idx} className={`flex items-center gap-1.5 ${t.ok ? 'text-[#6A55F8]' : 'text-red-600'}`}>
+                            <span>{t.ok ? '✓' : '⚠'}</span>
+                            <span className="font-mono text-[11px] opacity-70">{t.name}</span>
+                            <span>— {t.summary}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="rounded-xl px-4 py-3 text-sm leading-relaxed bg-gray-100 text-gray-800 rounded-bl-none ai-markdown">
+                      <ReactMarkdown
+                        components={{
+                          h1: ({ children }) => <div className="text-base font-bold text-gray-900 mt-2 mb-1.5 first:mt-0">{children}</div>,
+                          h2: ({ children }) => <div className="text-sm font-bold text-gray-900 mt-2 mb-1 first:mt-0">{children}</div>,
+                          h3: ({ children }) => <div className="text-sm font-semibold text-gray-900 mt-1.5 mb-1 first:mt-0">{children}</div>,
+                          h4: ({ children }) => <div className="text-sm font-semibold text-gray-800 mt-1.5 mb-1 first:mt-0">{children}</div>,
+                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                          ul: ({ children }) => <ul className="list-disc pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 last:mb-0 space-y-0.5">{children}</ol>,
+                          li: ({ children }) => <li>{children}</li>,
+                          strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                          em: ({ children }) => <em className="italic">{children}</em>,
+                          code: ({ children }) => <code className="bg-gray-200 text-[#6A55F8] px-1 py-0.5 rounded text-[13px] font-mono">{children}</code>,
+                          pre: ({ children }) => <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-[13px] mb-2">{children}</pre>,
+                          hr: () => <hr className="my-2 border-gray-300" />,
+                          blockquote: ({ children }) => <blockquote className="border-l-2 border-[#6A55F8] pl-3 text-gray-600 italic mb-2">{children}</blockquote>,
+                          a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#6A55F8] underline">{children}</a>,
+                        }}
+                      >
+                        {entry.text}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-gray-100 text-gray-500 rounded-xl px-4 py-3 text-sm rounded-bl-none flex items-center gap-1.5">
