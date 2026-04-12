@@ -695,37 +695,235 @@ function SourceComparisonTable({ projectId, sources }: {
   )
 }
 
+// ─── Вкладка Чат-боты аналитика ────────────────────────────────────────────────
+function BotsAnalyticsTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [bots, setBots] = useState<Array<{ id: string; name: string; bot_username: string | null }>>([])
+  const [selectedBotId, setSelectedBotId] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [sources, setSources] = useState<Array<{ id: string; name: string }>>([])
+  const [stats, setStats] = useState({ total: 0, subscribed: 0, blocked: 0, messages: 0, buttonClicks: 0 })
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId)
+      .then(({ data }) => { const b = (data ?? []) as typeof bots; setBots(b); if (b.length > 0) setSelectedBotId(b[0].id) })
+    supabase.from('traffic_sources').select('id, name').eq('project_id', projectId)
+      .then(({ data }) => setSources((data ?? []) as typeof sources))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  useEffect(() => {
+    if (!selectedBotId) return
+    setLoading(true)
+    async function load() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const custQuery: any = supabase.from('chatbot_conversations').select('customer_id').eq('telegram_bot_id', selectedBotId)
+      const { data: convs } = await custQuery
+      let customerIds = (convs ?? []).map((c: { customer_id: string }) => c.customer_id).filter(Boolean)
+
+      if (sourceFilter && customerIds.length > 0) {
+        const { data: filtered } = await supabase.from('customers').select('id').in('id', customerIds).eq('source_id', sourceFilter)
+        customerIds = (filtered ?? []).map((c: { id: string }) => c.id)
+      }
+
+      const total = customerIds.length
+      let subscribed = 0; let blocked = 0
+      if (total > 0) {
+        const [subRes, blkRes] = await Promise.all([
+          supabase.from('customers').select('*', { count: 'exact', head: true }).in('id', customerIds).eq('bot_subscribed', true),
+          supabase.from('customers').select('*', { count: 'exact', head: true }).in('id', customerIds).eq('bot_blocked', true),
+        ])
+        subscribed = subRes.count ?? 0
+        blocked = blkRes.count ?? 0
+      }
+
+      let messages = 0; let buttonClicks = 0
+      if (total > 0) {
+        const { data: actions } = await supabase.from('customer_actions').select('action').eq('project_id', projectId).in('customer_id', customerIds)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const a of (actions ?? []) as any[]) {
+          if (a.action === 'bot_message') messages++
+          if (a.action === 'bot_button_click') buttonClicks++
+        }
+      }
+      setStats({ total, subscribed, blocked, messages, buttonClicks })
+      setLoading(false)
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBotId, sourceFilter])
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-3 flex-wrap">
+        <select value={selectedBotId} onChange={e => setSelectedBotId(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+          {bots.map(b => <option key={b.id} value={b.id}>@{b.bot_username ?? b.name}</option>)}
+        </select>
+        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+          className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+          <option value="">Все источники</option>
+          {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+      {loading ? <SkeletonList count={1} /> : (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <StatCard label="Всего пользователей" value={stats.total} icon="👥" />
+          <StatCard label="Подписаны" value={stats.subscribed} icon="🤖" />
+          <StatCard label="Заблокировали" value={stats.blocked} icon="🚫" />
+          <StatCard label="Сообщений" value={stats.messages} icon="💬" />
+          <StatCard label="Кликов по кнопкам" value={stats.buttonClicks} icon="👆" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Вкладка Сайты аналитика ────────────────────────────────────────────────
+function SitesAnalyticsTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [landings, setLandings] = useState<Array<{ id: string; name: string; slug: string; visits: number; conversions: number }>>([])
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [sources, setSources] = useState<Array<{ id: string; name: string }>>([])
+
+  useEffect(() => {
+    supabase.from('landings').select('id, name, slug, visits, conversions').eq('project_id', projectId).order('visits', { ascending: false })
+      .then(({ data }) => setLandings((data ?? []) as typeof landings))
+    supabase.from('traffic_sources').select('id, name').eq('project_id', projectId)
+      .then(({ data }) => setSources((data ?? []) as typeof sources))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  return (
+    <div className="space-y-4">
+      <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}
+        className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+        <option value="">Все источники</option>
+        {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+      {landings.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-8">Нет сайтов</p>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left font-semibold text-gray-500 px-4 py-3">Сайт</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">Посещения</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">Конверсии</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">CR%</th>
+            </tr></thead>
+            <tbody>
+              {landings.map(l => (
+                <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="px-4 py-3 font-medium text-gray-900">{l.name} <span className="text-xs text-gray-400">/{l.slug}</span></td>
+                  <td className="px-4 py-3 text-right text-gray-600">{l.visits}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{l.conversions}</td>
+                  <td className="px-4 py-3 text-right text-[#6A55F8] font-medium">{l.visits > 0 ? Math.round(l.conversions / l.visits * 100) : 0}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Вкладка Видео аналитика ────────────────────────────────────────────────
+function VideosAnalyticsTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [videos, setVideos] = useState<Array<{ id: string; title: string; duration_seconds: number | null }>>([])
+  const [viewCounts, setViewCounts] = useState<Map<string, { views: number; completed: number }>>(new Map())
+
+  useEffect(() => {
+    async function load() {
+      const { data: vids } = await supabase.from('videos').select('id, title, duration_seconds').eq('project_id', projectId)
+      setVideos((vids ?? []) as typeof videos)
+
+      if (vids && vids.length > 0) {
+        const { data: views } = await supabase.from('video_views').select('video_id, completed').eq('project_id', projectId)
+        const map = new Map<string, { views: number; completed: number }>()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const v of (views ?? []) as any[]) {
+          const cur = map.get(v.video_id) ?? { views: 0, completed: 0 }
+          cur.views++
+          if (v.completed) cur.completed++
+          map.set(v.video_id, cur)
+        }
+        setViewCounts(map)
+      }
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  return (
+    <div className="space-y-4">
+      {videos.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-8">Нет видео</p>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-gray-50 border-b border-gray-100">
+              <th className="text-left font-semibold text-gray-500 px-4 py-3">Видео</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">Просмотры</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">Досмотры</th>
+              <th className="text-right font-semibold text-gray-500 px-4 py-3">CR%</th>
+            </tr></thead>
+            <tbody>
+              {videos.map(v => {
+                const vc = viewCounts.get(v.id) ?? { views: 0, completed: 0 }
+                return (
+                  <tr key={v.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{v.title}</td>
+                    <td className="px-4 py-3 text-right text-gray-600">{vc.views}</td>
+                    <td className="px-4 py-3 text-right text-gray-600">{vc.completed}</td>
+                    <td className="px-4 py-3 text-right text-[#6A55F8] font-medium">{vc.views > 0 ? Math.round(vc.completed / vc.views * 100) : 0}%</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Главный компонент ────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
   const params = useParams()
   const projectId = params.id as string
-  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'sources'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'funnels' | 'chatbots' | 'sites' | 'videos' | 'sources'>('overview')
 
   const tabs = [
     { id: 'overview' as const, label: 'Обзор' },
     { id: 'funnels' as const, label: 'Воронки' },
-    { id: 'sources' as const, label: 'Источники трафика' },
+    { id: 'chatbots' as const, label: 'Чат-боты' },
+    { id: 'sites' as const, label: 'Сайты' },
+    { id: 'videos' as const, label: 'Видео' },
+    { id: 'sources' as const, label: 'Источники' },
   ]
 
   return (
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Аналитика</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Общий обзор проекта</p>
+        <p className="text-sm text-gray-500 mt-0.5">Детальная аналитика по каждому модулю</p>
       </div>
 
       {/* Вкладки */}
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.id
-                ? 'border-purple-600 text-purple-600'
+                ? 'border-[#6A55F8] text-[#6A55F8]'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
-            style={activeTab === tab.id ? { borderColor: '#6A55F8', color: '#6A55F8' } : {}}
           >
             {tab.label}
           </button>
@@ -734,6 +932,9 @@ export default function AnalyticsPage() {
 
       {activeTab === 'overview' && <OverviewTab projectId={projectId} />}
       {activeTab === 'funnels' && <FunnelsTab projectId={projectId} />}
+      {activeTab === 'chatbots' && <BotsAnalyticsTab projectId={projectId} />}
+      {activeTab === 'sites' && <SitesAnalyticsTab projectId={projectId} />}
+      {activeTab === 'videos' && <VideosAnalyticsTab projectId={projectId} />}
       {activeTab === 'sources' && <SourcesTab projectId={projectId} />}
     </div>
   )
