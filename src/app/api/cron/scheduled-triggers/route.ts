@@ -44,11 +44,13 @@ export async function GET(_request: NextRequest) {
       ])
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const botData = botRes.data as any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const bot: any = row.telegram_bot_id
-        ? botRes.data
-        : Array.isArray((botRes.data as any)?.telegram_bots)
-          ? (botRes.data as any).telegram_bots[0]
-          : (botRes.data as any)?.telegram_bots
+        ? botData
+        : Array.isArray(botData?.telegram_bots)
+          ? botData.telegram_bots[0]
+          : botData?.telegram_bots
 
       if (!bot?.token || bot.is_active === false || !custRes.data?.telegram_id) {
         await supabase.from('scheduled_triggers').update({

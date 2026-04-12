@@ -54,7 +54,7 @@ ALTER TABLE scheduled_triggers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Users see their project scheduled triggers" ON scheduled_triggers;
 CREATE POLICY "Users see their project scheduled triggers" ON scheduled_triggers
   FOR SELECT USING (
-    project_id IN (SELECT id FROM projects WHERE user_id = auth.uid())
+    project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid())
   );
 
 -- Service role обходит RLS, поэтому cron и webhooks работают. Insert/update/delete
@@ -62,5 +62,5 @@ CREATE POLICY "Users see their project scheduled triggers" ON scheduled_triggers
 DROP POLICY IF EXISTS "Users manage their project scheduled triggers" ON scheduled_triggers;
 CREATE POLICY "Users manage their project scheduled triggers" ON scheduled_triggers
   FOR ALL USING (
-    project_id IN (SELECT id FROM projects WHERE user_id = auth.uid())
+    project_id IN (SELECT id FROM projects WHERE owner_id = auth.uid())
   );
