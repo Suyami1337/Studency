@@ -584,6 +584,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
 function MessageCard({
   projectId, msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton,
   initialExpanded = false,
+  hideFollowups = false,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -593,6 +594,7 @@ function MessageCard({
   onDeleteButton: (id: string) => void
   onUpdateButton: (id: string, data: Partial<Button>) => void
   initialExpanded?: boolean
+  hideFollowups?: boolean
 }) {
   const supabase = createClient()
   const [expanded, setExpanded] = useState(initialExpanded)
@@ -799,7 +801,9 @@ function MessageCard({
           </div>
 
           {/* Followups */}
-          <FollowupSection ref={followupRef} projectId={projectId} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
+          {!hideFollowups && (
+            <FollowupSection ref={followupRef} projectId={projectId} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
+          )}
 
           {/* Save / Discard / Delete */}
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
@@ -1327,7 +1331,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                     {/* Immediate messages */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold uppercase text-gray-500">Сразу при событии</span>
+                        <span className="text-xs font-semibold uppercase text-gray-500">Если событие случилось</span>
                         {immediateTriggers.length === 0 && (
                           <button onClick={() => addImmediateToGroup(g)} className="text-xs text-[#6A55F8] hover:underline">+ добавить</button>
                         )}
@@ -1342,6 +1346,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                           return (
                             <MessageCard key={msg.id} projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
                               initialExpanded
+                              hideFollowups
                               onUpdate={() => { void load() }}
                               onDelete={() => removeMessageFromGroup(msg.id)}
                               onAddButton={async () => {
@@ -1365,7 +1370,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                     {def?.cancelOnEventType && (
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold uppercase text-gray-500">Дожимы (если событие не случилось за время)</span>
+                          <span className="text-xs font-semibold uppercase text-gray-500">Дожимы — если событие НЕ случилось за время</span>
                           <button onClick={() => addFollowupToGroup(g)} className="text-xs text-[#6A55F8] hover:underline">+ добавить дожим</button>
                         </div>
                         {followupTriggers.length === 0 ? (
@@ -1381,6 +1386,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                                   <TriggerWaitEditor trigger={t} onChange={() => load()} />
                                   <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
                                     initialExpanded
+                                    hideFollowups
                                     onUpdate={() => { void load() }}
                                     onDelete={() => removeMessageFromGroup(msg.id)}
                                     onAddButton={async () => {
