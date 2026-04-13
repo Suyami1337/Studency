@@ -248,7 +248,7 @@ export async function emitEvent(
   const { data: triggers } = await supabase
     .from('scenario_event_triggers')
     .select(`
-      id, scenario_id, start_message_id, event_type, event_name, is_negative,
+      id, scenario_id, start_message_id, event_type, event_name, is_negative, enabled,
       wait_minutes, wait_value, wait_unit, event_params, cancel_on_event_type, cancel_on_event_name,
       chatbot_scenarios!inner(
         id, telegram_bot_id,
@@ -263,6 +263,7 @@ export async function emitEvent(
   const all = (triggers ?? []) as any[]
 
   for (const t of all) {
+    if (t.enabled === false) continue
     if (t.event_name && t.event_name !== input.eventName) continue
     if (!paramsMatch(t.event_params ?? {}, input)) continue
 
