@@ -1158,6 +1158,10 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
     await supabase.from('scenario_messages').delete().eq('id', msgId)
     await load()
   }
+  async function removeMessageFromGroupSilent(msgId: string) {
+    await supabase.from('scenario_event_triggers').delete().eq('start_message_id', msgId)
+    await supabase.from('scenario_messages').delete().eq('id', msgId)
+  }
 
   function describeTarget(g: TriggerGroup): string {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1328,83 +1332,78 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
 
                 {isExpanded && (
                   <div className="border-t border-gray-100 px-5 py-4 space-y-4">
-                    {/* Immediate messages */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-semibold uppercase text-gray-500">Если событие случилось</span>
-                        {immediateTriggers.length === 0 && (
-                          <button onClick={() => addImmediateToGroup(g)} className="text-xs text-[#6A55F8] hover:underline">+ добавить</button>
-                        )}
-                      </div>
-                      {immediateTriggers.length === 0 ? (
-                        <div className="text-xs text-gray-400 italic">Выключено — сразу при событии сообщение не отправляется</div>
-                      ) : (
-                        immediateTriggers.map(t => {
-                          const msg = g.messages.find(m => m.id === t.start_message_id)
-                          if (!msg) return null
-                          const msgButtons = allButtons.filter(b => b.message_id === msg.id)
-                          return (
-                            <MessageCard key={msg.id} projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
-                              initialExpanded
-                              hideFollowups
-                              onUpdate={() => { void load() }}
-                              onDelete={() => removeMessageFromGroup(msg.id)}
-                              onAddButton={async () => {
-                                await supabase.from('scenario_buttons').insert({
-                                  message_id: msg.id,
-                                  order_position: msgButtons.length,
-                                  text: 'Кнопка',
-                                  action_type: 'url',
-                                })
-                                await load()
-                              }}
-                              onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
-                              onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
-                            />
-                          )
-                        })
-                      )}
+                    {/* Immediate */}
+                    <div className="border border-gray-200 rounded-lg p-3 space-y-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={immediateTriggers.length > 0}
+                          onChange={async e => {
+                            if (e.target.checked) await addImmediateToGroup(g)
+                            else { for (const t of immediateTriggers) await removeMessageFromGroupSilent(t.start_message_id); await load() }
+                          }} />
+                        <span className="text-sm font-medium text-gray-900">Если событие случилось → отправить сообщение</span>
+                      </label>
+                      {immediateTriggers.map(t => {
+                        const msg = g.messages.find(m => m.id === t.start_message_id)
+                        if (!msg) return null
+                        const msgButtons = allButtons.filter(b => b.message_id === msg.id)
+                        return (
+                          <MessageCard key={msg.id} projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                            initialExpanded
+                            hideFollowups
+                            onUpdate={() => { void load() }}
+                            onDelete={() => removeMessageFromGroup(msg.id)}
+                            onAddButton={async () => {
+                              await supabase.from('scenario_buttons').insert({ message_id: msg.id, order_position: msgButtons.length, text: 'Кнопка', action_type: 'url' })
+                              await load()
+                            }}
+                            onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
+                            onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
+                          />
+                        )
+                      })}
                     </div>
 
                     {/* Followups */}
                     {def?.cancelOnEventType && (
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-semibold uppercase text-gray-500">Дожимы — если событие НЕ случилось за время</span>
-                          <button onClick={() => addFollowupToGroup(g)} className="text-xs text-[#6A55F8] hover:underline">+ добавить дожим</button>
-                        </div>
-                        {followupTriggers.length === 0 ? (
-                          <div className="text-xs text-gray-400 italic">Выключено — дожимы не настроены</div>
-                        ) : (
-                          <div className="space-y-3">
-                            {followupTriggers.map(t => {
-                              const msg = g.messages.find(m => m.id === t.start_message_id)
-                              if (!msg) return null
-                              const msgButtons = allButtons.filter(b => b.message_id === msg.id)
-                              return (
-                                <div key={msg.id} className="space-y-1">
-                                  <TriggerWaitEditor trigger={t} onChange={() => load()} />
-                                  <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
-                                    initialExpanded
-                                    hideFollowups
-                                    onUpdate={() => { void load() }}
-                                    onDelete={() => removeMessageFromGroup(msg.id)}
-                                    onAddButton={async () => {
-                                      await supabase.from('scenario_buttons').insert({
-                                        message_id: msg.id,
-                                        order_position: msgButtons.length,
-                                        text: 'Кнопка',
-                                        action_type: 'url',
-                                      })
-                                      await load()
-                                    }}
-                                    onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
-                                    onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
-                                  />
-                                </div>
-                              )
-                            })}
-                          </div>
+                      <div className="border border-gray-200 rounded-lg p-3 space-y-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={followupTriggers.length > 0}
+                            onChange={async e => {
+                              if (e.target.checked) await addFollowupToGroup(g)
+                              else { for (const t of followupTriggers) await removeMessageFromGroupSilent(t.start_message_id); await load() }
+                            }} />
+                          <span className="text-sm font-medium text-gray-900">Дожимы если событие НЕ случилось за время</span>
+                        </label>
+                        {followupTriggers.length > 0 && (
+                          <>
+                            <div className="space-y-3">
+                              {followupTriggers.map(t => {
+                                const msg = g.messages.find(m => m.id === t.start_message_id)
+                                if (!msg) return null
+                                const msgButtons = allButtons.filter(b => b.message_id === msg.id)
+                                return (
+                                  <div key={msg.id} className="space-y-1">
+                                    <TriggerWaitEditor trigger={t} onChange={() => load()} />
+                                    <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
+                                      initialExpanded
+                                      hideFollowups
+                                      onUpdate={() => { void load() }}
+                                      onDelete={() => removeMessageFromGroup(msg.id)}
+                                      onAddButton={async () => {
+                                        await supabase.from('scenario_buttons').insert({ message_id: msg.id, order_position: msgButtons.length, text: 'Кнопка', action_type: 'url' })
+                                        await load()
+                                      }}
+                                      onDeleteButton={async id => { await supabase.from('scenario_buttons').delete().eq('id', id); await load() }}
+                                      onUpdateButton={async (id, data) => { await supabase.from('scenario_buttons').update(data).eq('id', id); await load() }}
+                                    />
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <button onClick={() => addFollowupToGroup(g)} className="text-xs text-[#6A55F8] font-medium hover:underline">
+                              + Добавить ещё один дожим
+                            </button>
+                          </>
                         )}
                       </div>
                     )}
