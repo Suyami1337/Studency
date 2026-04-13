@@ -585,6 +585,7 @@ function MessageCard({
   projectId, msg, buttons, allMessages, onUpdate, onDelete, onAddButton, onDeleteButton, onUpdateButton,
   initialExpanded = false,
   hideFollowups = false,
+  displayNumber,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -595,6 +596,7 @@ function MessageCard({
   onUpdateButton: (id: string, data: Partial<Button>) => void
   initialExpanded?: boolean
   hideFollowups?: boolean
+  displayNumber?: number
 }) {
   const supabase = createClient()
   const [expanded, setExpanded] = useState(initialExpanded)
@@ -653,7 +655,7 @@ function MessageCard({
       {/* Header — always visible */}
       <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8]">
-          {msg.order_position + 1}
+          {displayNumber ?? msg.order_position + 1}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
@@ -1380,8 +1382,24 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                           setGroups(prev => prev.map(gr => gr.id === g.id ? { ...gr, triggers: gr.triggers.map(tr => tr.is_negative ? { ...tr, enabled: checked } : tr) } : gr))
                         }}
                       >
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-xs text-gray-600">Сколько дожимов:</span>
+                          <input type="number" min={1} max={10} value={followupTriggers.length}
+                            onChange={async e => {
+                              const target = Math.max(1, Math.min(10, Number(e.target.value)))
+                              const current = followupTriggers.length
+                              if (target > current) {
+                                for (let i = current; i < target; i++) await addFollowupToGroup(g)
+                              } else if (target < current) {
+                                const toRemove = followupTriggers.slice(target)
+                                for (const t of toRemove) await removeMessageFromGroupSilent(t.start_message_id)
+                                await load()
+                              }
+                            }}
+                            className="w-20 px-2 py-1 rounded border border-gray-200 text-sm" />
+                        </div>
                         <div className="space-y-3">
-                          {followupTriggers.map(t => {
+                          {followupTriggers.map((t, idx) => {
                             const msg = g.messages.find(m => m.id === t.start_message_id)
                             if (!msg) return null
                             const msgButtons = allButtons.filter(b => b.message_id === msg.id)
@@ -1390,6 +1408,7 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                                 <TriggerWaitEditor trigger={t} onChange={() => load()} />
                                 <MessageCard projectId={projectId} msg={msg} buttons={msgButtons} allMessages={g.messages}
                                   hideFollowups
+                                  displayNumber={idx + 1}
                                   onUpdate={() => { void load() }}
                                   onDelete={() => removeMessageFromGroup(msg.id)}
                                   onAddButton={async () => {
@@ -1403,9 +1422,6 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
                             )
                           })}
                         </div>
-                        <button onClick={() => addFollowupToGroup(g)} className="text-xs text-[#6A55F8] font-medium hover:underline mt-2">
-                          + Добавить ещё один дожим
-                        </button>
                       </TriggerSection>
                     )}
                   </div>
