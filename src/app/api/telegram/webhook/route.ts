@@ -205,8 +205,11 @@ export async function POST(request: NextRequest) {
         content: text,
         telegram_message_id: message.message_id,
       })
+    }
 
-      // Cancel pending followups with cancel_on_reply=true for this conversation
+    // Cancel pending followups with cancel_on_reply=true on ANY user activity:
+    // отправка текста (reply) ИЛИ клик по inline-кнопке (callback_query)
+    if (text || isCallback) {
       const { data: pendingFollowups } = await supabase
         .from('followup_queue')
         .select('id, followup_id')

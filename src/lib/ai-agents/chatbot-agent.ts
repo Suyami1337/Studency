@@ -81,16 +81,19 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
   - \`url\` — ссылка (нужен action_url)
   - \`trigger\` — запускает другой сценарий по триггерному слову (action_trigger_word)
   - \`goto_message\` — ведёт на другое сообщение этого сценария (action_goto_message_id)
-- Событийные триггеры (\`scenario_event_triggers\`) — запускают сценарий по событию.
-  - **Позитивные** (is_negative: false): сценарий стартует когда событие произошло (например, досмотрел видео — отправить оффер).
-  - **Негативные** (is_negative: true): сценарий стартует если событие НЕ случилось за wait_minutes минут. Например: "начал видео, но за 3 часа не досмотрел" — event_type=video_start, cancel_on_event_type=video_complete, wait_minutes=180. Если за это время человек досмотрит — ожидание отменится автоматически.
-  - Типичные воронки дожима (используй негативные триггеры):
-    1. Отправили ссылку на видео → негативный триггер video_start без cancel — "не посмотрел за 1ч" → напомни
-    2. Начал смотреть, но не досмотрел → video_start + cancel video_complete + 3h → "последняя часть — самое важное"
-    3. Зашёл на сайт, но не купил → landing_visit + cancel order_created + 6h → работа с возражениями
-    4. Создал заказ, но не оплатил → order_created + cancel order_paid + 30min → напоминание о заказе
-    5. Оплатил → позитивный order_paid → поздравление + онбординг
-  - \`event_params\` задают **что именно** отслеживаем — videoId / landingSlug / productId. Без них триггер сработает на ЛЮБОЕ видео/сайт/продукт, что почти никогда не нужно. Перед созданием триггера всегда вызывай \`list_project_targets\` чтобы узнать какие объекты есть и какие id использовать.
+- **Триггеры событий** — это группы, создаются атомарно через \`create_trigger_group\`. Одна группа = одно событие + (опционально) immediate-сообщение «если случилось» + (опционально) N дожимов «если НЕ случилось за время». Дожимы привязаны к тому же событию и параметрам что и immediate.
+  - \`has_immediate: true\` — создастся сообщение которое бот шлёт СРАЗУ когда событие произошло
+  - \`followups: [{wait_value, wait_unit}, ...]\` — массив дожимов, каждый со своим таймингом (unit: sec/min/hour/day). Отменяющее событие автоматом определяется по event_type (video_start→video_complete, landing_visit→order_created, order_created→order_paid). Для video_complete/order_paid/form_submit/channel_joined дожимов нет — это финальные события.
+  - \`event_params\`: { videoId, landingSlug, productId, formSlug, channelId, minPercent } — ВСЕГДА указывай конкретный объект (id берёшь из list_project_targets), иначе триггер сработает на любой объект этого типа.
+  - Тексты сообщений пустые при создании. После \`create_trigger_group\` получаешь массив \`message_ids\` — дальше наполняешь текстом через \`update_message\` и добавляешь кнопки через \`add_button\`.
+  - Типичные воронки дожима:
+    1. Началсмотреть видео, не досмотрел за 3ч → event_type=video_start, followups=[{value:3, unit:'hour'}]
+    2. Зашёл на сайт, не купил за 6ч → event_type=landing_visit, followups=[{value:6, unit:'hour'}]
+    3. Создал заказ, не оплатил за 30мин → event_type=order_created, followups=[{value:30, unit:'min'}]
+    4. Оплатил → event_type=order_paid, has_immediate=true, followups=[] (только поздравление)
+    5. Длинная дожимная серия: followups=[{value:1, unit:'hour'}, {value:3, unit:'hour'}, {value:1, unit:'day'}, {value:3, unit:'day'}, {value:7, unit:'day'}]
+  - Перед созданием триггера ВСЕГДА вызывай \`list_project_targets\` чтобы узнать какие видео/лендинги/продукты есть и какие id использовать.
+  - Удалить триггер целиком → \`delete_trigger_group\`. Временно выключить секцию без удаления сообщений → \`toggle_trigger_section\`.
 
 ## Стиль общения
 - На «ты», дружелюбно, по делу.
@@ -191,52 +194,76 @@ function getTools(): Anthropic.Messages.Tool[] {
       input_schema: { type: 'object' as const, properties: {}, required: [] },
     },
     {
-      name: 'create_trigger',
-      description: `Создать событийный триггер — сценарий запустится когда произойдёт событие.
+      name: 'create_trigger_group',
+      description: `Создать триггер событий (группу). Триггер = одно событие + опционально immediate сообщение ("если случилось") + опционально N дожимов ("если НЕ случилось за время").
 
-ПОЗИТИВНЫЕ триггеры (is_negative: false): запускаются СРАЗУ когда событие случилось.
-Типы событий:
+АТОМАРНО создаёт сразу всю группу: сообщения (пустые, пользователь/ты наполнишь через update_message/add_button) + записи триггеров. Возвращает group_id и список созданных message_id в порядке: [immediate?, followup1, followup2, ...].
+
+ТИПЫ СОБЫТИЙ:
 - video_start — начал смотреть видео (event_params: { videoId })
-- video_progress — досмотрел видео до X% (event_params: { videoId, minPercent })
-- video_complete — досмотрел видео до конца (event_params: { videoId })
-- landing_visit — зашёл на сайт (event_params: { landingSlug })
+- video_progress — досмотрел до X% (event_params: { videoId, minPercent })
+- video_complete — досмотрел до конца (event_params: { videoId })
+- landing_visit — зашёл на лендинг (event_params: { landingSlug })
 - form_submit — отправил форму (event_params: { formSlug })
 - channel_joined — подписался на канал (event_params: { channelId })
 - order_created — создал заказ (event_params: { productId })
 - order_paid — оплатил заказ (event_params: { productId })
 
-НЕГАТИВНЫЕ триггеры (is_negative: true): запускаются ЧЕРЕЗ wait_minutes после события event_type, ЕСЛИ за это время не произошло cancel_on_event_type.
-Типичные конфигурации:
-- "начал видео, но не досмотрел": event_type=video_start, cancel_on_event_type=video_complete, wait_minutes=180, event_params={ videoId }
-- "зашёл на сайт, но не создал заказ": event_type=landing_visit, cancel_on_event_type=order_created, wait_minutes=360, event_params={ landingSlug }
-- "создал заказ, но не оплатил": event_type=order_created, cancel_on_event_type=order_paid, wait_minutes=30, event_params={ productId }
+ДОЖИМЫ (followups) — работают только для событий у которых есть отменяющее:
+- video_start / video_progress → отменяет video_complete
+- landing_visit → отменяет order_created
+- order_created → отменяет order_paid
+Для video_complete / order_paid / form_submit / channel_joined дожимов нет (не с чем отменять).
 
-Всегда указывай event_params когда выбираешь конкретный объект (videoId/landingSlug/productId) — иначе триггер сработает на любое видео/сайт/продукт. ID бери из list_project_targets.`,
+ВРЕМЯ ОЖИДАНИЯ: для каждого дожима — { value: N, unit: 'sec'|'min'|'hour'|'day' }. Если юзер сказал "через 3 часа" — value=3 unit='hour'.
+
+ID объектов всегда бери из list_project_targets. Имя (label) — человекочитаемое, понятное маркетологу.`,
       input_schema: {
         type: 'object' as const,
         properties: {
-          event_type: { type: 'string', description: 'Тип события (см. описание)' },
-          is_negative: { type: 'boolean', description: 'true = триггер "НЕ произошло", false = позитивный' },
-          wait_minutes: { type: 'number', description: 'Только для is_negative=true: через сколько минут отправить дожим если отменяющее событие не случилось' },
-          cancel_on_event_type: { type: 'string', description: 'Только для is_negative=true: какое событие отменяет ожидание (video_complete, order_created, order_paid и т.п.)' },
+          label: { type: 'string', description: 'Понятное имя триггера (напр. "Не досмотрел видео про оффер")' },
+          event_type: { type: 'string', description: 'Тип события — один из указанных' },
           event_params: {
             type: 'object',
-            description: 'Параметры-фильтры. Ключи: videoId, landingSlug, productId, formSlug, channelId, minPercent. Пустой объект = сработает на любое событие этого типа.',
+            description: 'Параметры: { videoId, landingSlug, productId, formSlug, channelId, minPercent }. Пустой объект — сработает на любое событие этого типа.',
           },
-          event_name: { type: 'string', description: 'Опциональное уточнение по имени события' },
-          start_message_id: { type: 'string', description: 'Какое сообщение отправить когда триггер сработает' },
-          label: { type: 'string', description: 'Понятное имя для UI (например "Недосмотрел видео про оффер")' },
+          has_immediate: { type: 'boolean', description: 'Создавать ли immediate-сообщение (enabled=true). По умолчанию true' },
+          followups: {
+            type: 'array',
+            description: 'Массив дожимов. Пустой — дожимов нет. Игнорируется для финальных событий (video_complete, order_paid, form_submit, channel_joined).',
+            items: {
+              type: 'object',
+              properties: {
+                wait_value: { type: 'number' },
+                wait_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+              },
+              required: ['wait_value', 'wait_unit'],
+            },
+          },
         },
-        required: ['event_type', 'start_message_id'],
+        required: ['label', 'event_type', 'event_params'],
       },
     },
     {
-      name: 'delete_trigger',
-      description: 'Удалить событийный триггер.',
+      name: 'delete_trigger_group',
+      description: 'Удалить триггер-группу целиком со всеми её сообщениями и дожимами.',
       input_schema: {
         type: 'object' as const,
-        properties: { trigger_id: { type: 'string' } },
-        required: ['trigger_id'],
+        properties: { group_id: { type: 'string' } },
+        required: ['group_id'],
+      },
+    },
+    {
+      name: 'toggle_trigger_section',
+      description: 'Включить/выключить секцию триггера (immediate или все followups группы) без удаления сообщений.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          group_id: { type: 'string' },
+          section: { type: 'string', enum: ['immediate', 'followups'] },
+          enabled: { type: 'boolean' },
+        },
+        required: ['group_id', 'section', 'enabled'],
       },
     },
   ]
@@ -370,38 +397,93 @@ async function executeTool(
         }
       }
 
-      case 'create_trigger': {
-        const { data: msg } = await supabase.from('scenario_messages').select('id').eq('id', input.start_message_id).eq('scenario_id', scenarioId).single()
-        if (!msg) throw new Error('start_message_id not in this scenario')
-        const isNegative = Boolean(input.is_negative)
-        if (isNegative && !input.cancel_on_event_type) {
-          throw new Error('Для негативного триггера нужен cancel_on_event_type — что отменяет ожидание')
+      case 'create_trigger_group': {
+        const CANCEL_MAP: Record<string, string> = {
+          video_start: 'video_complete',
+          video_progress: 'video_complete',
+          landing_visit: 'order_created',
+          order_created: 'order_paid',
         }
-        if (isNegative && (!input.wait_minutes || input.wait_minutes <= 0)) {
-          throw new Error('Для негативного триггера нужен wait_minutes > 0')
+        const UNIT_MIN: Record<string, number> = { sec: 1 / 60, min: 1, hour: 60, day: 1440 }
+
+        const eventType = String(input.event_type)
+        const cancelOn = CANCEL_MAP[eventType] ?? null
+        const params = input.event_params ?? {}
+        const label = String(input.label)
+        const hasImmediate = input.has_immediate !== false
+        const followups: Array<{ wait_value: number; wait_unit: string }> = Array.isArray(input.followups) ? input.followups : []
+
+        // supports_followups check
+        if (followups.length > 0 && !cancelOn) {
+          throw new Error(`Для события "${eventType}" дожимы не предусмотрены — оно финальное`)
         }
-        const { data, error } = await supabase.from('scenario_event_triggers').insert({
-          scenario_id: scenarioId,
-          start_message_id: input.start_message_id,
-          event_type: input.event_type,
-          event_name: input.event_name ?? null,
-          is_negative: isNegative,
-          wait_minutes: isNegative ? Math.floor(input.wait_minutes) : 0,
-          cancel_on_event_type: isNegative ? input.cancel_on_event_type : null,
-          cancel_on_event_name: isNegative ? (input.cancel_on_event_name ?? null) : null,
-          event_params: input.event_params ?? {},
-          label: input.label ?? null,
-        }).select().single()
-        if (error) throw error
-        const kindLabel = isNegative ? `НЕ случилось "${input.event_type}"` : `случилось "${input.event_type}"`
-        const waitSuffix = isNegative ? ` (жду ${input.wait_minutes} мин)` : ''
-        return { content: JSON.stringify({ id: data.id }), summary: `создал триггер: ${kindLabel}${waitSuffix}`, ok: true, wrote: true }
+
+        const groupId = crypto.randomUUID()
+        const createdMessageIds: string[] = []
+        let sort = 0
+
+        async function insertTriggerMessage(isNegative: boolean, waitValue: number, waitUnit: string): Promise<string | null> {
+          const { data: m, error: mErr } = await supabase.from('scenario_messages').insert({
+            scenario_id: scenarioId,
+            parent_trigger_group_id: groupId,
+            text: '',
+            is_start: false,
+            order_position: sort,
+          }).select('id').single()
+          if (mErr || !m) throw new Error(`insert message: ${mErr?.message}`)
+
+          const waitMinutes = isNegative ? Math.max(1, Math.round(waitValue * (UNIT_MIN[waitUnit] ?? 1))) : 0
+          const { error: tErr } = await supabase.from('scenario_event_triggers').insert({
+            scenario_id: scenarioId,
+            start_message_id: m.id,
+            event_type: eventType,
+            event_params: params,
+            is_negative: isNegative,
+            enabled: true,
+            wait_value: isNegative ? waitValue : 0,
+            wait_unit: isNegative ? waitUnit : 'min',
+            wait_minutes: waitMinutes,
+            cancel_on_event_type: isNegative ? cancelOn : null,
+            label,
+            group_id: groupId,
+            sort_in_group: sort,
+          })
+          if (tErr) throw new Error(`insert trigger: ${tErr.message}`)
+          sort++
+          return m.id
+        }
+
+        if (hasImmediate) {
+          const id = await insertTriggerMessage(false, 0, 'min')
+          if (id) createdMessageIds.push(id)
+        }
+        for (const fu of followups) {
+          const id = await insertTriggerMessage(true, Number(fu.wait_value), String(fu.wait_unit))
+          if (id) createdMessageIds.push(id)
+        }
+
+        return {
+          content: JSON.stringify({ group_id: groupId, message_ids: createdMessageIds }),
+          summary: `создал триггер "${label}"${hasImmediate ? ' · сразу' : ''}${followups.length > 0 ? ` · ${followups.length} дожимов` : ''}`,
+          ok: true, wrote: true,
+        }
       }
 
-      case 'delete_trigger': {
-        const { error } = await supabase.from('scenario_event_triggers').delete().eq('id', input.trigger_id).eq('scenario_id', scenarioId)
+      case 'delete_trigger_group': {
+        await supabase.from('scenario_event_triggers').delete().eq('scenario_id', scenarioId).eq('group_id', input.group_id)
+        await supabase.from('scenario_messages').delete().eq('scenario_id', scenarioId).eq('parent_trigger_group_id', input.group_id)
+        return { content: JSON.stringify({ ok: true }), summary: `удалил триггер-группу`, ok: true, wrote: true }
+      }
+
+      case 'toggle_trigger_section': {
+        const isNegative = input.section === 'followups'
+        const { error } = await supabase.from('scenario_event_triggers')
+          .update({ enabled: Boolean(input.enabled) })
+          .eq('scenario_id', scenarioId)
+          .eq('group_id', input.group_id)
+          .eq('is_negative', isNegative)
         if (error) throw error
-        return { content: JSON.stringify({ ok: true }), summary: `удалил триггер`, ok: true, wrote: true }
+        return { content: JSON.stringify({ ok: true }), summary: `${input.enabled ? 'включил' : 'выключил'} секцию ${input.section}`, ok: true, wrote: true }
       }
 
       default:
