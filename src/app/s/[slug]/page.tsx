@@ -64,7 +64,7 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
 
   const { data: landing } = await supabase
     .from('landings')
-    .select('id, html_content, status, name, meta_title, meta_description')
+    .select('id, html_content, status, name, meta_title, meta_description, is_mini_app, project_id')
     .eq('slug', slug)
     .eq('status', 'published')
     .single()
@@ -86,12 +86,39 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
   //   • клики по ЛЮБЫМ кнопкам, ссылкам и элементам с role=button
   //   • отправку ЛЮБЫХ форм (name/phone/email/telegram по полю name/placeholder)
   //   • просмотры ВСЕХ Kinescope iframe с data-studency-video-id
+  const isMiniApp = Boolean(landing.is_mini_app)
+  const projectId = landing.project_id
+
   const trackingScript = `
 <script>
 (function() {
   var SLUG = ${JSON.stringify(slug)};
   var VT   = ${JSON.stringify(visitorToken)};
   var BASE = ${JSON.stringify(BASE_URL)};
+  var IS_MINI_APP = ${isMiniApp ? 'true' : 'false'};
+  var PROJECT_ID = ${JSON.stringify(projectId)};
+
+  // ── Telegram Mini App identity bridge ────────────────────────
+  // Когда лендинг открыт как Mini App внутри Telegram — SDK отдаёт
+  // initData с telegram_id клиента. Привязываем visitor_token к
+  // telegram_id сразу при загрузке, чтобы все последующие события
+  // шли на правильного customer.
+  try {
+    if (IS_MINI_APP && window.Telegram && window.Telegram.WebApp) {
+      var wa = window.Telegram.WebApp;
+      wa.ready();
+      wa.expand();
+      var initData = wa.initData || '';
+      if (initData) {
+        fetch(BASE + '/api/landing/' + SLUG + '/mini-app-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: initData, visitorToken: VT, projectId: PROJECT_ID }),
+          keepalive: true
+        }).catch(function() {});
+      }
+    }
+  } catch (e) { /* ignore */ }
 
   // Утилита: получить читаемый текст элемента
   function getLabel(el) {
@@ -310,6 +337,7 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
         <title>{title}</title>
         {description && <meta name="description" content={description} />}
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        {isMiniApp && <script src="https://telegram.org/js/telegram-web-app.js" async />}
       </head>
       <body>
         <div dangerouslySetInnerHTML={{ __html: htmlContent }} />

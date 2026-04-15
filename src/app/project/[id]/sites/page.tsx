@@ -22,6 +22,7 @@ type Landing = {
   conversions: number
   project_id: string
   created_at: string
+  is_mini_app?: boolean
 }
 
 type LandingButton = {
@@ -203,6 +204,7 @@ function LandingDetail({
   const [settingFunnelId, setSettingFunnelId] = useState(landing.funnel_id ?? '')
   const [settingFunnelStageId, setSettingFunnelStageId] = useState(landing.funnel_stage_id ?? '')
   const [settingCustomDomain, setSettingCustomDomain] = useState(landing.custom_domain ?? '')
+  const [settingIsMiniApp, setSettingIsMiniApp] = useState(landing.is_mini_app ?? false)
   const [funnels, setFunnels] = useState<Funnel[]>([])
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([])
   const [copiedBtnId, setCopiedBtnId] = useState<string | null>(null)
@@ -326,6 +328,7 @@ function LandingDetail({
         funnel_id: settingFunnelId || null,
         funnel_stage_id: settingFunnelStageId || null,
         custom_domain: settingCustomDomain.trim() || null,
+        is_mini_app: settingIsMiniApp,
       })
       .eq('id', landing.id)
       .select()
@@ -730,6 +733,35 @@ function LandingDetail({
                 className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm resize-none focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
               />
             </div>
+          </div>
+
+          {/* Telegram Mini App */}
+          <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-3">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="font-semibold text-gray-900">Telegram Mini App</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Открывать лендинг прямо внутри Telegram — 100% точный трекинг без cookie</p>
+              </div>
+              <span className="text-xs bg-[#F0EDFF] text-[#6A55F8] border border-[#6A55F8]/20 px-2 py-0.5 rounded-full font-medium">Identity-bridge</span>
+            </div>
+            <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:border-[#6A55F8]/30 transition-colors">
+              <input type="checkbox" checked={settingIsMiniApp} onChange={e => setSettingIsMiniApp(e.target.checked)} className="mt-0.5" />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-900">Открывать как Telegram Mini App</div>
+                <div className="text-xs text-gray-500 mt-0.5">Когда человек переходит на этот лендинг из бота или канала внутри Telegram, он откроется как встроенное приложение. Мы автоматически узнаём его telegram_id и привязываем визит к его карточке — идеальная связка браузер ↔ Telegram.</div>
+              </div>
+            </label>
+            {settingIsMiniApp && (
+              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-700">Как подключить кнопкой в боте (рекомендуется):</p>
+                <ol className="text-xs text-gray-500 space-y-1.5 list-decimal list-inside">
+                  <li>В чат-боте или сценарии добавь кнопку типа <b>url</b></li>
+                  <li>Ссылку ставь с префиксом <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://t.me/your_bot/app?startapp=</code> или обычную <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://studency.ru/s/{landing.slug}</code></li>
+                  <li>Telegram откроет страницу как Mini App — SDK сам передаст нам telegram_id клиента</li>
+                </ol>
+                <p className="text-[11px] text-gray-400 mt-1">Если лендинг открывают из обычного браузера — сайт работает как раньше, Mini App режим молчит.</p>
+              </div>
+            )}
           </div>
 
           {/* Custom domain */}
