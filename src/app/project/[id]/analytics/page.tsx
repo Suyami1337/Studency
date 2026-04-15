@@ -17,6 +17,10 @@ type TrafficSource = {
   description: string | null
   click_count: number
   created_at: string
+  telegram_invite_link?: string | null
+  telegram_invite_name?: string | null
+  telegram_channel_title?: string | null
+  telegram_invite_member_count?: number | null
 }
 
 function formatMoney(n: number) {
@@ -253,6 +257,13 @@ function SourcesTab({ projectId }: { projectId: string }) {
     setName(''); setSlug(''); setDestUrl(''); setDescription('')
     setCreating(false)
     setSaving(false)
+    if (data._invite_created) {
+      // eslint-disable-next-line no-alert
+      alert('✅ Источник создан. Telegram invite-ссылка сгенерирована автоматически — копируй её и отдавай блогеру.')
+    } else if (destUrl && /t\.me/i.test(destUrl)) {
+      // eslint-disable-next-line no-alert
+      alert('⚠️ Источник создан, но invite-ссылку не получилось создать автоматически.\n\nПроверь: бот проекта добавлен администратором этого канала с правом «Приглашать участников»? Без этого мы не сможем точно отслеживать подписки по конкретной ссылке.')
+    }
   }
 
   async function deleteSource(id: string) {
@@ -263,7 +274,10 @@ function SourcesTab({ projectId }: { projectId: string }) {
   }
 
   function copyLink(source: TrafficSource) {
-    const link = `${appUrl}/go/${source.slug}`
+    // Если источник ведёт в Telegram-канал через invite-link — копируем её
+    // (по ней Telegram сам скажет нам кто пришёл — 100% точный source).
+    // Иначе — обычная серверная /go/slug с cookie.
+    const link = source.telegram_invite_link || `${appUrl}/go/${source.slug}`
     navigator.clipboard.writeText(link)
     setCopiedId(source.id)
     setTimeout(() => setCopiedId(null), 2000)
@@ -322,9 +336,16 @@ function SourcesTab({ projectId }: { projectId: string }) {
             <input
               value={destUrl}
               onChange={e => setDestUrl(e.target.value)}
-              placeholder="https://t.me/your_bot или https://example.com/landing"
+              placeholder="https://t.me/your_channel, https://t.me/your_bot или https://example.com/landing"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-200"
             />
+            {/^https?:\/\/(t\.me|telegram\.me)\/(?!.*bot$)[a-z0-9_+]/i.test(destUrl) && (
+              <div className="mt-2 text-xs bg-[#F0EDFF] border border-[#6A55F8]/20 text-gray-700 rounded-lg p-3 space-y-1">
+                <p className="font-medium text-[#6A55F8]">📣 Telegram-канал — сгенерируем точную ссылку</p>
+                <p>Мы автоматически создадим именную пригласительную ссылку через твоего бота. Она 100% точно покажет кто именно пришёл с этого источника.</p>
+                <p className="text-[11px] text-gray-500 mt-1">Для этого бот должен быть <b>администратором канала</b> с правом «Приглашать участников». Если такого бота нет — просто запишется как обычный источник.</p>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Описание (необязательно)</label>
@@ -366,24 +387,42 @@ function SourcesTab({ projectId }: { projectId: string }) {
           {sources.map(source => (
             <div key={source.id} className="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-4">
               {/* Статистика */}
-              <div className="w-16 text-center flex-shrink-0">
-                <p className="text-2xl font-bold text-gray-900">{source.click_count.toLocaleString('ru-RU')}</p>
-                <p className="text-xs text-gray-400">кликов</p>
+              <div className="w-20 text-center flex-shrink-0">
+                {source.telegram_invite_link ? (
+                  <>
+                    <p className="text-2xl font-bold text-[#6A55F8]">{(source.telegram_invite_member_count ?? 0).toLocaleString('ru-RU')}</p>
+                    <p className="text-xs text-gray-400">подписок</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold text-gray-900">{source.click_count.toLocaleString('ru-RU')}</p>
+                    <p className="text-xs text-gray-400">кликов</p>
+                  </>
+                )}
               </div>
 
               {/* Основная инфо */}
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900 text-sm truncate">{source.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-gray-900 text-sm truncate">{source.name}</p>
+                  {source.telegram_invite_link && (
+                    <span className="text-[10px] font-semibold uppercase bg-[#6A55F8]/10 text-[#6A55F8] px-1.5 py-0.5 rounded">TG канал</span>
+                  )}
+                </div>
                 {source.description && (
                   <p className="text-xs text-gray-400 truncate">{source.description}</p>
                 )}
-                <p className="text-xs text-gray-400 mt-0.5 truncate">→ {source.destination_url}</p>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">
+                  → {source.telegram_channel_title ? `канал «${source.telegram_channel_title}»` : source.destination_url}
+                </p>
               </div>
 
               {/* Ссылка + кнопки */}
               <div className="flex items-center gap-2 flex-shrink-0">
-                <code className="text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1 text-gray-600">
-                  /go/{source.slug}
+                <code className="text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1 text-gray-600 max-w-[220px] truncate">
+                  {source.telegram_invite_link
+                    ? source.telegram_invite_link.replace(/^https?:\/\//, '')
+                    : `/go/${source.slug}`}
                 </code>
                 <button
                   onClick={() => copyLink(source)}

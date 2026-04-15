@@ -91,13 +91,14 @@ export async function POST(request: NextRequest) {
     // =============================================
     if (body.chat_member) {
       const cm = body.chat_member
-      // new_chat_member.user — кто подписался/отписался
       const memberUser = cm.new_chat_member?.user ?? cm.from
       const tgUserId = memberUser?.id
       const tgUsername = memberUser?.username ?? null
       const tgFirstName = memberUser?.first_name ?? null
       const chatId = cm.chat?.id
       const newStatus = cm.new_chat_member?.status
+      // Если подписался по именной invite link — Telegram шлёт её в событии
+      const inviteLinkName: string | null = cm.invite_link?.name ?? null
 
       if (tgUserId && chatId && newStatus) {
         const { data: bot } = await supabase.from('telegram_bots')
@@ -106,12 +107,28 @@ export async function POST(request: NextRequest) {
           .single()
 
         if (bot && (bot.channel_id === String(chatId) || bot.channel_id === cm.chat?.username)) {
-          // Ищем customer или создаём нового
+          // Находим источник трафика по invite_link.name (если есть)
+          let sourceId: string | null = null
+          let sourceSlug: string | null = null
+          let sourceName: string | null = null
+          if (inviteLinkName) {
+            const { data: source } = await supabase.from('traffic_sources')
+              .select('id, slug, name')
+              .eq('project_id', bot.project_id)
+              .eq('telegram_invite_name', inviteLinkName)
+              .maybeSingle()
+            if (source) {
+              sourceId = source.id
+              sourceSlug = source.slug
+              sourceName = source.name
+            }
+          }
+
           const { data: customer } = await supabase.from('customers')
-            .select('id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
+            .select('id, source_id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
 
           if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
-            // Новый подписчик канала — создаём customer запись
+            // Новый подписчик канала — создаём customer с источником если он пришёл по invite-link
             const { data: newCustomer } = await supabase.from('customers').insert({
               project_id: bot.project_id,
               telegram_id: String(tgUserId),
@@ -119,25 +136,36 @@ export async function POST(request: NextRequest) {
               full_name: tgFirstName,
               channel_subscribed: true,
               channel_subscribed_at: new Date().toISOString(),
+              ...(sourceId ? { source_id: sourceId, source_slug: sourceSlug, source_name: sourceName } : {}),
             }).select('id').single()
             if (newCustomer) {
               await supabase.from('customer_actions').insert({
                 customer_id: newCustomer.id, project_id: bot.project_id,
-                action: 'channel_subscribed', data: { channel_id: String(chatId), auto_created: true },
+                action: 'channel_subscribed',
+                data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
               })
+              // Increment counter на source
+              if (sourceId) {
+                const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
+                await supabase.from('traffic_sources').update({
+                  telegram_invite_member_count: (cur?.telegram_invite_member_count ?? 0) + 1,
+                }).eq('id', sourceId)
+              }
             }
           } else if (customer) {
             if (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator') {
               await supabase.from('customers').update({
                 channel_subscribed: true,
                 channel_subscribed_at: new Date().toISOString(),
-                // Обновляем username/имя если изменились
                 ...(tgUsername ? { telegram_username: tgUsername } : {}),
                 ...(tgFirstName ? { full_name: tgFirstName } : {}),
+                // Привязываем source если его ещё не было
+                ...(sourceId && !customer.source_id ? { source_id: sourceId, source_slug: sourceSlug, source_name: sourceName } : {}),
               }).eq('id', customer.id)
               await supabase.from('customer_actions').insert({
                 customer_id: customer.id, project_id: bot.project_id,
-                action: 'channel_subscribed', data: { channel_id: String(chatId) },
+                action: 'channel_subscribed',
+                data: { channel_id: String(chatId), invite_link_name: inviteLinkName, source_id: sourceId },
               })
             } else if (newStatus === 'left' || newStatus === 'kicked') {
               await supabase.from('customers').update({

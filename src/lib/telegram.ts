@@ -100,6 +100,25 @@ export async function deleteTelegramWebhook(token: string) {
   return res.json()
 }
 
+export async function createChatInviteLink(token: string, chatId: number | string, params: { name?: string; expire_date?: number; member_limit?: number; creates_join_request?: boolean } = {}) {
+  return telegramRequest(token, 'createChatInviteLink', {
+    chat_id: chatId,
+    ...params,
+  })
+}
+
+export async function revokeChatInviteLink(token: string, chatId: number | string, inviteLink: string) {
+  return telegramRequest(token, 'revokeChatInviteLink', { chat_id: chatId, invite_link: inviteLink })
+}
+
+export async function getChat(token: string, chatId: number | string) {
+  return telegramRequest(token, 'getChat', { chat_id: chatId })
+}
+
+export async function getChatMember(token: string, chatId: number | string, userId: number | string) {
+  return telegramRequest(token, 'getChatMember', { chat_id: chatId, user_id: userId })
+}
+
 export async function getTelegramBotInfo(token: string) {
   const res = await fetch(`${TELEGRAM_API}${token}/getMe`)
   return res.json()
