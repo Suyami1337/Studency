@@ -189,8 +189,6 @@ function TelegramPanel({ projectId, accounts, loading, onReload }: {
         </div>
       </div>
 
-      {/* Плашка cron */}
-      <CronHint />
 
       {loading ? (
         <div className="text-center py-8 text-sm text-gray-400">Загрузка…</div>
@@ -223,28 +221,6 @@ function TelegramPanel({ projectId, accounts, loading, onReload }: {
   )
 }
 
-function CronHint() {
-  const cronUrl = 'https://www.studency.ru/api/cron/social-sync'
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 flex items-center gap-3">
-      <span className="text-lg">⏰</span>
-      <div className="flex-1">
-        <p className="font-semibold mb-0.5">Включи автосинхронизацию раз в час</p>
-        <p>Зайди на <a href="https://console.cron-job.org" target="_blank" rel="noreferrer" className="underline font-medium">cron-job.org</a> и добавь задачу: URL ниже, расписание каждый час.</p>
-      </div>
-      <div className="flex items-center gap-2">
-        <code className="bg-white border border-amber-200 rounded px-2 py-1 text-[11px] font-mono">{cronUrl}</code>
-        <button
-          onClick={() => { navigator.clipboard.writeText(cronUrl); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
-          className="bg-amber-600 hover:bg-amber-700 text-white px-2 py-1 rounded text-[11px] font-medium"
-        >
-          {copied ? '✓' : 'Копировать'}
-        </button>
-      </div>
-    </div>
-  )
-}
 
 function MTProtoModal({ projectId, onClose, onDone, hasConnected }: {
   projectId: string
