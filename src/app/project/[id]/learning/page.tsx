@@ -359,9 +359,15 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
   const [confirmDeleteCourse, setConfirmDeleteCourse] = useState(false)
 
   async function deleteCourse() {
-    if (onDeleted) onDeleted(course.id) // instant remove from list
-    onBack() // instant navigate back
-    supabase.from('courses').delete().eq('id', course.id) // background
+    // FK cascade настроен: courses → course_modules → course_lessons + tariff_access
+    // Удаляем, ждём результат. При ошибке сообщаем и не навигируемся.
+    const { error } = await supabase.from('courses').delete().eq('id', course.id)
+    if (error) {
+      alert('Не удалось удалить курс: ' + error.message)
+      return
+    }
+    if (onDeleted) onDeleted(course.id)
+    onBack()
   }
 
   async function duplicateCourse() {

@@ -267,9 +267,18 @@ function SourcesTab({ projectId }: { projectId: string }) {
   }
 
   async function deleteSource(id: string) {
+    const source = sources.find(s => s.id === id)
+    const name = source?.name ?? 'этот источник'
+    if (!confirm(`Удалить источник «${name}»? Клики, привязанные Telegram-подписки и связь с клиентами в карточках останутся, но источник пропадёт из списка.`)) return
     setDeletingId(id)
+    const prevSources = sources
     setSources(prev => prev.filter(s => s.id !== id))
-    await fetch(`/api/traffic-sources/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/traffic-sources/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}))
+      alert('Не удалось удалить: ' + (json.error ?? res.statusText))
+      setSources(prevSources)
+    }
     setDeletingId(null)
   }
 

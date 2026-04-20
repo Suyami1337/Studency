@@ -1542,9 +1542,14 @@ function SettingsTab({ scenario, supabase, onBack, onDeleted, onDuplicated }: {
     setTimeout(() => setSaved(false), 2500)
   }
   async function deleteScenario() {
+    // FK cascade настроен: сценарии → сообщения → кнопки + триггеры + followups
+    const { error } = await supabase.from('chatbot_scenarios').delete().eq('id', scenario.id)
+    if (error) {
+      alert('Не удалось удалить сценарий: ' + error.message)
+      return
+    }
     if (onDeleted) onDeleted(scenario.id)
     onBack()
-    await supabase.from('chatbot_scenarios').delete().eq('id', scenario.id)
   }
   async function duplicateScenario() {
     if (duplicating) return
