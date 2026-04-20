@@ -47,14 +47,23 @@ export async function scrapeTelegramChannel(username: string, limit = 20): Promi
   }
   const html = await res.text()
 
-  // Блоки постов: <div class="tgme_widget_message ..." data-post="channel/ID" ...>...</div>
-  const postBlockRegex = /<div class="tgme_widget_message[^"]*"[^>]*data-post="[^"]+\/(\d+)"[^>]*>([\s\S]*?)(?=<div class="tgme_widget_message "|<\/main>)/g
-  const posts: ScrapedPost[] = []
+  // Каждый пост обёрнут в <div class="tgme_widget_message_wrap ...">...</div>
+  // Режем HTML по позициям открывающих тегов wrap — получаем независимые блоки
+  // постов. Это надёжнее регекса с lookahead (который жадно захватывает весь
+  // остаток страницы в один матч).
+  const markerRe = /<div class="tgme_widget_message_wrap[^"]*"/g
+  const markers: number[] = []
+  let mm: RegExpExecArray | null
+  while ((mm = markerRe.exec(html)) !== null) markers.push(mm.index)
 
-  let m
-  while ((m = postBlockRegex.exec(html)) !== null) {
-    const msgId = m[1]
-    const block = m[2]
+  const posts: ScrapedPost[] = []
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i]
+    const end = i < markers.length - 1 ? markers[i + 1] : html.length
+    const block = html.substring(start, end)
+    const idMatch = block.match(/data-post="[^"]+\/(\d+)"/)
+    if (!idMatch) continue
+    const msgId = idMatch[1]
 
     // Текст
     const textMatch = block.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/)
