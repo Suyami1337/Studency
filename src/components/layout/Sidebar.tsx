@@ -25,6 +25,7 @@ const navGroups: NavItem[][] = [
     { id: 'broadcasts', label: 'Рассылки', icon: '📢' },
     { id: 'conversations', label: 'Переписки', icon: '✉️', disabled: true, tooltip: 'Скоро' },
     { id: 'sites', label: 'Сайты', icon: '🌐' },
+    { id: 'social', label: 'Соцсети', icon: '🌍' },
   ],
   // Медиа
   [

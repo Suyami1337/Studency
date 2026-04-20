@@ -106,6 +106,15 @@ export async function POST(request: NextRequest) {
           .eq('token', botToken)
           .single()
 
+        // Ищем social_account для этого канала, чтобы привязать лог подписок
+        const { data: socialAccount } = await supabase
+          .from('social_accounts')
+          .select('id')
+          .eq('project_id', bot?.project_id ?? '')
+          .eq('platform', 'telegram')
+          .eq('external_id', String(chatId))
+          .maybeSingle()
+
         if (bot && (bot.channel_id === String(chatId) || bot.channel_id === cm.chat?.username)) {
           // Находим источник трафика по invite_link.name (если есть)
           let sourceId: string | null = null
@@ -144,6 +153,18 @@ export async function POST(request: NextRequest) {
                 action: 'channel_subscribed',
                 data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
               })
+              // social_subscribers_log
+              if (socialAccount) {
+                await supabase.from('social_subscribers_log').insert({
+                  account_id: socialAccount.id,
+                  external_user_id: String(tgUserId),
+                  username: tgUsername,
+                  first_name: tgFirstName,
+                  action: 'join',
+                  invite_link_name: inviteLinkName,
+                  customer_id: newCustomer.id,
+                })
+              }
               // Increment counter на source
               if (sourceId) {
                 const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
@@ -167,6 +188,17 @@ export async function POST(request: NextRequest) {
                 action: 'channel_subscribed',
                 data: { channel_id: String(chatId), invite_link_name: inviteLinkName, source_id: sourceId },
               })
+              if (socialAccount) {
+                await supabase.from('social_subscribers_log').insert({
+                  account_id: socialAccount.id,
+                  external_user_id: String(tgUserId),
+                  username: tgUsername,
+                  first_name: tgFirstName,
+                  action: 'join',
+                  invite_link_name: inviteLinkName,
+                  customer_id: customer.id,
+                })
+              }
             } else if (newStatus === 'left' || newStatus === 'kicked') {
               await supabase.from('customers').update({
                 channel_subscribed: false,
@@ -176,6 +208,16 @@ export async function POST(request: NextRequest) {
                 customer_id: customer.id, project_id: bot.project_id,
                 action: 'channel_unsubscribed', data: { channel_id: String(chatId) },
               })
+              if (socialAccount) {
+                await supabase.from('social_subscribers_log').insert({
+                  account_id: socialAccount.id,
+                  external_user_id: String(tgUserId),
+                  username: tgUsername,
+                  first_name: tgFirstName,
+                  action: 'leave',
+                  customer_id: customer.id,
+                })
+              }
             }
           }
         }
