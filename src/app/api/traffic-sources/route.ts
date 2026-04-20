@@ -31,10 +31,24 @@ function parseTelegramUrl(url: string): { kind: 'channel' | 'bot'; identifier: s
   }
 }
 
-/** Делает invite-name в формате требуемом Telegram (до 32 симв., ASCII). */
-function buildInviteName(slug: string): string {
-  const base = `src_${slug}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 32)
-  return base || `src_${Date.now().toString(36)}`
+/** Делает invite-name в формате требуемом Telegram (до 32 симв., ASCII).
+ *  Проверяет уникальность в пределах проекта, при коллизии добавляет суффикс. */
+async function buildInviteName(supabase: ReturnType<typeof getSupabase>, projectId: string, slug: string): Promise<string> {
+  const clean = `src_${slug}`.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 28)
+  const candidate = clean || `src_${Date.now().toString(36)}`
+
+  // Проверяем уникальность
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const name = attempt === 0 ? candidate : `${candidate.slice(0, 24)}_${Math.random().toString(36).slice(2, 6)}`
+    const { data } = await supabase
+      .from('traffic_sources')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('telegram_invite_name', name)
+      .maybeSingle()
+    if (!data) return name.slice(0, 32)
+  }
+  return `src_${Date.now().toString(36)}`
 }
 
 // GET /api/traffic-sources?projectId=...
@@ -94,7 +108,7 @@ export async function POST(request: NextRequest) {
           if (!canInvite) continue
 
           // Генерим invite link
-          const inviteName = buildInviteName(cleanSlug)
+          const inviteName = await buildInviteName(supabase, projectId, cleanSlug)
           const invite = await createChatInviteLink(bot.token, chatId, { name: inviteName })
           if (!invite.ok) continue
 
