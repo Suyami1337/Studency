@@ -221,6 +221,45 @@ export async function POST(request: NextRequest) {
             }
           }
         }
+
+        // Проверяем pending_subscription_gates — если клиент ждал подписки
+        // на этот канал, продолжаем цепочку со следующего сообщения.
+        if (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator') {
+          const { data: pending } = await supabase
+            .from('pending_subscription_gates')
+            .select('id, conversation_id, gate_message_id, channel_telegram_id')
+            .eq('telegram_user_id', tgUserId)
+            .eq('channel_telegram_id', Number(chatId))
+            .order('created_at', { ascending: false })
+
+          for (const p of pending ?? []) {
+            try {
+              // Удаляем pending — используем один раз
+              await supabase.from('pending_subscription_gates').delete().eq('id', p.id)
+
+              const { data: gateMsg } = await supabase
+                .from('scenario_messages')
+                .select('next_message_id, scenario_id')
+                .eq('id', p.gate_message_id)
+                .single()
+
+              if (!gateMsg?.next_message_id) continue
+
+              const { sendScenarioMessage } = await import('@/lib/scenario-sender')
+              await sendScenarioMessage(
+                supabase as unknown as Parameters<typeof sendScenarioMessage>[0],
+                botToken,
+                tgUserId,
+                gateMsg.next_message_id,
+                p.conversation_id,
+                tgUserId,
+                gateMsg.scenario_id,
+              )
+            } catch (err) {
+              console.error('resume after subscription gate error:', err)
+            }
+          }
+        }
       }
       return NextResponse.json({ ok: true })
     }

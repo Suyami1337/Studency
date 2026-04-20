@@ -15,6 +15,8 @@ type Message = {
   next_message_id: string | null; parent_message_id: string | null
   media_type?: string | null; media_url?: string | null; media_file_name?: string | null
   media_id?: string | null
+  is_subscription_gate?: boolean
+  gate_channel_account_id?: string | null
 }
 type Button = {
   id: string; message_id: string; order_position: number; text: string
@@ -620,6 +622,8 @@ function MessageCard({
         next_message_id: e.next_message_id, delay_minutes: e.delay_minutes, delay_unit: e.delay_unit,
         media_type: e.media_type ?? null, media_url: e.media_url ?? null,
         media_file_name: e.media_file_name ?? null, media_id: e.media_id ?? null,
+        is_subscription_gate: !!e.is_subscription_gate,
+        gate_channel_account_id: e.gate_channel_account_id ?? null,
       }
       if (!msg.id.startsWith('temp-')) {
         await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
@@ -697,13 +701,21 @@ function MessageCard({
           />
 
           {/* Type settings */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={e.is_start} onChange={ev => set({ is_start: ev.target.checked })}
                 className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
               <span className="text-xs font-medium text-gray-700">⭐ Стартовое сообщение</span>
             </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={!!e.is_subscription_gate} onChange={ev => set({ is_subscription_gate: ev.target.checked })}
+                className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
+              <span className="text-xs font-medium text-gray-700">🚪 Проверка подписки на канал</span>
+            </label>
           </div>
+
+          {/* Gate: выбор канала */}
+          {e.is_subscription_gate && <GateChannelSelect projectId={projectId} value={e.gate_channel_account_id ?? null} onChange={v => set({ gate_channel_account_id: v })} />}
 
           {/* Trigger word (if start) */}
           {e.is_start && (
@@ -2524,6 +2536,55 @@ export default function ChatbotsPage() {
           ))}
         </div>
       ))}
+    </div>
+  )
+}
+
+// ============================================================
+// Селектор Telegram-канала для subscription gate
+// ============================================================
+function GateChannelSelect({ projectId, value, onChange }: {
+  projectId: string
+  value: string | null
+  onChange: (v: string | null) => void
+}) {
+  const supabase = createClient()
+  const [channels, setChannels] = useState<Array<{ id: string; external_title: string | null; external_username: string | null }>>([])
+  useEffect(() => {
+    supabase.from('social_accounts')
+      .select('id, external_title, external_username')
+      .eq('project_id', projectId)
+      .eq('platform', 'telegram')
+      .eq('is_active', true)
+      .then(({ data }) => setChannels(data ?? []))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  if (channels.length === 0) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+        ⚠️ Нет подключённых Telegram-каналов. Подключи канал в разделе <b>Соцсети → Telegram</b>, чтобы выбрать его здесь.
+      </div>
+    )
+  }
+  return (
+    <div className="bg-[#F0EDFF] border border-[#6A55F8]/20 rounded-lg p-3 space-y-2">
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">Какой канал проверять</label>
+        <select value={value ?? ''} onChange={ev => onChange(ev.target.value || null)}
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+          <option value="">— Выбери канал —</option>
+          {channels.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.external_title ?? c.external_username ?? c.id.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <p className="text-[11px] text-gray-500">
+        Если клиент уже подписан — этот шаг автоматически пропустится, бот сразу отправит следующее сообщение.
+        Если нет — клиент получит кнопку «Подписаться». Как только подпишется, бот автоматически продолжит цепочку.
+      </p>
     </div>
   )
 }

@@ -24,6 +24,7 @@ export type EventType =
   | 'channel_joined'
   | 'order_created'
   | 'order_paid'
+  | 'manager_conversation_started'
   | 'custom'
 
 export type EventCatalogEntry = {
@@ -102,6 +103,12 @@ export const EVENT_CATALOG: EventCatalogEntry[] = [
     description: 'Заказ успешно оплачен',
     targetKind: 'product',
     cancels: ['order_created', 'landing_visit'],
+  },
+  {
+    type: 'manager_conversation_started',
+    label: 'Начал переписку с менеджером',
+    description: 'Клиент написал менеджеру в личку (видим через подключённый user-аккаунт)',
+    targetKind: null,
   },
   {
     type: 'custom',

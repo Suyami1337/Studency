@@ -118,10 +118,95 @@ export async function sendScenarioMessage(
     .eq('id', messageId)
     .single()
 
-  // Сообщение валидно если есть хоть что-то: текст или медиа
-  if (!msg || (!msg.text && !msg.media_url)) return
+  if (!msg) return
 
   const resolvedScenarioId = scenarioId ?? msg.scenario_id ?? null
+
+  // =================================================================
+  // Gate: проверка подписки на канал
+  // Если customer уже подписан — пропускаем этот шаг, идём сразу к next.
+  // Если нет — отправляем сообщение с кнопкой "Подписаться" + создаём
+  // pending_subscription_gate. Когда webhook chat_member зафиксирует
+  // подписку, продолжим цепочку с msg.next_message_id автоматически.
+  // =================================================================
+  if (msg.is_subscription_gate && msg.gate_channel_account_id) {
+    const { data: channel } = await supabase
+      .from('social_accounts')
+      .select('id, external_id, external_username, telegram_invite_link, project_id')
+      .eq('id', msg.gate_channel_account_id)
+      .maybeSingle()
+
+    if (channel) {
+      // Находим customer по conversation → chat_id=telegram_id
+      const { data: conv } = await supabase
+        .from('chatbot_conversations')
+        .select('telegram_chat_id, project_id')
+        .eq('id', conversationId)
+        .maybeSingle()
+
+      const { data: customer } = conv ? await supabase
+        .from('customers')
+        .select('id, channel_subscribed')
+        .eq('telegram_id', String(conv.telegram_chat_id))
+        .eq('project_id', conv.project_id)
+        .maybeSingle() : { data: null }
+
+      // Реалтайм-проверка через Bot API (getChatMember) — источник истины
+      let isSubscribed = false
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${botToken}/getChatMember?chat_id=${channel.external_id}&user_id=${chatId}`)
+        const js = await resp.json()
+        if (js.ok) {
+          const status = js.result?.status
+          isSubscribed = status === 'member' || status === 'administrator' || status === 'creator'
+        }
+      } catch { /* ignore, fallback to DB */ }
+
+      if (isSubscribed) {
+        // Обновим БД на всякий случай
+        if (customer && !customer.channel_subscribed) {
+          await supabase.from('customers').update({
+            channel_subscribed: true,
+            channel_subscribed_at: new Date().toISOString(),
+          }).eq('id', customer.id)
+        }
+        // Gate пройден — идём к следующему сообщению без задержки
+        if (msg.next_message_id) {
+          await sendScenarioMessage(supabase, botToken, chatId, msg.next_message_id, conversationId, userId, resolvedScenarioId)
+        }
+        return
+      }
+
+      // Не подписан → шлём сообщение с кнопкой "Подписаться" и запоминаем gate
+      const inviteUrl = channel.telegram_invite_link ||
+        (channel.external_username ? `https://t.me/${channel.external_username.replace(/^@/, '')}` : null)
+      if (inviteUrl) {
+        const gateText = msg.text || 'Подпишись на канал, чтобы получить следующее сообщение 👇'
+        await sendTelegramMessage(botToken, chatId, gateText, [
+          { text: 'Подписаться', url: inviteUrl },
+        ])
+        await supabase.from('chatbot_messages').insert({
+          conversation_id: conversationId,
+          direction: 'outgoing',
+          content: gateText,
+          scenario_id: resolvedScenarioId,
+        })
+        // Запоминаем что клиент завис на этом gate — продолжим при chat_member
+        await supabase.from('pending_subscription_gates').insert({
+          conversation_id: conversationId,
+          gate_message_id: msg.id,
+          channel_account_id: channel.id,
+          channel_telegram_id: Number(channel.external_id),
+          telegram_user_id: chatId,
+          customer_id: customer?.id ?? null,
+        })
+      }
+      return
+    }
+  }
+
+  // Обычное сообщение: нужно иметь текст или медиа
+  if (!msg.text && !msg.media_url) return
 
   // Get buttons
   const { data: btns } = await supabase
@@ -130,12 +215,44 @@ export async function sendScenarioMessage(
     .eq('message_id', msg.id)
     .order('order_position')
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+
+  // Находим customer_id для прокси-трекинга кликов
+  let customerIdForClicks: string | null = null
+  try {
+    const { data: conv } = await supabase
+      .from('chatbot_conversations')
+      .select('project_id')
+      .eq('id', conversationId)
+      .maybeSingle()
+    if (conv) {
+      const { data: customer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('telegram_id', String(chatId))
+        .eq('project_id', conv.project_id)
+        .maybeSingle()
+      if (customer) customerIdForClicks = customer.id
+    }
+  } catch { /* ignore */ }
+
   const telegramButtons = (btns ?? [])
     .filter((b: { text: string }) => b.text)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((b: any) => {
-      let url = b.action_type === 'url' && b.action_url ? b.action_url : undefined
-      if (url && userId) url = url.replace(/\{tgid\}/g, String(userId))
+      let url: string | undefined
+      if (b.action_type === 'url' && b.action_url) {
+        // Подстановка {tgid}
+        const resolvedDest = userId ? b.action_url.replace(/\{tgid\}/g, String(userId)) : b.action_url
+        // Заворачиваем в прокси-редирект для аналитики кликов
+        const cParam = customerIdForClicks ? `?c=${customerIdForClicks}` : ''
+        url = `${appUrl}/btn/${b.id}${cParam}`
+        // Если b.action_url уже указывает на telegram или если мы не знаем project_id,
+        // всё равно прокси работает — он редиректит на оригинальный action_url из БД.
+        // (Временная переменная resolvedDest нужна если включить inline-подстановку)
+        void resolvedDest
+      }
       return {
         text: b.text,
         url,
