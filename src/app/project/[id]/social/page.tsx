@@ -114,8 +114,6 @@ function TelegramOverview({ projectId, accounts, loading, onReload }: {
   onReload: () => void
 }) {
   const [addOpen, setAddOpen] = useState(false)
-  const [mtprotoOpen, setMtprotoOpen] = useState(false)
-  const hasMtproto = accounts.some(a => a.mtproto_status === 'connected')
 
   return (
     <div className="space-y-4">
@@ -123,22 +121,14 @@ function TelegramOverview({ projectId, accounts, loading, onReload }: {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-semibold text-gray-900">Подключённые Telegram-каналы</h2>
-          <p className="text-xs text-gray-500">Клик по карточке — детальная аналитика канала</p>
+          <p className="text-xs text-gray-500">Клик по карточке — детальная аналитика канала и настройки</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMtprotoOpen(true)}
-            className="border border-[#6A55F8] text-[#6A55F8] hover:bg-[#F0EDFF] px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            {hasMtproto ? '⚙️ MTProto' : '🔒 MTProto'}
-          </button>
-          <button
-            onClick={() => setAddOpen(true)}
-            className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            + Добавить канал
-          </button>
-        </div>
+        <button
+          onClick={() => setAddOpen(true)}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium"
+        >
+          + Добавить канал
+        </button>
       </div>
 
       {/* Список каналов */}
@@ -157,18 +147,13 @@ function TelegramOverview({ projectId, accounts, loading, onReload }: {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-3">
           {accounts.map(acc => <ChannelPreview key={acc.id} projectId={projectId} account={acc} />)}
         </div>
       )}
 
       {addOpen && (
         <AddChannelModal projectId={projectId} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); onReload() }} />
-      )}
-
-      {mtprotoOpen && (
-        <MTProtoModal projectId={projectId} onClose={() => setMtprotoOpen(false)}
-          onDone={() => { setMtprotoOpen(false); onReload() }} hasConnected={hasMtproto} />
       )}
     </div>
   )
@@ -280,165 +265,3 @@ function AddChannelModal({ projectId, onClose, onDone }: {
   )
 }
 
-function MTProtoModal({ projectId, onClose, onDone, hasConnected }: {
-  projectId: string
-  onClose: () => void
-  onDone: () => void
-  hasConnected: boolean
-}) {
-  const [step, setStep] = useState<'guide' | 'creds' | 'code'>('guide')
-  const [apiId, setApiId] = useState('')
-  const [apiHash, setApiHash] = useState('')
-  const [phone, setPhone] = useState('')
-  const [code, setCode] = useState('')
-  const [password, setPassword] = useState('')
-  const [needsPassword, setNeedsPassword] = useState(false)
-  const [flowId, setFlowId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [successMsg, setSuccessMsg] = useState<string | null>(null)
-
-  async function sendCode() {
-    setLoading(true); setError(null)
-    try {
-      const res = await fetch('/api/social/telegram/mtproto/login-start', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, apiId: Number(apiId), apiHash: apiHash.trim(), phone: phone.trim() }),
-      })
-      const json = await res.json()
-      if (json.error) { setError(json.error + (json.hint ? '\n' + json.hint : '')); return }
-      setFlowId(json.flow_id); setStep('code')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Сеть недоступна')
-    } finally { setLoading(false) }
-  }
-
-  async function verifyCode() {
-    if (!flowId) return
-    setLoading(true); setError(null)
-    try {
-      const res = await fetch('/api/social/telegram/mtproto/login-verify', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ flowId, code: code.trim(), password: password || undefined }),
-      })
-      const json = await res.json()
-      if (json.needs_password) { setNeedsPassword(true); setError('Введи пароль 2FA и нажми Подтвердить снова'); return }
-      if (json.error) { setError(json.error); return }
-      setSuccessMsg(`✅ Подключено. Привязано каналов: ${json.linked_channels}. Можешь закрыть окно.`)
-      setTimeout(onDone, 2500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Сеть недоступна')
-    } finally { setLoading(false) }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
-          <h2 className="font-semibold text-gray-900">Продвинутая статистика (MTProto)</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg">✕</button>
-        </div>
-
-        <div className="p-6 space-y-4">
-          {hasConnected && step === 'guide' && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-900">
-              ✅ MTProto уже подключён. Отключить можно на странице конкретного канала.
-            </div>
-          )}
-
-          {step === 'guide' && (
-            <div className="space-y-3 text-sm text-gray-700">
-              <p className="font-semibold text-gray-900">Что это даёт</p>
-              <ul className="list-disc pl-5 space-y-1">
-                <li>Точные просмотры каждого поста (Bot API их не показывает)</li>
-                <li>Форварды, активность аудитории</li>
-                <li>Работа с <b>приватными</b> каналами</li>
-              </ul>
-
-              <p className="font-semibold text-gray-900 pt-2">Инструкция (5 минут)</p>
-              <ol className="list-decimal pl-5 space-y-2">
-                <li>
-                  <b>Создай отдельный Telegram-аккаунт</b> на виртуальный номер — чтобы session не давала доступ к основному аккаунту.
-                  <div className="text-xs text-gray-500 mt-1">
-                    Сервисы виртуальных номеров: <a href="https://onlinesim.ru" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">onlinesim.ru</a>,{' '}
-                    <a href="https://sms-activate.org" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">sms-activate.org</a>{' '}
-                    (~50₽/мес за номер).
-                  </div>
-                  <div className="text-xs text-amber-700 mt-1">
-                    ⚠️ Можно основной аккаунт — но утечка session даст доступ ко всем чатам. На свой риск.
-                  </div>
-                </li>
-                <li>Добавь этот аккаунт администратором в свой Telegram-канал</li>
-                <li>
-                  Зайди с этого аккаунта на <a href="https://my.telegram.org" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">my.telegram.org</a>,
-                  создай приложение — получишь <code className="bg-gray-100 px-1 rounded">api_id</code> и <code className="bg-gray-100 px-1 rounded">api_hash</code>
-                </li>
-                <li>Введи их ниже + номер телефона этого аккаунта</li>
-              </ol>
-
-              <div className="flex justify-end pt-3">
-                <button onClick={() => setStep('creds')} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Далее →</button>
-              </div>
-            </div>
-          )}
-
-          {step === 'creds' && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-700">Введи данные с my.telegram.org</p>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">api_id</label>
-                <input type="number" value={apiId} onChange={e => setApiId(e.target.value)} placeholder="1234567"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">api_hash</label>
-                <input type="text" value={apiHash} onChange={e => setApiHash(e.target.value)} placeholder="abc123..."
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Номер телефона (международный формат)</label>
-                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+79991234567"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
-              </div>
-              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2 whitespace-pre-line">{error}</div>}
-              <div className="flex justify-between pt-3">
-                <button onClick={() => setStep('guide')} className="text-sm text-gray-500">← Назад</button>
-                <button onClick={sendCode} disabled={loading || !apiId || !apiHash || !phone}
-                  className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                  {loading ? 'Отправляю код…' : 'Получить код'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {step === 'code' && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-700">Telegram прислал код в приложение (чат с сервисными сообщениями)</p>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Код</label>
-                <input type="text" value={code} onChange={e => setCode(e.target.value)} placeholder="12345"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono tracking-widest text-center" autoFocus />
-              </div>
-              {needsPassword && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Пароль 2FA</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm" />
-                </div>
-              )}
-              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2 whitespace-pre-line">{error}</div>}
-              {successMsg && <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded p-3">{successMsg}</div>}
-              <div className="flex justify-between pt-3">
-                <button onClick={() => setStep('creds')} className="text-sm text-gray-500">← Назад</button>
-                <button onClick={verifyCode} disabled={loading || !code || Boolean(successMsg)}
-                  className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-                  {loading ? 'Проверяю…' : 'Подтвердить'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}

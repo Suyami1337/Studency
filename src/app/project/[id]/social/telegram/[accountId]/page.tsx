@@ -67,7 +67,7 @@ export default function TelegramChannelPage() {
   const [subsLog, setSubsLog] = useState<SubsLogRow[]>([])
   const [snapshots, setSnapshots] = useState<SnapshotRow[]>([])
   const [posts, setPosts] = useState<ContentItem[]>([])
-  const [tab, setTab] = useState<'overview' | 'subscribers' | 'posts'>('overview')
+  const [tab, setTab] = useState<'overview' | 'subscribers' | 'posts' | 'settings'>('overview')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [dateFilter, setDateFilter] = useState<DateFilter>('30d')
@@ -175,22 +175,8 @@ export default function TelegramChannelPage() {
 
   return (
     <div className="max-w-6xl space-y-5">
-      {/* Назад + действия */}
-      <div className="flex items-center justify-between">
-        <Link href={`/project/${projectId}/social`} className="text-sm text-gray-500 hover:text-gray-700">← Все каналы</Link>
-        <div className="flex gap-2 items-center">
-          {account.mtproto_status === 'connected' && (
-            <button onClick={disconnectMtproto} disabled={disconnectingMtproto}
-              className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50">
-              {disconnectingMtproto ? 'Отключаю…' : 'Отключить MTProto'}
-            </button>
-          )}
-          <button onClick={removeChannel} disabled={removing}
-            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">
-            {removing ? 'Удаляю…' : 'Удалить канал'}
-          </button>
-        </div>
-      </div>
+      {/* Назад */}
+      <Link href={`/project/${projectId}/social`} className="text-sm text-gray-500 hover:text-gray-700">← Все каналы</Link>
 
       {/* Хедер канала */}
       <div className="bg-white rounded-xl border border-gray-100 p-5 flex items-center gap-4">
@@ -232,6 +218,7 @@ export default function TelegramChannelPage() {
             { k: 'overview',    l: 'Обзор' },
             { k: 'subscribers', l: 'Подписчики' },
             { k: 'posts',       l: 'Посты' },
+            { k: 'settings',    l: 'Настройки' },
           ] as const).map(t => (
             <button key={t.k} onClick={() => setTab(t.k)}
               className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${tab === t.k ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -247,8 +234,13 @@ export default function TelegramChannelPage() {
             <option value="90d">За 90 дней</option>
             <option value="all">Всё время</option>
           </select>
-          <button onClick={syncNow} disabled={syncing} className="text-xs text-[#6A55F8] hover:underline disabled:opacity-50">
-            {syncing ? 'Обновляю…' : '↻ Синхронизировать'}
+          <button
+            onClick={syncNow}
+            disabled={syncing}
+            title="Обновить данные сейчас. Автоматически всё обновляется каждые 15 минут, кнопка нужна если хочешь увидеть самые свежие цифры прямо сейчас."
+            className="text-xs text-gray-500 hover:text-[#6A55F8] disabled:opacity-50"
+          >
+            {syncing ? 'Обновляю…' : '↻ Обновить'}
           </button>
         </div>
       </div>
@@ -277,9 +269,238 @@ export default function TelegramChannelPage() {
             </div>
             <SubscribersList log={filteredLog} />
           </div>
-        ) : (
+        ) : tab === 'posts' ? (
           <PostsList topPosts={topPosts} worstPosts={worstPosts} all={filteredPosts} />
+        ) : (
+          <SettingsPanel
+            projectId={projectId}
+            account={account}
+            onReload={load}
+            disconnectMtproto={disconnectMtproto}
+            disconnectingMtproto={disconnectingMtproto}
+            removeChannel={removeChannel}
+            removing={removing}
+          />
         )}
+      </div>
+    </div>
+  )
+}
+
+function SettingsPanel({ projectId, account, onReload, disconnectMtproto, disconnectingMtproto, removeChannel, removing }: {
+  projectId: string
+  account: SocialAccount
+  onReload: () => void
+  disconnectMtproto: () => void
+  disconnectingMtproto: boolean
+  removeChannel: () => void
+  removing: boolean
+}) {
+  const [mtprotoOpen, setMtprotoOpen] = useState(false)
+  const hasMtproto = account.mtproto_status === 'connected'
+  return (
+    <div className="space-y-4 max-w-2xl">
+      {/* MTProto */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-semibold text-gray-900">Продвинутая статистика (MTProto)</h3>
+              {hasMtproto && <span className="text-[10px] uppercase font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">подключено</span>}
+              {account.mtproto_status === 'error' && <span className="text-[10px] uppercase font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded">ошибка</span>}
+            </div>
+            <p className="text-sm text-gray-600">
+              {hasMtproto
+                ? 'Просмотры постов, форварды и приватные каналы — через твой user-аккаунт Telegram.'
+                : 'Подключи свой Telegram-аккаунт чтобы видеть просмотры постов, форварды и работать с приватными каналами.'}
+            </p>
+            {account.mtproto_status === 'error' && account.mtproto_last_error && (
+              <p className="text-xs text-red-600 mt-1">Ошибка: {account.mtproto_last_error}</p>
+            )}
+          </div>
+          {hasMtproto ? (
+            <button onClick={disconnectMtproto} disabled={disconnectingMtproto}
+              className="border border-red-300 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50 whitespace-nowrap">
+              {disconnectingMtproto ? 'Отключаю…' : 'Отключить'}
+            </button>
+          ) : (
+            <button onClick={() => setMtprotoOpen(true)}
+              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap">
+              🔒 Подключить
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Danger zone */}
+      <div className="bg-white rounded-xl border border-red-200 p-5">
+        <h3 className="font-semibold text-red-700 mb-1">Опасная зона</h3>
+        <p className="text-sm text-gray-600 mb-3">
+          Канал пропадёт из списка. История событий подписчиков и посты останутся в БД — можно будет подключить снова и всё вернётся.
+        </p>
+        <button onClick={removeChannel} disabled={removing}
+          className="border border-red-300 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+          {removing ? 'Удаляю…' : 'Отвязать канал'}
+        </button>
+      </div>
+
+      {mtprotoOpen && (
+        <MTProtoModal projectId={projectId} onClose={() => setMtprotoOpen(false)}
+          onDone={() => { setMtprotoOpen(false); onReload() }} hasConnected={hasMtproto} />
+      )}
+    </div>
+  )
+}
+
+function MTProtoModal({ projectId, onClose, onDone, hasConnected }: {
+  projectId: string
+  onClose: () => void
+  onDone: () => void
+  hasConnected: boolean
+}) {
+  const [step, setStep] = useState<'guide' | 'creds' | 'code'>('guide')
+  const [apiId, setApiId] = useState('')
+  const [apiHash, setApiHash] = useState('')
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
+  const [needsPassword, setNeedsPassword] = useState(false)
+  const [flowId, setFlowId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  async function sendCode() {
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/social/telegram/mtproto/login-start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, apiId: Number(apiId), apiHash: apiHash.trim(), phone: phone.trim() }),
+      })
+      const json = await res.json()
+      if (json.error) { setError(json.error + (json.hint ? '\n' + json.hint : '')); return }
+      setFlowId(json.flow_id); setStep('code')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Сеть недоступна')
+    } finally { setLoading(false) }
+  }
+
+  async function verifyCode() {
+    if (!flowId) return
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/social/telegram/mtproto/login-verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flowId, code: code.trim(), password: password || undefined }),
+      })
+      const json = await res.json()
+      if (json.needs_password) { setNeedsPassword(true); setError('Введи пароль 2FA и нажми Подтвердить снова'); return }
+      if (json.error) { setError(json.error); return }
+      setSuccessMsg(`✅ Подключено. Привязано каналов: ${json.linked_channels}. Можешь закрыть окно.`)
+      setTimeout(onDone, 2500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Сеть недоступна')
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+          <h2 className="font-semibold text-gray-900">Продвинутая статистика (MTProto)</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg">✕</button>
+        </div>
+        <div className="p-6 space-y-4">
+          {hasConnected && step === 'guide' && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-900">
+              ✅ MTProto уже подключён для этого канала.
+            </div>
+          )}
+          {step === 'guide' && (
+            <div className="space-y-3 text-sm text-gray-700">
+              <p className="font-semibold text-gray-900">Что это даёт</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Точные просмотры каждого поста (Bot API их не показывает)</li>
+                <li>Форварды, активность аудитории</li>
+                <li>Работа с <b>приватными</b> каналами</li>
+              </ul>
+              <p className="font-semibold text-gray-900 pt-2">Инструкция (5 минут)</p>
+              <ol className="list-decimal pl-5 space-y-2">
+                <li>
+                  <b>Создай отдельный Telegram-аккаунт</b> на виртуальный номер — session не даст доступ к основному аккаунту.
+                  <div className="text-xs text-gray-500 mt-1">
+                    <a href="https://onlinesim.ru" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">onlinesim.ru</a>,{' '}
+                    <a href="https://sms-activate.org" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">sms-activate.org</a> (~50₽/мес).
+                  </div>
+                  <div className="text-xs text-amber-700 mt-1">⚠️ Можно основной аккаунт, но утечка session даст доступ ко всем чатам.</div>
+                </li>
+                <li>Добавь этот аккаунт администратором в канал</li>
+                <li>
+                  Зайди на <a href="https://my.telegram.org" target="_blank" rel="noreferrer" className="text-[#6A55F8] underline">my.telegram.org</a>,
+                  создай приложение — получишь <code className="bg-gray-100 px-1 rounded">api_id</code> и <code className="bg-gray-100 px-1 rounded">api_hash</code>
+                </li>
+                <li>Введи их ниже + номер телефона</li>
+              </ol>
+              <div className="flex justify-end pt-3">
+                <button onClick={() => setStep('creds')} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Далее →</button>
+              </div>
+            </div>
+          )}
+          {step === 'creds' && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">Введи данные с my.telegram.org</p>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">api_id</label>
+                <input type="number" value={apiId} onChange={e => setApiId(e.target.value)} placeholder="1234567"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">api_hash</label>
+                <input type="text" value={apiHash} onChange={e => setApiHash(e.target.value)} placeholder="abc123..."
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Номер телефона (международный формат)</label>
+                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+79991234567"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono" />
+              </div>
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2 whitespace-pre-line">{error}</div>}
+              <div className="flex justify-between pt-3">
+                <button onClick={() => setStep('guide')} className="text-sm text-gray-500">← Назад</button>
+                <button onClick={sendCode} disabled={loading || !apiId || !apiHash || !phone}
+                  className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                  {loading ? 'Отправляю код…' : 'Получить код'}
+                </button>
+              </div>
+            </div>
+          )}
+          {step === 'code' && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-700">Telegram прислал код в приложение (чат с сервисными сообщениями)</p>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Код</label>
+                <input type="text" value={code} onChange={e => setCode(e.target.value)} placeholder="12345"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm font-mono tracking-widest text-center" autoFocus />
+              </div>
+              {needsPassword && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Пароль 2FA</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+                </div>
+              )}
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2 whitespace-pre-line">{error}</div>}
+              {successMsg && <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded p-3">{successMsg}</div>}
+              <div className="flex justify-between pt-3">
+                <button onClick={() => setStep('creds')} className="text-sm text-gray-500">← Назад</button>
+                <button onClick={verifyCode} disabled={loading || !code || Boolean(successMsg)}
+                  className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                  {loading ? 'Проверяю…' : 'Подтвердить'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
