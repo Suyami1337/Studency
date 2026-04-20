@@ -157,3 +157,135 @@ export async function revokeSession(apiId: number, apiHash: string, sessionStrin
     await client.disconnect().catch(() => null)
   }
 }
+
+// =====================================================
+// Диалоги и личные сообщения (manager accounts)
+// =====================================================
+
+export type IncomingMessage = {
+  messageId: number
+  peerTelegramId: number
+  peerUsername: string | null
+  peerFirstName: string | null
+  text: string | null
+  mediaType: string | null
+  sentAt: string
+  isOutgoing: boolean  // сообщение отправлено менеджером (не клиентом)
+}
+
+/**
+ * Достаёт входящие (и исходящие) сообщения из личных диалогов менеджера за
+ * последние N дней или новее указанной даты. Только приватные чаты (user-to-user),
+ * каналы и группы игнорим.
+ */
+export async function fetchManagerDialogs(params: {
+  apiId: number
+  apiHash: string
+  sessionString: string
+  /** Только сообщения новее этой даты (UTC ISO) — для incremental */
+  sinceIso?: string
+  /** Максимум диалогов за вызов */
+  maxDialogs?: number
+  /** Максимум сообщений на диалог */
+  messagesPerDialog?: number
+}): Promise<IncomingMessage[]> {
+  const { apiId, apiHash, sessionString, sinceIso, maxDialogs = 100, messagesPerDialog = 100 } = params
+  const sinceTs = sinceIso ? Math.floor(new Date(sinceIso).getTime() / 1000) : 0
+  const client = await createClient(apiId, apiHash, sessionString)
+  const all: IncomingMessage[] = []
+  try {
+    const { Api } = await import('telegram')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dialogs: any = await client.invoke(new Api.messages.GetDialogs({
+      offsetDate: 0,
+      offsetId: 0,
+      offsetPeer: new Api.InputPeerEmpty(),
+      limit: maxDialogs,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      hash: 0 as any,
+    }))
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const users = new Map<number, any>()
+    for (const u of dialogs.users ?? []) users.set(Number(u.id), u)
+
+    for (const d of dialogs.dialogs ?? []) {
+      // peer типа PeerUser = личный диалог
+      if (d.peer?.className !== 'PeerUser') continue
+      const userId = Number(d.peer.userId)
+      const userObj = users.get(userId)
+      if (!userObj || userObj.self || userObj.bot) continue  // пропускаем себя и ботов
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const history: any = await client.invoke(new Api.messages.GetHistory({
+          peer: userObj,
+          limit: messagesPerDialog,
+          offsetId: 0,
+          offsetDate: 0,
+          addOffset: 0,
+          maxId: 0,
+          minId: 0,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash: 0 as any,
+        }))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const m of (history.messages ?? []) as any[]) {
+          if (m.className !== 'Message') continue
+          const msgDate = Number(m.date) || 0
+          if (sinceTs && msgDate < sinceTs) continue
+          all.push({
+            messageId: Number(m.id),
+            peerTelegramId: userId,
+            peerUsername: userObj.username ?? null,
+            peerFirstName: userObj.firstName ?? null,
+            text: m.message ?? null,
+            mediaType: m.media ? (m.media.className || 'unknown') : null,
+            sentAt: new Date(msgDate * 1000).toISOString(),
+            isOutgoing: Boolean(m.out),
+          })
+        }
+      } catch (err) {
+        console.error('fetchManagerDialogs history err for user', userId, err)
+      }
+    }
+  } finally {
+    await client.disconnect().catch(() => null)
+  }
+  return all
+}
+
+/** Отправка сообщения от имени менеджера (через MTProto). */
+export async function sendManagerMessage(params: {
+  apiId: number
+  apiHash: string
+  sessionString: string
+  peerTelegramId: number
+  text: string
+}): Promise<{ messageId: number } | null> {
+  const { apiId, apiHash, sessionString, peerTelegramId, text } = params
+  const client = await createClient(apiId, apiHash, sessionString)
+  try {
+    const { Api } = await import('telegram')
+    // Получаем InputUser через resolveUsername или прямо по id
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const peer: any = await client.getInputEntity(peerTelegramId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await client.invoke(new Api.messages.SendMessage({
+      peer,
+      message: text,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      randomId: BigInt(Date.now() * 1000 + Math.floor(Math.random() * 1000)) as any,
+    }))
+    // Ищем id из Updates
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updates: any[] = result.updates ?? [result]
+    for (const u of updates) {
+      if (u.className === 'UpdateMessageID' && u.id) return { messageId: Number(u.id) }
+      if (u.className === 'UpdateShortSentMessage' && u.id) return { messageId: Number(u.id) }
+    }
+    return { messageId: 0 }
+  } finally {
+    await client.disconnect().catch(() => null)
+  }
+}

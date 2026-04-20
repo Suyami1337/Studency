@@ -23,7 +23,7 @@ const navGroups: NavItem[][] = [
   [
     { id: 'chatbots', label: 'Чат-боты', icon: '💬' },
     { id: 'broadcasts', label: 'Рассылки', icon: '📢' },
-    { id: 'conversations', label: 'Переписки', icon: '✉️', disabled: true, tooltip: 'Скоро' },
+    { id: 'conversations', label: 'Переписки', icon: '✉️' },
     { id: 'sites', label: 'Сайты', icon: '🌐' },
     { id: 'social', label: 'Соцсети', icon: '🌍' },
   ],
