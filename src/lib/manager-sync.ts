@@ -69,13 +69,24 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     byPeer.get(m.peerTelegramId)!.push(m)
   }
 
-  // Для диалогов без новых сообщений (только из dialogMetas) — всё равно создаём
-  // conversation запись если её нет, чтобы появилась в списке.
+  // Batch-загружаем peer_telegram_id всех существующих conversations этого аккаунта —
+  // чтобы за один запрос понять какие диалоги в TG уже есть у нас в БД.
+  const { data: existingConvs } = await supabase
+    .from('manager_conversations')
+    .select('peer_telegram_id')
+    .eq('manager_account_id', acc.id)
+  const existingPeers = new Set((existingConvs ?? []).map(e => Number(e.peer_telegram_id)))
+
+  // Для диалогов без новых сообщений (только из dialogMetas) решаем:
+  // — Если conversation уже есть в БД → обрабатываем (нужно синхронизировать unread из TG,
+  //   например если пользователь прочитал диалог в мобильном Telegram, unread там обнулился).
+  // — Если conversation нет в БД → создаём только при unreadCount > 0 (иначе засорим
+  //   список пустыми диалогами из GetDialogs; актуально для «чистого старта»).
   for (const [peerId, meta] of dialogMetaByPeer) {
     if (byPeer.has(peerId)) continue
-    byPeer.set(peerId, [])  // заведём conversation с пустым набором сообщений
-    // peerMsgs будет пустой, но код ниже обновит unread_count из Telegram
-    void meta
+    if (existingPeers.has(peerId) || meta.unreadCount > 0) {
+      byPeer.set(peerId, [])
+    }
   }
 
   for (const [peerId, peerMsgs] of byPeer) {

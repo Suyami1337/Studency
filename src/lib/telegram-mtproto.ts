@@ -291,11 +291,10 @@ export async function fetchManagerDialogs(params: {
         const topDate = topMsg ? Number(topMsg.date) || 0 : 0
         const unreadCount = Number(d.unreadCount ?? 0)
 
-        // Пропускаем диалог полностью если топ-сообщение старее sinceIso И нет непрочитанных.
-        // Иначе «чистый старт» (sinceIso = now) всё равно импортировал бы все старые диалоги
-        // пустыми записями, только из-за того что они есть в GetDialogs.
-        if (sinceTs && topDate < sinceTs && unreadCount === 0) continue
-
+        // Возвращаем ВСЕ пользовательские диалоги из GetDialogs с их unreadCount —
+        // это источник истины для статуса прочитано/непрочитано. Фильтрация (не
+        // создавать пустые conversations на «чистом старте») делается на стороне
+        // manager-sync: там сверяем с существующими записями в БД.
         allDialogs.push({
           peerTelegramId: userId,
           peerUsername: userObj.username ?? null,
@@ -304,7 +303,8 @@ export async function fetchManagerDialogs(params: {
           topMessageDate: topDate ? new Date(topDate * 1000).toISOString() : null,
         })
 
-        // Skip GetHistory если топ-сообщение старее sinceIso (но unread > 0, поэтому диалог в списке)
+        // Skip GetHistory если топ-сообщение старее sinceIso (unread-only диалоги всё равно
+        // возвращаем, чтобы синк смог обнулить unread в БД когда пользователь прочтёт в TG)
         if (sinceTs && topDate < sinceTs) continue
 
         try {
