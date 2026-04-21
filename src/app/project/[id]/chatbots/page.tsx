@@ -2659,13 +2659,15 @@ function GateChannelSelect({ projectId, value, onChange }: {
 }) {
   const supabase = createClient()
   const [channels, setChannels] = useState<Array<{ id: string; external_title: string | null; external_username: string | null; external_id: string }>>([])
+  const [allAccounts, setAllAccounts] = useState<Array<{ id: string; external_title: string | null; external_id: string; mtproto_status: string | null }>>([])
   useEffect(() => {
     supabase.from('social_accounts')
-      .select('id, external_title, external_username, external_id')
+      .select('id, external_title, external_username, external_id, mtproto_status')
       .eq('project_id', projectId)
       .eq('platform', 'telegram')
       .eq('is_active', true)
       .then(({ data }) => {
+        setAllAccounts(data ?? [])
         // Каналы имеют отрицательный chat_id (-100...), user-аккаунты (менеджеры MTProto) — положительный
         const onlyChannels = (data ?? []).filter(a => a.external_id && a.external_id.startsWith('-'))
         setChannels(onlyChannels as typeof channels)
@@ -2680,25 +2682,43 @@ function GateChannelSelect({ projectId, value, onChange }: {
       </div>
     )
   }
-  const isDeadReference = !!value && !channels.some(c => c.id === value)
+  const savedAccount = value ? allAccounts.find(a => a.id === value) : null
+  const savedIsChannel = savedAccount?.external_id?.startsWith('-') ?? false
+  const isDeadReference = !!value && !savedAccount
+  const isWrongType = !!savedAccount && !savedIsChannel
   return (
     <div className="bg-[#F0EDFF] border border-[#6A55F8]/20 rounded-lg p-3 space-y-2">
       <div>
         <label className="block text-xs font-medium text-gray-700 mb-1">Какой канал проверять</label>
-        <select value={isDeadReference ? '' : (value ?? '')} onChange={ev => onChange(ev.target.value || null)}
-          className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:border-[#6A55F8] ${isDeadReference ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+        <select value={value ?? ''} onChange={ev => onChange(ev.target.value || null)}
+          className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:border-[#6A55F8] ${(isDeadReference || isWrongType) ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
           <option value="">— Выбери канал —</option>
           {channels.map(c => (
             <option key={c.id} value={c.id}>
-              {c.external_title ?? c.external_username ?? c.id.slice(0, 8)}
+              {c.external_title ?? c.external_username ?? c.id.slice(0, 8)} ({c.external_id})
             </option>
           ))}
         </select>
       </div>
+      {savedAccount && (
+        <div className="text-[11px] text-gray-600 font-mono bg-white border border-gray-200 rounded p-2">
+          Сохранено в БД:<br />
+          id: {savedAccount.id}<br />
+          name: {savedAccount.external_title ?? '—'}<br />
+          external_id: {savedAccount.external_id} {savedIsChannel ? '(канал ✓)' : '(НЕ канал ✗)'}<br />
+          {savedAccount.mtproto_status && `mtproto_status: ${savedAccount.mtproto_status}`}
+        </div>
+      )}
       {isDeadReference && (
         <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
-          ⚠️ <b>Канал удалён или переподключён</b> — ссылка из БД уже невалидна, поэтому проверка подписки сейчас не работает.
-          Выбери канал в списке выше и нажми «Сохранить».
+          ⚠️ <b>Канал удалён или переподключён</b> (id {value} не найден в social_accounts).
+          Выбери канал в списке и нажми «Сохранить».
+        </div>
+      )}
+      {isWrongType && (
+        <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
+          ⚠️ <b>Это не канал, а user-аккаунт</b> (external_id={savedAccount?.external_id}, должен начинаться с «-100…»).
+          Скорее всего выбран менеджер-аккаунт MTProto, а не канал. Выбери настоящий канал.
         </div>
       )}
       <p className="text-[11px] text-gray-500">
