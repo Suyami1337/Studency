@@ -38,6 +38,7 @@ export function AiAssistantOverlay({
   initialMessages = [{ kind: 'ai' as const, text: 'Привет! Чем могу помочь?' }],
   context,
   agent,
+  persistKey,
 }: {
   isOpen: boolean
   onClose: () => void
@@ -47,10 +48,26 @@ export function AiAssistantOverlay({
   context?: string
   /** If set — use agentic tool-use endpoint with conversation history */
   agent?: AgentConfig
+  /** If set — conversation is persisted in localStorage under `ai-chat:<persistKey>` and survives reload */
+  persistKey?: string
 }) {
-  const [entries, setEntries] = useState<ChatEntry[]>(initialMessages)
+  const storageKey = persistKey ? `ai-chat:${persistKey}` : null
+
+  function loadPersisted(): { entries: ChatEntry[]; history: unknown[] } | null {
+    if (!storageKey || typeof window === 'undefined') return null
+    try {
+      const raw = window.localStorage.getItem(storageKey)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (parsed && Array.isArray(parsed.entries)) return parsed
+    } catch { /* ignore corrupt blob */ }
+    return null
+  }
+
+  const persisted = loadPersisted()
+  const [entries, setEntries] = useState<ChatEntry[]>(persisted?.entries ?? initialMessages)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [agentHistory, setAgentHistory] = useState<any[]>([])
+  const [agentHistory, setAgentHistory] = useState<any[]>(persisted?.history as unknown[] ?? [])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -59,14 +76,40 @@ export function AiAssistantOverlay({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [entries, loading])
 
-  // Reset on reopen — fresh conversation each time overlay opens
+  // Persist to localStorage whenever conversation changes
   useEffect(() => {
-    if (isOpen) {
+    if (!storageKey || typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({ entries, history: agentHistory }))
+    } catch { /* quota exceeded — skip */ }
+  }, [entries, agentHistory, storageKey])
+
+  // При открытии перечитываем из localStorage (если ключ задан) — чтобы если в соседней
+  // вкладке добавилось сообщение, текущий overlay подтянул свежую версию. Если ключа
+  // нет — сбрасываем в initialMessages как раньше.
+  useEffect(() => {
+    if (!isOpen) return
+    if (storageKey) {
+      const fresh = loadPersisted()
+      if (fresh) {
+        setEntries(fresh.entries)
+        setAgentHistory((fresh.history as unknown[]) ?? [])
+      }
+    } else {
       setEntries(initialMessages)
       setAgentHistory([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
+
+  function resetConversation() {
+    if (!confirm('Очистить всю переписку с AI? Это действие необратимо.')) return
+    setEntries(initialMessages)
+    setAgentHistory([])
+    if (storageKey && typeof window !== 'undefined') {
+      try { window.localStorage.removeItem(storageKey) } catch { /* ignore */ }
+    }
+  }
 
   if (!isOpen) return null
 
@@ -123,7 +166,12 @@ export function AiAssistantOverlay({
                 {agent && <span className="text-[10px] text-white/70">Агент · применяет изменения после подтверждения</span>}
               </div>
             </div>
-            <button onClick={onClose} className="text-white/70 hover:text-white transition-colors text-lg">✕</button>
+            <div className="flex items-center gap-3">
+              {storageKey && entries.length > 1 && (
+                <button onClick={resetConversation} className="text-white/70 hover:text-white text-xs transition-colors">↻ Новый диалог</button>
+              )}
+              <button onClick={onClose} className="text-white/70 hover:text-white transition-colors text-lg">✕</button>
+            </div>
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-3">
             {entries.map((entry, i) => {

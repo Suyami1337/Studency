@@ -2350,6 +2350,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
         onClose={() => setShowAI(false)}
         title={`AI-агент · ${scenario.name}`}
         placeholder="Расскажи про продукт, аудиторию, цель воронки..."
+        persistKey={`chatbot-scenario-${scenario.id}`}
         agent={{
           endpoint: '/api/ai/agent/chatbot',
           payload: { scenarioId: scenario.id, projectId },
