@@ -42,7 +42,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const projectId: string | undefined = (btn as any).scenario_messages?.chatbot_scenarios?.telegram_bots?.project_id
-  const destination = btn.action_url
+  // Если пользователь сохранил URL без схемы (например "t.me/channel") — Next.js
+  // трактует это как относительный путь и редиректит на корень. Добавляем https://.
+  let destination = btn.action_url.trim()
+  if (!/^https?:\/\//i.test(destination) && !destination.startsWith('tg:')) {
+    destination = 'https://' + destination.replace(/^\/+/, '')
+  }
 
   // Fire-and-forget лог (не ждём)
   void (async () => {

@@ -687,6 +687,11 @@ function MessageCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${typeColor}`}>{typeLabel}</span>
+            {e.is_subscription_gate && (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${e.gate_channel_account_id ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                🚪 {e.gate_channel_account_id ? 'Gate' : 'Gate — канал не выбран!'}
+              </span>
+            )}
             {e.trigger_word && <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">{e.trigger_word}</span>}
             {e.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {e.delay_minutes} {e.delay_unit === 'sec' ? 'сек' : e.delay_unit === 'hour' ? 'ч' : e.delay_unit === 'day' ? 'дн' : 'мин'}</span>}
             {isDirty && <span className="text-xs text-amber-600 font-medium">● Не сохранено</span>}
@@ -738,7 +743,27 @@ function MessageCard({
           </div>
 
           {/* Gate: выбор канала */}
-          {e.is_subscription_gate && <GateChannelSelect projectId={projectId} value={e.gate_channel_account_id ?? null} onChange={v => set({ gate_channel_account_id: v })} />}
+          {e.is_subscription_gate && (
+            <div className="space-y-2">
+              <GateChannelSelect projectId={projectId} value={e.gate_channel_account_id ?? null} onChange={v => set({ gate_channel_account_id: v })} />
+              {!e.gate_channel_account_id && (
+                <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
+                  ⚠️ Канал не выбран. Без канала проверка подписки <b>не сработает</b> — клиент пройдёт дальше без подписки. Выбери канал выше и нажми «Сохранить».
+                </div>
+              )}
+              {e.gate_channel_account_id && !e.next_message_id && (
+                <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5">
+                  ⚠️ Не указано «Следующее сообщение». После того как клиент подпишется — бот ничего ему не отправит. Укажи «↓ Следующее сообщение» ниже.
+                </div>
+              )}
+              <div className="text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-lg p-2.5 space-y-1">
+                <div><b>Важно для работы gate:</b></div>
+                <div>• Бот должен быть <b>администратором</b> выбранного канала — иначе Telegram не даст проверить подписку</div>
+                <div>• У канала должен быть <b>invite-link</b> или публичный @username (кнопка «Подписаться» строится из них)</div>
+                <div>• В «↓ Следующее сообщение» укажи, что отправлять <b>после</b> успешной подписки</div>
+              </div>
+            </div>
+          )}
 
           {/* Trigger word (if start) */}
           {e.is_start && (

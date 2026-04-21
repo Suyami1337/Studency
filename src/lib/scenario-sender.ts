@@ -159,8 +159,13 @@ export async function sendScenarioMessage(
         if (js.ok) {
           const status = js.result?.status
           isSubscribed = status === 'member' || status === 'administrator' || status === 'creator'
+          console.log(`[gate] channel=${channel.external_id} user=${chatId} status=${status} isSubscribed=${isSubscribed}`)
+        } else {
+          console.warn(`[gate] getChatMember failed channel=${channel.external_id} user=${chatId} err=${js.description || js.error_code}`)
         }
-      } catch { /* ignore, fallback to DB */ }
+      } catch (err) {
+        console.warn(`[gate] getChatMember threw channel=${channel.external_id} user=${chatId}`, err)
+      }
 
       if (isSubscribed) {
         // Обновим БД на всякий случай
