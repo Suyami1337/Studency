@@ -17,6 +17,7 @@ type Message = {
   media_id?: string | null
   is_subscription_gate?: boolean
   gate_channel_account_id?: string | null
+  gate_button_label?: string | null
 }
 type Button = {
   id: string; message_id: string; order_position: number; text: string
@@ -631,6 +632,7 @@ function MessageCard({
         media_file_name: e.media_file_name ?? null, media_id: e.media_id ?? null,
         is_subscription_gate: !!e.is_subscription_gate,
         gate_channel_account_id: e.gate_channel_account_id ?? null,
+        gate_button_label: e.gate_button_label ?? null,
       }
       if (!msg.id.startsWith('temp-')) {
         await supabase.from('scenario_messages').update(updates).eq('id', msg.id)
@@ -758,22 +760,11 @@ function MessageCard({
           {e.is_subscription_gate && (
             <div className="space-y-2">
               <GateChannelSelect projectId={projectId} value={e.gate_channel_account_id ?? null} onChange={v => set({ gate_channel_account_id: v })} />
-              {!e.gate_channel_account_id && (
-                <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
-                  ⚠️ Канал не выбран. Без канала проверка подписки <b>не сработает</b> — клиент пройдёт дальше без подписки. Выбери канал выше и нажми «Сохранить».
-                </div>
-              )}
               {e.gate_channel_account_id && !e.next_message_id && (
                 <div className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5">
-                  ⚠️ Не указано «Следующее сообщение». После того как клиент подпишется — бот ничего ему не отправит. Укажи «↓ Следующее сообщение» ниже.
+                  ⚠️ Укажи «↓ Следующее сообщение» — туда бот отправит клиента после подписки.
                 </div>
               )}
-              <div className="text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-lg p-2.5 space-y-1">
-                <div><b>Важно для работы gate:</b></div>
-                <div>• Бот должен быть <b>администратором</b> выбранного канала — иначе Telegram не даст проверить подписку</div>
-                <div>• У канала должен быть <b>invite-link</b> или публичный @username (кнопка «Подписаться» строится из них)</div>
-                <div>• В «↓ Следующее сообщение» укажи, что отправлять <b>после</b> успешной подписки</div>
-              </div>
             </div>
           )}
 
@@ -793,9 +784,24 @@ function MessageCard({
               <label className="text-xs font-medium text-gray-700">Кнопки</label>
               <button onClick={() => onAddButton(msg.id)} className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить кнопку</button>
             </div>
-            {buttons.length === 0 ? (
+            {/* Gate: захардкоженная кнопка "Подписаться" — нельзя удалить или поменять URL */}
+            {e.is_subscription_gate && e.gate_channel_account_id && (
+              <div className="bg-purple-50 rounded-lg p-3 border border-purple-200 mb-2 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">🔒</span>
+                  <input type="text" value={e.gate_button_label ?? 'Подписаться'}
+                    onChange={ev => set({ gate_button_label: ev.target.value })}
+                    placeholder="Подписаться"
+                    className="flex-1 px-2 py-1.5 rounded border border-purple-200 text-sm focus:outline-none focus:border-[#6A55F8] bg-white" />
+                </div>
+                <p className="text-[11px] text-purple-700">
+                  Автоматическая кнопка подписки. Меняется только текст — ссылка собирается сама из выбранного канала.
+                </p>
+              </div>
+            )}
+            {buttons.length === 0 && !(e.is_subscription_gate && e.gate_channel_account_id) ? (
               <p className="text-xs text-gray-400 py-2">Нет кнопок</p>
-            ) : (
+            ) : buttons.length === 0 ? null : (
               <div className="space-y-2">
                 {buttons.map(btn => (
                   <div key={btn.id} className="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
@@ -2729,36 +2735,21 @@ function GateChannelSelect({ projectId, value, onChange }: {
           <option value="">— Выбери канал —</option>
           {channels.map(c => (
             <option key={c.id} value={c.id}>
-              {c.external_title ?? c.external_username ?? c.id.slice(0, 8)} ({c.external_id})
+              {c.external_title ?? c.external_username ?? c.id.slice(0, 8)}
             </option>
           ))}
         </select>
       </div>
-      {savedAccount && (
-        <div className="text-[11px] text-gray-600 font-mono bg-white border border-gray-200 rounded p-2">
-          Сохранено в БД:<br />
-          id: {savedAccount.id}<br />
-          name: {savedAccount.external_title ?? '—'}<br />
-          external_id: {savedAccount.external_id} {savedIsChannel ? '(канал ✓)' : '(НЕ канал ✗)'}<br />
-          {savedAccount.mtproto_status && `mtproto_status: ${savedAccount.mtproto_status}`}
-        </div>
-      )}
       {isDeadReference && (
         <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
-          ⚠️ <b>Канал удалён или переподключён</b> (id {value} не найден в social_accounts).
-          Выбери канал в списке и нажми «Сохранить».
+          ⚠️ Выбранный канал удалён или переподключён. Выбери канал из списка заново и сохрани.
         </div>
       )}
       {isWrongType && (
         <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
-          ⚠️ <b>Это не канал, а user-аккаунт</b> (external_id={savedAccount?.external_id}, должен начинаться с «-100…»).
-          Скорее всего выбран менеджер-аккаунт MTProto, а не канал. Выбери настоящий канал.
+          ⚠️ Выбран не канал, а user-аккаунт. Выбери настоящий канал в списке.
         </div>
       )}
-      <p className="text-[11px] text-gray-500">
-        Если клиент уже подписан — этот шаг автоматически пропустится, бот сразу отправит следующее сообщение.
-        Если нет — клиент получит кнопку «Подписаться». Как только подпишется, бот автоматически продолжит цепочку.
-      </p>
     </div>
   )
 }

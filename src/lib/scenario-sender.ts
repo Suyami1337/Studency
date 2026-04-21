@@ -198,8 +198,32 @@ export async function sendScenarioMessage(
         qs.set('to', username!)
         if (customer?.id) qs.set('c', customer.id)
         const proxyUrl = `${appUrl}/gate/${msg.id}?${qs.toString()}`
+        const subscribeLabel = (msg.gate_button_label && msg.gate_button_label.trim()) || 'Подписаться'
+
+        // Собираем кнопки: сначала автокнопка подписки, потом пользовательские
+        const { data: extraBtns } = await supabase
+          .from('scenario_buttons')
+          .select('*')
+          .eq('message_id', msg.id)
+          .order('order_position')
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const userButtons = (extraBtns ?? []).filter((b: any) => b.text).map((b: any) => {
+          let url: string | undefined
+          if (b.action_type === 'url' && b.action_url) {
+            const cParam = customer?.id ? `?c=${customer.id}` : ''
+            url = `${appUrl}/btn/${b.id}${cParam}`
+          }
+          return {
+            text: b.text,
+            url,
+            callback_data: b.action_type !== 'url' ? `btn:${b.id}` : undefined,
+          }
+        })
+
         await sendTelegramMessage(botToken, chatId, gateText, [
-          { text: 'Подписаться', url: proxyUrl },
+          { text: subscribeLabel, url: proxyUrl },
+          ...userButtons,
         ])
         await supabase.from('chatbot_messages').insert({
           conversation_id: conversationId,
