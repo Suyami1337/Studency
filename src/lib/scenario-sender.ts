@@ -190,8 +190,11 @@ export async function sendScenarioMessage(
       const inviteUrl = channel.external_username ? `https://t.me/${channel.external_username.replace(/^@/, '')}` : null
       if (inviteUrl) {
         const gateText = msg.text || 'Подпишись на канал, чтобы получить следующее сообщение 👇'
+        // Оборачиваем через прокси /gate/<msgId> чтобы трекать клики на кнопку
+        const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+        const proxyUrl = `${appUrl}/gate/${msg.id}${customer?.id ? `?c=${customer.id}` : ''}`
         await sendTelegramMessage(botToken, chatId, gateText, [
-          { text: 'Подписаться', url: inviteUrl },
+          { text: 'Подписаться', url: proxyUrl },
         ])
         await supabase.from('chatbot_messages').insert({
           conversation_id: conversationId,

@@ -239,9 +239,31 @@ export async function POST(request: NextRequest) {
 
               const { data: gateMsg } = await supabase
                 .from('scenario_messages')
-                .select('next_message_id, scenario_id')
+                .select('next_message_id, scenario_id, gate_channel_account_id')
                 .eq('id', p.gate_message_id)
                 .single()
+
+              // Логируем: клиент подписался после gate-приглашения
+              if (bot?.project_id) {
+                const { data: gateCustomer } = await supabase
+                  .from('customers')
+                  .select('id')
+                  .eq('telegram_id', String(tgUserId))
+                  .eq('project_id', bot.project_id)
+                  .maybeSingle()
+                if (gateCustomer) {
+                  await supabase.from('customer_actions').insert({
+                    customer_id: gateCustomer.id,
+                    project_id: bot.project_id,
+                    action: 'gate_subscribed',
+                    data: {
+                      gate_message_id: p.gate_message_id,
+                      channel_account_id: gateMsg?.gate_channel_account_id ?? null,
+                      channel_telegram_id: p.channel_telegram_id,
+                    },
+                  })
+                }
+              }
 
               if (!gateMsg?.next_message_id) continue
 

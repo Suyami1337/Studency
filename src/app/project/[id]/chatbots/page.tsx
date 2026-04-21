@@ -1784,7 +1784,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [analytics, setAnalytics] = useState<{
     totalReach: number; totalReplies: number; totalBtnClicks: number
-    msgReach: { id: string; text: string | null; is_start: boolean; order_position: number; reach: number }[]
+    msgReach: { id: string; text: string | null; is_start: boolean; order_position: number; reach: number; is_gate?: boolean; gateClicks?: number; gateSubscribed?: number }[]
     btnCounts: [string, number][]
   } | null>(null)
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
@@ -1893,6 +1893,24 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
       btnCounts[t] = (btnCounts[t] ?? 0) + 1
     }
 
+    // Метрики gate-сообщений: клики на "Подписаться" и реальные подписки
+    const gateMsgIds = messages.filter(m => m.is_subscription_gate).map(m => m.id)
+    const gateClicksByMsg: Record<string, number> = {}
+    const gateSubsByMsg: Record<string, number> = {}
+    if (gateMsgIds.length > 0 && customerIds.length > 0) {
+      const { data: gateActions } = await supabase
+        .from('customer_actions')
+        .select('action, data')
+        .in('customer_id', customerIds)
+        .in('action', ['gate_subscribe_click', 'gate_subscribed'])
+      for (const a of (gateActions ?? [])) {
+        const mid = (a.data as Record<string, string>)?.gate_message_id
+        if (!mid) continue
+        if (a.action === 'gate_subscribe_click') gateClicksByMsg[mid] = (gateClicksByMsg[mid] ?? 0) + 1
+        else if (a.action === 'gate_subscribed') gateSubsByMsg[mid] = (gateSubsByMsg[mid] ?? 0) + 1
+      }
+    }
+
     setAnalytics({
       totalReach: reachedConvIds.size,
       totalReplies,
@@ -1901,6 +1919,9 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
         id: m.id, text: m.text, is_start: m.is_start,
         order_position: m.order_position,
         reach: convsByMsg[m.id]?.size ?? 0,
+        is_gate: !!m.is_subscription_gate,
+        gateClicks: gateClicksByMsg[m.id] ?? 0,
+        gateSubscribed: gateSubsByMsg[m.id] ?? 0,
       })),
       btnCounts: Object.entries(btnCounts).sort((a, b) => b[1] - a[1]),
     })
@@ -2236,23 +2257,36 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                     {analytics.msgReach.map((m, i) => {
                       const maxReach = Math.max(...analytics.msgReach.map(x => x.reach), 1)
                       const pct = Math.round((m.reach / maxReach) * 100)
-                      const label = m.is_start ? '⭐ Стартовое' : `💬 Сообщение ${i + 1}`
+                      const label = m.is_start ? '⭐ Стартовое' : m.is_gate ? '🚪 Gate' : `💬 Сообщение ${i + 1}`
+                      const labelColor = m.is_start ? 'bg-green-100 text-green-700' : m.is_gate ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-600'
                       const text = m.text ? (m.text.length > 60 ? m.text.slice(0, 60) + '…' : m.text) : '(без текста)'
+                      const convRate = m.is_gate && (m.gateClicks ?? 0) > 0
+                        ? Math.round(((m.gateSubscribed ?? 0) / (m.gateClicks ?? 1)) * 100)
+                        : null
                       return (
-                        <div key={m.id} className="flex items-center gap-3">
-                          <div className="w-28 flex-shrink-0">
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${m.is_start ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-600'}`}>{label}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs text-gray-500 mb-1 truncate">{text}</div>
-                            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-[#6A55F8] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                        <div key={m.id} className="space-y-1">
+                          <div className="flex items-center gap-3">
+                            <div className="w-28 flex-shrink-0">
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${labelColor}`}>{label}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs text-gray-500 mb-1 truncate">{text}</div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-[#6A55F8] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                            <div className="w-16 text-right flex-shrink-0">
+                              <span className="text-sm font-semibold text-gray-800">{m.reach}</span>
+                              <span className="text-xs text-gray-400 ml-1">чел.</span>
                             </div>
                           </div>
-                          <div className="w-16 text-right flex-shrink-0">
-                            <span className="text-sm font-semibold text-gray-800">{m.reach}</span>
-                            <span className="text-xs text-gray-400 ml-1">чел.</span>
-                          </div>
+                          {m.is_gate && (
+                            <div className="pl-[7.25rem] flex items-center gap-4 text-[11px] text-gray-600">
+                              <span>👆 Клик «Подписаться»: <b className="text-gray-800">{m.gateClicks ?? 0}</b></span>
+                              <span>✅ Подписались: <b className="text-gray-800">{m.gateSubscribed ?? 0}</b></span>
+                              {convRate !== null && <span className="text-gray-400">конверсия {convRate}%</span>}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
