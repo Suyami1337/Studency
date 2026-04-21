@@ -844,7 +844,14 @@ function MessageCard({
 
           {/* Save / Discard / Delete */}
           <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
-            <button onClick={() => onDelete(msg.id)} className="text-xs text-red-400 hover:text-red-600 hover:underline">Удалить сообщение</button>
+            <button
+              onClick={() => {
+                if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
+                  onDelete(msg.id)
+                }
+              }}
+              className="text-xs text-red-400 hover:text-red-600 hover:underline"
+            >Удалить сообщение</button>
             {isDirty && (
               <div className="flex items-center gap-2">
                 <button onClick={handleDiscard} className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100">Отменить</button>
