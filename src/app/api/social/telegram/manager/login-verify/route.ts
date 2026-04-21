@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
         mtproto_api_hash_enc: encryptSecret(apiHash),
         mtproto_session_enc: encryptSecret(sessionString),
         mtproto_phone_enc: encryptSecret(phone),
-        status: 'active',
+        status: 'pending_import',
       })
       .select()
       .single()
@@ -106,13 +106,6 @@ export async function POST(request: NextRequest) {
     await supabase.from('social_mtproto_login_flows').delete().eq('id', flowId)
 
     if (accErr) return NextResponse.json({ error: accErr.message }, { status: 500 })
-
-    // Fire-and-forget: первичный импорт (30 дней)
-    void fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru'}/api/social/telegram/manager/import-history`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: account.id, days: 30 }),
-    }).catch(() => null)
 
     return NextResponse.json({ ok: true, account_id: account.id })
   } catch (err) {
