@@ -237,7 +237,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
               className={`flex-1 px-2 py-2.5 text-[11px] font-medium transition-colors border-b-2 -mb-px flex items-center justify-center gap-1 ${filter === f.k ? 'border-[#6A55F8] text-[#6A55F8] bg-[#F0EDFF]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               <span>{f.l}</span>
               {f.count > 0 && (
-                <span className={`min-w-[16px] h-[16px] rounded-full text-[10px] font-bold flex items-center justify-center px-1 ${f.color === 'rose' ? 'bg-rose-500 text-white' : f.color === 'amber' ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                <span className={`min-w-[16px] h-[16px] rounded-full text-[10px] font-bold flex items-center justify-center px-1 ${f.color === 'rose' ? 'bg-blue-500 text-white' : f.color === 'amber' ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-700'}`}>
                   {f.count}
                 </span>
               )}
@@ -264,7 +264,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                     {c.peer_first_name ?? '—'}
                     {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
                   </p>
-                  <span className={`text-[10px] shrink-0 ${unread ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>
+                  <span className={`text-[10px] shrink-0 ${unread ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
                     {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
                   </span>
                 </div>
@@ -277,7 +277,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                     </p>
                   ) : <span className="flex-1" />}
                   {unread ? (
-                    <span className="bg-rose-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0">
+                    <span className="bg-blue-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0">
                       {c.unread_count}
                     </span>
                   ) : waitingReply ? (
