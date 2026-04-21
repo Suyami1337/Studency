@@ -64,7 +64,7 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     // Upsert conversation
     const { data: existingConv } = await supabase
       .from('manager_conversations')
-      .select('id, customer_id')
+      .select('id, customer_id, unread_count')
       .eq('manager_account_id', acc.id)
       .eq('peer_telegram_id', peerId)
       .maybeSingle()

@@ -212,56 +212,78 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
   }
 
   const activeConv = conversations.find(c => c.id === activeConvId) ?? null
-  const unreadTotal = conversations.filter(c => c.unread_count > 0).length
+  const [filter, setFilter] = useState<'all' | 'unread' | 'unanswered'>('all')
+
+  const unreadCount = conversations.filter(c => c.unread_count > 0).length
+  const unansweredCount = conversations.filter(c => c.last_message_direction === 'incoming').length
+  const filtered = conversations.filter(c => {
+    if (filter === 'unread') return c.unread_count > 0
+    if (filter === 'unanswered') return c.last_message_direction === 'incoming'
+    return true
+  })
 
   return (
     <div className="flex-1 flex gap-4 min-h-0">
       {/* Список диалогов */}
       <div className="w-80 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
-        <div className="p-3 border-b border-gray-100">
-          <p className="text-xs text-gray-500">
-            {conversations.length} {conversations.length === 1 ? 'диалог' : 'диалогов'}
-            {unreadTotal > 0 && <span className="ml-2 bg-rose-500 text-white px-1.5 py-0.5 rounded-full text-[10px] font-bold">{unreadTotal} новых</span>}
-          </p>
+        {/* Фильтры */}
+        <div className="flex border-b border-gray-100">
+          {([
+            { k: 'all' as const, l: 'Все', count: conversations.length },
+            { k: 'unread' as const, l: 'Непроч', count: unreadCount, color: 'rose' },
+            { k: 'unanswered' as const, l: 'Без ответа', count: unansweredCount, color: 'amber' },
+          ]).map(f => (
+            <button key={f.k} onClick={() => setFilter(f.k)}
+              className={`flex-1 px-2 py-2.5 text-[11px] font-medium transition-colors border-b-2 -mb-px flex items-center justify-center gap-1 ${filter === f.k ? 'border-[#6A55F8] text-[#6A55F8] bg-[#F0EDFF]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              <span>{f.l}</span>
+              {f.count > 0 && (
+                <span className={`min-w-[16px] h-[16px] rounded-full text-[10px] font-bold flex items-center justify-center px-1 ${f.color === 'rose' ? 'bg-rose-500 text-white' : f.color === 'amber' ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                  {f.count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
         <div className="flex-1 overflow-y-auto">
-          {conversations.length === 0 ? (
+          {filtered.length === 0 ? (
             <div className="text-center py-8 text-xs text-gray-400 px-4">
-              Диалогов пока нет. Как только кто-то напишет менеджеру в ЛС — появится здесь.
+              {filter === 'unread' ? 'Непрочитанных диалогов нет' :
+               filter === 'unanswered' ? 'Все диалоги отвечены 🎉' :
+               'Диалогов пока нет. Как только кто-то напишет менеджеру в ЛС — появится здесь.'}
             </div>
-          ) : conversations.map(c => {
-            const waitingReply = c.last_message_direction === 'incoming'
+          ) : filtered.map(c => {
+            const unread = c.unread_count > 0
+            const waitingReply = !unread && c.last_message_direction === 'incoming'
+            const borderClass = unread ? 'border-l-4 border-l-blue-500' : waitingReply ? 'border-l-4 border-l-amber-400' : ''
             return (
               <button key={c.id} onClick={() => setActiveConvId(c.id)}
-                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors relative ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${waitingReply ? 'border-l-4 border-l-amber-400' : ''}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
-                      {c.peer_first_name ?? '—'}
-                      {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className={`text-[10px] ${c.unread_count > 0 ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>
-                      {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
-                    </span>
-                    {c.unread_count > 0 ? (
-                      <span className="bg-rose-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center">
-                        {c.unread_count}
-                      </span>
-                    ) : waitingReply ? (
-                      <span className="bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full text-[9px] font-semibold whitespace-nowrap">
-                        нужен ответ
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                {c.last_message_preview && (
-                  <p className={`text-xs truncate mt-1 ${c.unread_count > 0 ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
-                    {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
-                    {c.last_message_preview}
+                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${borderClass}`}>
+                {/* Имя + время */}
+                <div className="flex items-center justify-between gap-2">
+                  <p className={`text-sm truncate flex-1 min-w-0 ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
+                    {c.peer_first_name ?? '—'}
+                    {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
                   </p>
-                )}
+                  <span className={`text-[10px] shrink-0 ${unread ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>
+                    {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
+                  </span>
+                </div>
+                {/* Превью + бейдж в одной строке */}
+                <div className="flex items-center gap-2 mt-1">
+                  {c.last_message_preview ? (
+                    <p className={`text-xs truncate flex-1 min-w-0 ${unread ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
+                      {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
+                      {c.last_message_preview}
+                    </p>
+                  ) : <span className="flex-1" />}
+                  {unread ? (
+                    <span className="bg-rose-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0">
+                      {c.unread_count}
+                    </span>
+                  ) : waitingReply ? (
+                    <span className="text-amber-600 text-[14px] shrink-0" title="Нужен ответ">●</span>
+                  ) : null}
+                </div>
                 {c.customer_id && (
                   <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
                 )}
