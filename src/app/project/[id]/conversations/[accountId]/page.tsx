@@ -229,34 +229,45 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
             <div className="text-center py-8 text-xs text-gray-400 px-4">
               Диалогов пока нет. Как только кто-то напишет менеджеру в ЛС — появится здесь.
             </div>
-          ) : conversations.map(c => (
-            <button key={c.id} onClick={() => setActiveConvId(c.id)}
-              className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''}`}>
-              <div className="flex items-center justify-between gap-2">
-                <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
-                  {c.peer_first_name ?? '—'}
-                  {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
-                </p>
-                <span className="text-[10px] text-gray-400 shrink-0">
-                  {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
-                </span>
-              </div>
-              {c.last_message_preview && (
-                <div className="flex items-start gap-1 mt-0.5">
-                  <p className={`text-xs truncate flex-1 ${c.unread_count > 0 ? 'text-gray-800' : 'text-gray-500'}`}>
+          ) : conversations.map(c => {
+            const waitingReply = c.last_message_direction === 'incoming'
+            return (
+              <button key={c.id} onClick={() => setActiveConvId(c.id)}
+                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors relative ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${waitingReply ? 'border-l-4 border-l-amber-400' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
+                      {c.peer_first_name ?? '—'}
+                      {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className={`text-[10px] ${c.unread_count > 0 ? 'text-rose-600 font-semibold' : 'text-gray-400'}`}>
+                      {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
+                    </span>
+                    {c.unread_count > 0 ? (
+                      <span className="bg-rose-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center">
+                        {c.unread_count}
+                      </span>
+                    ) : waitingReply ? (
+                      <span className="bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full text-[9px] font-semibold whitespace-nowrap">
+                        нужен ответ
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                {c.last_message_preview && (
+                  <p className={`text-xs truncate mt-1 ${c.unread_count > 0 ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
                     {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
                     {c.last_message_preview}
                   </p>
-                  {c.unread_count > 0 && (
-                    <span className="bg-rose-500 text-white px-1.5 rounded-full text-[10px] font-bold shrink-0">{c.unread_count}</span>
-                  )}
-                </div>
-              )}
-              {c.customer_id && (
-                <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
-              )}
-            </button>
-          ))}
+                )}
+                {c.customer_id && (
+                  <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
+                )}
+              </button>
+            )
+          })}
         </div>
       </div>
 
