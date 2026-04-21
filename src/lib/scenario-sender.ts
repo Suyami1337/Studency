@@ -122,6 +122,8 @@ export async function sendScenarioMessage(
 
   const resolvedScenarioId = scenarioId ?? msg.scenario_id ?? null
 
+  console.log(`[send] msg=${msg.id} pos=${msg.order_position} is_start=${msg.is_start} is_gate=${msg.is_subscription_gate} gate_channel=${msg.gate_channel_account_id} next=${msg.next_message_id}`)
+
   // =================================================================
   // Gate: проверка подписки на канал
   // Если customer уже подписан — пропускаем этот шаг, идём сразу к next.
@@ -135,6 +137,8 @@ export async function sendScenarioMessage(
       .select('id, external_id, external_username, telegram_invite_link, project_id')
       .eq('id', msg.gate_channel_account_id)
       .maybeSingle()
+
+    console.log(`[gate] msg=${msg.id} channel_lookup=${channel ? `found external_id=${channel.external_id} invite=${channel.telegram_invite_link ? 'yes' : 'no'} username=${channel.external_username || 'none'}` : 'NOT FOUND'}`)
 
     if (channel) {
       // Находим customer по conversation → chat_id=telegram_id

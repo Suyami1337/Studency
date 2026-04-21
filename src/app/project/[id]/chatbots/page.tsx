@@ -687,9 +687,14 @@ function MessageCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${typeColor}`}>{typeLabel}</span>
-            {e.is_subscription_gate && (
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${e.gate_channel_account_id ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                🚪 {e.gate_channel_account_id ? 'Gate' : 'Gate — канал не выбран!'}
+            {msg.is_subscription_gate && (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${msg.gate_channel_account_id ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                🚪 {msg.gate_channel_account_id ? 'Gate (сохранено в БД)' : 'Gate — канал не выбран!'}
+              </span>
+            )}
+            {!msg.is_subscription_gate && e.is_subscription_gate && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+                🚪 Gate включён, но не сохранён!
               </span>
             )}
             {e.trigger_word && <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full font-mono">{e.trigger_word}</span>}
@@ -2637,14 +2642,18 @@ function GateChannelSelect({ projectId, value, onChange }: {
   onChange: (v: string | null) => void
 }) {
   const supabase = createClient()
-  const [channels, setChannels] = useState<Array<{ id: string; external_title: string | null; external_username: string | null }>>([])
+  const [channels, setChannels] = useState<Array<{ id: string; external_title: string | null; external_username: string | null; external_id: string }>>([])
   useEffect(() => {
     supabase.from('social_accounts')
-      .select('id, external_title, external_username')
+      .select('id, external_title, external_username, external_id, mtproto_status')
       .eq('project_id', projectId)
       .eq('platform', 'telegram')
       .eq('is_active', true)
-      .then(({ data }) => setChannels(data ?? []))
+      .is('mtproto_status', null)  // только публичные каналы, не менеджер-аккаунты
+      .then(({ data }) => {
+        const onlyChannels = (data ?? []).filter(a => a.external_id && a.external_id.startsWith('-'))  // каналы имеют отрицательный chat_id
+        setChannels(onlyChannels as typeof channels)
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 
