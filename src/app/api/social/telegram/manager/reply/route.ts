@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabase()
     const { data: conv } = await supabase
       .from('manager_conversations')
-      .select('id, manager_account_id, peer_telegram_id')
+      .select('id, manager_account_id, peer_telegram_id, peer_username')
       .eq('id', conversationId)
       .single()
     if (!conv) return NextResponse.json({ error: 'conversation not found' }, { status: 404 })
@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
         apiHash,
         sessionString: session,
         peerTelegramId: Number(conv.peer_telegram_id),
+        peerUsername: conv.peer_username,
         text: String(text),
       })
     } catch (err) {

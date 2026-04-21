@@ -404,21 +404,53 @@ export async function markDialogAsRead(params: {
   }
 }
 
-/** Отправка сообщения от имени менеджера (через MTProto). */
+/**
+ * Отправка сообщения от имени менеджера (через MTProto).
+ * Сначала прогреваем peer cache через GetDialogs — без этого StringSession
+ * из БД не знает access_hash для клиентов, которые появились после логина.
+ * Плюс пробуем resolve по username если он передан.
+ */
 export async function sendManagerMessage(params: {
   apiId: number
   apiHash: string
   sessionString: string
   peerTelegramId: number
+  peerUsername?: string | null
   text: string
 }): Promise<{ messageId: number } | null> {
-  const { apiId, apiHash, sessionString, peerTelegramId, text } = params
+  const { apiId, apiHash, sessionString, peerTelegramId, peerUsername, text } = params
   const client = await createClient(apiId, apiHash, sessionString)
   try {
     const { Api } = await import('telegram')
-    // Получаем InputUser через resolveUsername или прямо по id
+
+    // Прогрев peer cache — без этого getInputEntity падает для новых клиентов
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await client.invoke(new Api.messages.GetDialogs({
+        offsetDate: 0,
+        offsetId: 0,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        offsetPeer: new Api.InputPeerEmpty() as any,
+        limit: 200,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        hash: 0 as any,
+      }))
+    } catch (e) {
+      console.error('sendManagerMessage GetDialogs warmup failed:', e)
+    }
+
+    // Пытаемся сначала resolve через username (не требует access_hash),
+    // потом fallback на peerTelegramId (из прогретого cache)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const peer: any = await client.getInputEntity(peerTelegramId)
+    let peer: any
+    const cleanUsername = peerUsername?.replace(/^@/, '') || null
+    if (cleanUsername) {
+      try { peer = await client.getInputEntity(cleanUsername) } catch { /* fallback */ }
+    }
+    if (!peer) {
+      peer = await client.getInputEntity(peerTelegramId)
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result: any = await client.invoke(new Api.messages.SendMessage({
       peer,
