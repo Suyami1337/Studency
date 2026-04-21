@@ -351,19 +351,54 @@ export async function fetchManagerDialogs(params: {
   return { messages: allMessages, dialogs: allDialogs }
 }
 
-/** Помечает весь диалог как прочитанный на стороне Telegram (ReadHistory). */
+/**
+ * Помечает весь диалог как прочитанный на стороне Telegram (ReadHistory).
+ * Важно: для надёжного resolve peer'а сначала подгружаем свежий список диалогов
+ * в session cache, и используем username вместо bare id когда доступен.
+ * Без этого getInputEntity падает для peer'ов, которые появились ПОСЛЕ логина
+ * (напр. новый клиент написал первый раз) — session string из БД не знает их access_hash.
+ */
 export async function markDialogAsRead(params: {
   apiId: number
   apiHash: string
   sessionString: string
   peerTelegramId: number
+  peerUsername?: string | null
+  maxId?: number
 }): Promise<void> {
   const client = await createClient(params.apiId, params.apiHash, params.sessionString)
   try {
     const { Api } = await import('telegram')
+    // Прогреваем peer cache последним списком диалогов — чтобы access_hash был доступен
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await client.invoke(new Api.messages.GetDialogs({
+        offsetDate: 0,
+        offsetId: 0,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        offsetPeer: new Api.InputPeerEmpty() as any,
+        limit: 200,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        hash: 0 as any,
+      }))
+    } catch (e) {
+      console.error('markDialogAsRead GetDialogs warmup failed:', e)
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const peer: any = await client.getInputEntity(params.peerTelegramId)
-    await client.invoke(new Api.messages.ReadHistory({ peer, maxId: 0 }))
+    let peer: any
+    const cleanUsername = params.peerUsername?.replace(/^@/, '') || null
+    if (cleanUsername) {
+      try { peer = await client.getInputEntity(cleanUsername) } catch { /* fallback ниже */ }
+    }
+    if (!peer) {
+      peer = await client.getInputEntity(params.peerTelegramId)
+    }
+
+    // maxId=0 означает «read all» но в некоторых случаях Telegram игнорирует —
+    // передаём конкретный id если известен
+    const maxId = params.maxId && params.maxId > 0 ? params.maxId : 0
+    await client.invoke(new Api.messages.ReadHistory({ peer, maxId }))
   } finally {
     await client.disconnect().catch(() => null)
   }

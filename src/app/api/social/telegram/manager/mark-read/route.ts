@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabase()
     const { data: conv } = await supabase
       .from('manager_conversations')
-      .select('id, manager_account_id, peer_telegram_id, unread_count')
+      .select('id, manager_account_id, peer_telegram_id, peer_username, unread_count')
       .eq('id', conversationId)
       .single()
     if (!conv) return NextResponse.json({ error: 'conversation not found' }, { status: 404 })
@@ -51,17 +51,30 @@ export async function POST(request: NextRequest) {
     const apiHash = decryptSecret(acc.mtproto_api_hash_enc)
     const session = decryptSecret(acc.mtproto_session_enc)
 
+    // Находим id последнего telegram сообщения в этом диалоге — передаём как maxId
+    const { data: lastMsg } = await supabase
+      .from('manager_messages')
+      .select('telegram_message_id')
+      .eq('conversation_id', conv.id)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const maxId = Number(lastMsg?.telegram_message_id ?? 0)
+
     // Fire: read в самом Telegram
+    let tgError: string | null = null
     try {
       await markDialogAsRead({
         apiId: Number(acc.mtproto_api_id),
         apiHash,
         sessionString: session,
         peerTelegramId: Number(conv.peer_telegram_id),
+        peerUsername: conv.peer_username,
+        maxId,
       })
     } catch (err) {
-      console.error('markDialogAsRead error:', err)
-      // Не падаем — в БД всё равно обнуляем
+      tgError = err instanceof Error ? err.message : String(err)
+      console.error('markDialogAsRead error:', tgError)
     }
 
     await supabase.from('manager_conversations').update({
@@ -69,7 +82,7 @@ export async function POST(request: NextRequest) {
       last_read_at: new Date().toISOString(),
     }).eq('id', conv.id)
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, tgSynced: !tgError, tgError })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Internal' }, { status: 500 })
   }
