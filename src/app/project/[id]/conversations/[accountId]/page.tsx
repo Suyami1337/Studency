@@ -178,15 +178,22 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
       .order('sent_at', { ascending: true })
       .limit(500)
     setMessages((data ?? []) as Msg[])
-    // Помечаем прочитанным на стороне Telegram через MTProto + в нашей БД
-    fetch('/api/social/telegram/manager/mark-read', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: activeConvId }),
-    }).catch(() => null)
-    // Мгновенно в конец — без анимации чтобы не было эффекта «листания»
+    // Моментально в конец — без анимации чтобы не было эффекта «листания»
     requestAnimationFrame(() => scrollToBottom())
     // ещё раз через 100ms чтобы подхватить подгрузку медиа/шрифтов
     setTimeout(() => scrollToBottom(), 100)
+  }
+
+  // Явно помечаем диалог прочитанным — вызывается только по клику, не по авто-обновлению.
+  // Иначе фоновый polling каждые 30с помечал бы приходящие сообщения прочитанными
+  // раньше чем пользователь их увидит.
+  async function markConversationRead(convId: string) {
+    // Оптимистично обнуляем в локальном списке
+    setConversations(prev => prev.map(c => c.id === convId ? { ...c, unread_count: 0 } : c))
+    await fetch('/api/social/telegram/manager/mark-read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: convId }),
+    }).catch(() => null)
   }
 
   useEffect(() => { loadConversations() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accountId])
@@ -260,7 +267,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
             const waitingReply = !unread && c.last_message_direction === 'incoming'
             const borderClass = unread ? 'border-l-4 border-l-blue-500' : waitingReply ? 'border-l-4 border-l-amber-400' : ''
             return (
-              <button key={c.id} onClick={() => setActiveConvId(c.id)}
+              <button key={c.id} onClick={() => { setActiveConvId(c.id); markConversationRead(c.id) }}
                 className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${borderClass}`}>
                 {/* Имя + время */}
                 <div className="flex items-center justify-between gap-2">
