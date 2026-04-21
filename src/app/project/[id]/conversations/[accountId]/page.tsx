@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 
@@ -30,6 +30,8 @@ type Conversation = {
   status: 'open' | 'closed'
   last_message_at: string | null
   unread_count: number
+  last_message_preview: string | null
+  last_message_direction: 'incoming' | 'outgoing' | null
 }
 
 type Msg = {
@@ -127,13 +129,25 @@ export default function ManagerAccountPage() {
 // ==================== DIALOGS TAB ====================
 function DialogsTab({ accountId, projectId }: { accountId: string; projectId: string }) {
   const supabase = createClient()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const convFromUrl = searchParams.get('conv')
   const [conversations, setConversations] = useState<Conversation[]>([])
-  const [activeConvId, setActiveConvId] = useState<string | null>(null)
+  const [activeConvId, _setActiveConvId] = useState<string | null>(convFromUrl)
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [customerPanelOpen, setCustomerPanelOpen] = useState(false)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+
+  // Обёртка setActiveConvId которая синхронизирует URL (?conv=<id>)
+  function setActiveConvId(id: string | null) {
+    _setActiveConvId(id)
+    const qs = new URLSearchParams(searchParams.toString())
+    if (id) qs.set('conv', id); else qs.delete('conv')
+    const url = qs.toString() ? `?${qs}` : ''
+    router.replace(`/project/${projectId}/conversations/${accountId}${url}`, { scroll: false })
+  }
 
   function scrollToBottom(instant = true) {
     const el = messagesContainerRef.current
@@ -148,7 +162,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
   async function loadConversations() {
     const { data } = await supabase
       .from('manager_conversations')
-      .select('id, peer_telegram_id, peer_username, peer_first_name, customer_id, status, last_message_at, unread_count')
+      .select('id, peer_telegram_id, peer_username, peer_first_name, customer_id, status, last_message_at, unread_count, last_message_preview, last_message_direction')
       .eq('manager_account_id', accountId)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200)
@@ -219,18 +233,28 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
             <button key={c.id} onClick={() => setActiveConvId(c.id)}
               className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''}`}>
               <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-gray-900 text-sm truncate">
+                <p className={`text-sm truncate ${c.unread_count > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
                   {c.peer_first_name ?? '—'}
                   {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
                 </p>
-                {c.unread_count > 0 && (
-                  <span className="bg-rose-500 text-white px-1.5 py-0.5 rounded-full text-[10px] font-bold">{c.unread_count}</span>
-                )}
+                <span className="text-[10px] text-gray-400 shrink-0">
+                  {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
+                </span>
               </div>
-              <p className="text-[11px] text-gray-400 mt-0.5">
-                {c.last_message_at ? new Date(c.last_message_at).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
-                {c.customer_id && <span className="ml-2 text-[#6A55F8]">· в CRM</span>}
-              </p>
+              {c.last_message_preview && (
+                <div className="flex items-start gap-1 mt-0.5">
+                  <p className={`text-xs truncate flex-1 ${c.unread_count > 0 ? 'text-gray-800' : 'text-gray-500'}`}>
+                    {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
+                    {c.last_message_preview}
+                  </p>
+                  {c.unread_count > 0 && (
+                    <span className="bg-rose-500 text-white px-1.5 rounded-full text-[10px] font-bold shrink-0">{c.unread_count}</span>
+                  )}
+                </div>
+              )}
+              {c.customer_id && (
+                <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
+              )}
             </button>
           ))}
         </div>
@@ -428,6 +452,21 @@ function CustomerPanel({ projectId, customerId, onClose }: {
       )}
     </div>
   )
+}
+
+/** Telegram-style формат времени в списке диалогов: HH:mm сегодня, день.месяц раньше */
+function formatShortTime(iso: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  if (sameDay) {
+    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  }
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000)
+  if (diffDays < 7) {
+    return d.toLocaleDateString('ru-RU', { weekday: 'short' })
+  }
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
 }
 
 function translateAction(action: string): string {

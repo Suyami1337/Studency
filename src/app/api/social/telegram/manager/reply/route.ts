@@ -66,10 +66,12 @@ export async function POST(request: NextRequest) {
       sent_at: now,
     })
 
-    // Обновляем conversation: last_outgoing_at + unread_count=0 (мы сбрасываем)
+    // Обновляем conversation: last_outgoing_at + unread_count=0 (мы сбрасываем) + превью
     await supabase.from('manager_conversations').update({
       last_outgoing_at: now,
       last_message_at: now,
+      last_message_preview: String(text).slice(0, 200),
+      last_message_direction: 'outgoing',
       unread_count: 0,
       updated_at: now,
     }).eq('id', conv.id)

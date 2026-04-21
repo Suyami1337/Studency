@@ -136,6 +136,8 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     const lastIncomingAt = incomingTimes.length > 0 ? incomingTimes[incomingTimes.length - 1] : null
     const lastOutgoingAt = outgoingTimes.length > 0 ? outgoingTimes[outgoingTimes.length - 1] : null
     const lastMessageAt = latest.sentAt
+    // Превью последнего сообщения — для списка диалогов в UI
+    const preview = (latest.text ?? (latest.mediaType ? `[${latest.mediaType}]` : '')).slice(0, 200)
 
     // Инкрементим unread на количество входящих за эту сессию (кроме первого импорта — тогда ставим 0, чтобы не заспамить)
     const unreadIncrement = acc.initial_import_done ? incomingCountForConv : 0
@@ -147,6 +149,8 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       last_incoming_at: lastIncomingAt ?? undefined,
       last_outgoing_at: lastOutgoingAt ?? undefined,
       last_message_at: lastMessageAt,
+      last_message_preview: preview,
+      last_message_direction: latest.isOutgoing ? 'outgoing' : 'incoming',
       updated_at: new Date().toISOString(),
       ...(unreadIncrement > 0 ? {
         unread_count: ((existingConv as unknown as { unread_count?: number })?.unread_count ?? 0) + unreadIncrement,
