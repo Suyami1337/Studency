@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     // Verify the scenario belongs to the project — isolation guarantee
     const { data: scenario, error: scErr } = await supabase
-      .from('scenarios')
+      .from('chatbot_scenarios')
       .select('id, project_id, name')
       .eq('id', scenarioId)
       .single()

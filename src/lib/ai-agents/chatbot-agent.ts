@@ -81,6 +81,20 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
   - \`url\` — ссылка (нужен action_url)
   - \`trigger\` — запускает другой сценарий по триггерному слову (action_trigger_word)
   - \`goto_message\` — ведёт на другое сообщение этого сценария (action_goto_message_id)
+- **Связи между сообщениями:**
+  - Линейная цепочка: у сообщения \`next_message_id\` = следующее сообщение + \`delay_minutes\`, \`delay_unit\` для задержки (0 = моментально). Бот отправит следующее автоматически.
+  - Через кнопку: кнопка с action_type=goto_message ведёт на указанное сообщение. Бот шлёт следующее только когда клиент нажмёт.
+  - Типично: стартовое → (кнопка goto_message) → gate-сообщение → (next_message_id после подписки) → контент.
+  - **ВАЖНО: если на сообщение не ведёт ни next_message_id, ни кнопка goto_message, ни триггер — оно осиротелое, бот его никогда не отправит.** После создания цепочки всегда проставляй связи.
+
+- **Gate проверка подписки на канал (🚪):** — важнейшая фича для большинства воронок.
+  - У сообщения ставишь \`is_subscription_gate=true\` + \`gate_channel_account_id\` (id канала из \`list_gate_channels\`).
+  - Когда клиент доходит до такого сообщения, бот проверяет через Telegram API подписан ли он на канал.
+  - Подписан → сразу шлёт \`next_message_id\` (gate пропускается молча).
+  - Не подписан → отправляет текст gate-сообщения + автоматическую кнопку «Подписаться» (можно кастомизировать текст кнопки через \`gate_button_label\`). Как только клиент подпишется на канал — бот автоматически отправит \`next_message_id\`.
+  - У gate-сообщения \`next_message_id\` ОБЯЗАТЕЛЕН — без него клиент после подписки ничего не получит.
+  - Кнопка подписки генерируется сама из \`gate_channel_account_id\`. Дополнительные кнопки можно добавлять через add_button — они будут под кнопкой подписки.
+
 - **Триггеры событий** — это группы, создаются атомарно через \`create_trigger_group\`. Одна группа = одно событие + (опционально) immediate-сообщение «если случилось» + (опционально) N дожимов «если НЕ случилось за время». Дожимы привязаны к тому же событию и параметрам что и immediate.
   - \`has_immediate: true\` — создастся сообщение которое бот шлёт СРАЗУ когда событие произошло
   - \`followups: [{wait_value, wait_unit}, ...]\` — массив дожимов, каждый со своим таймингом (unit: sec/min/hour/day). Отменяющее событие автоматом определяется по event_type (video_start→video_complete, landing_visit→order_created, order_created→order_paid). Для video_complete/order_paid/form_submit/channel_joined дожимов нет — это финальные события.
@@ -111,7 +125,7 @@ function getTools(): Anthropic.Messages.Tool[] {
     },
     {
       name: 'create_message',
-      description: 'Создать новое сообщение в сценарии. Используй только после явного подтверждения пользователя. is_start=true ставь только для одного сообщения в сценарии (точка входа).',
+      description: 'Создать новое сообщение в сценарии. Используй только после явного подтверждения пользователя. is_start=true ставь только для одного сообщения в сценарии (точка входа). next_message_id используй для линейных цепочек без кнопок (gate → следующее и т.п.).',
       input_schema: {
         type: 'object' as const,
         properties: {
@@ -119,6 +133,12 @@ function getTools(): Anthropic.Messages.Tool[] {
           is_start: { type: 'boolean', description: 'true если это стартовое сообщение сценария (точка входа)' },
           trigger_word: { type: 'string', description: 'Триггерное слово для запуска (обычно /start). Только для is_start=true.' },
           order_position: { type: 'number', description: 'Позиция в списке. Если не указано — добавится в конец.' },
+          next_message_id: { type: 'string', description: 'id следующего сообщения в линейной цепочке (бот отправит его автоматически). Используй для gate — после подписки.' },
+          delay_minutes: { type: 'number', description: 'Задержка перед отправкой next_message_id. 0 = моментально.' },
+          delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'], description: 'Единица задержки.' },
+          is_subscription_gate: { type: 'boolean', description: 'true — это gate-сообщение (проверка подписки на канал перед переходом к next_message_id).' },
+          gate_channel_account_id: { type: 'string', description: 'id канала из list_gate_channels. ОБЯЗАТЕЛЕН если is_subscription_gate=true.' },
+          gate_button_label: { type: 'string', description: 'Кастомный текст кнопки подписки (по умолчанию «Подписаться»).' },
         },
         required: ['text'],
       },
@@ -134,6 +154,12 @@ function getTools(): Anthropic.Messages.Tool[] {
           is_start: { type: 'boolean' },
           trigger_word: { type: 'string' },
           order_position: { type: 'number' },
+          next_message_id: { type: 'string', description: 'id следующего сообщения в цепочке. Передай null чтобы обнулить.' },
+          delay_minutes: { type: 'number' },
+          delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+          is_subscription_gate: { type: 'boolean' },
+          gate_channel_account_id: { type: 'string' },
+          gate_button_label: { type: 'string' },
         },
         required: ['message_id'],
       },
@@ -191,6 +217,11 @@ function getTools(): Anthropic.Messages.Tool[] {
     {
       name: 'list_project_targets',
       description: 'Прочитать доступные объекты проекта, на которые можно ставить триггеры: видео (id, title), лендинги (id, name, slug), продукты (id, name). Нужно перед тем как создавать триггер — чтобы понимать какие id использовать.',
+      input_schema: { type: 'object' as const, properties: {}, required: [] },
+    },
+    {
+      name: 'list_gate_channels',
+      description: 'Прочитать подключённые Telegram-каналы проекта, которые можно использовать для gate (проверки подписки). Возвращает только настоящие каналы (отрицательный external_id), без менеджер-аккаунтов. Вызывай перед тем как ставить is_subscription_gate — чтобы получить gate_channel_account_id.',
       input_schema: { type: 'object' as const, properties: {}, required: [] },
     },
     {
@@ -305,24 +336,32 @@ async function executeTool(
           const { data } = await supabase.from('scenario_messages').select('order_position').eq('scenario_id', scenarioId).order('order_position', { ascending: false }).limit(1)
           pos = data && data[0] ? data[0].order_position + 1 : 0
         }
-        const { data, error } = await supabase.from('scenario_messages').insert({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const row: any = {
           scenario_id: scenarioId,
           text: input.text,
           is_start: input.is_start ?? false,
           trigger_word: input.trigger_word ?? null,
           order_position: pos,
-        }).select().single()
+        }
+        if (input.next_message_id !== undefined) row.next_message_id = input.next_message_id
+        if (input.delay_minutes !== undefined) row.delay_minutes = input.delay_minutes
+        if (input.delay_unit !== undefined) row.delay_unit = input.delay_unit
+        if (input.is_subscription_gate !== undefined) row.is_subscription_gate = input.is_subscription_gate
+        if (input.gate_channel_account_id !== undefined) row.gate_channel_account_id = input.gate_channel_account_id
+        if (input.gate_button_label !== undefined) row.gate_button_label = input.gate_button_label
+
+        const { data, error } = await supabase.from('scenario_messages').insert(row).select().single()
         if (error) throw error
-        return { content: JSON.stringify({ id: data.id }), summary: `создал сообщение #${pos}`, ok: true, wrote: true }
+        return { content: JSON.stringify({ id: data.id }), summary: `создал сообщение #${pos}${input.is_subscription_gate ? ' (gate)' : ''}`, ok: true, wrote: true }
       }
 
       case 'update_message': {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const updates: any = {}
-        if (input.text !== undefined) updates.text = input.text
-        if (input.is_start !== undefined) updates.is_start = input.is_start
-        if (input.trigger_word !== undefined) updates.trigger_word = input.trigger_word
-        if (input.order_position !== undefined) updates.order_position = input.order_position
+        for (const k of ['text', 'is_start', 'trigger_word', 'order_position', 'next_message_id', 'delay_minutes', 'delay_unit', 'is_subscription_gate', 'gate_channel_account_id', 'gate_button_label']) {
+          if (input[k] !== undefined) updates[k] = input[k]
+        }
         const { error } = await supabase.from('scenario_messages').update(updates).eq('id', input.message_id).eq('scenario_id', scenarioId)
         if (error) throw error
         return { content: JSON.stringify({ ok: true }), summary: `обновил сообщение`, ok: true, wrote: true }
@@ -392,6 +431,23 @@ async function executeTool(
             products: prods.data ?? [],
           }, null, 2),
           summary: `прочитал объекты проекта: ${(vids.data ?? []).length} видео, ${(lands.data ?? []).length} сайтов, ${(prods.data ?? []).length} продуктов`,
+          ok: true,
+          wrote: false,
+        }
+      }
+
+      case 'list_gate_channels': {
+        const { data } = await supabase
+          .from('social_accounts')
+          .select('id, external_title, external_username, external_id')
+          .eq('project_id', ctx.projectId)
+          .eq('platform', 'telegram')
+          .eq('is_active', true)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const channels = ((data ?? []) as any[]).filter(a => a.external_id && String(a.external_id).startsWith('-'))
+        return {
+          content: JSON.stringify({ channels }, null, 2),
+          summary: `прочитал каналы: ${channels.length}`,
           ok: true,
           wrote: false,
         }
