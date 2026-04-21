@@ -187,12 +187,17 @@ export async function sendScenarioMessage(
       }
 
       // Не подписан → шлём сообщение с кнопкой "Подписаться" и запоминаем gate
-      const inviteUrl = channel.external_username ? `https://t.me/${channel.external_username.replace(/^@/, '')}` : null
+      const username = channel.external_username?.replace(/^@/, '') || null
+      const inviteUrl = username ? `https://t.me/${username}` : null
       if (inviteUrl) {
         const gateText = msg.text || 'Подпишись на канал, чтобы получить следующее сообщение 👇'
-        // Оборачиваем через прокси /gate/<msgId> чтобы трекать клики на кнопку
+        // Оборачиваем через прокси /gate/<msgId> чтобы трекать клики
+        // ?to=<username> включает fast-path (редирект без БД-lookup, лог асинхронно)
         const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
-        const proxyUrl = `${appUrl}/gate/${msg.id}${customer?.id ? `?c=${customer.id}` : ''}`
+        const qs = new URLSearchParams()
+        qs.set('to', username!)
+        if (customer?.id) qs.set('c', customer.id)
+        const proxyUrl = `${appUrl}/gate/${msg.id}?${qs.toString()}`
         await sendTelegramMessage(botToken, chatId, gateText, [
           { text: 'Подписаться', url: proxyUrl },
         ])

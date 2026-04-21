@@ -25,12 +25,51 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { msgId } = await params
   const url = new URL(request.url)
   const customerParam = url.searchParams.get('c') || null
+  // Передаём destination сразу в URL → редиректим без единого запроса к БД
+  const toParam = url.searchParams.get('to')
 
+  // Быстрый путь: если в URL уже есть ?to=@username — сразу 302 без БД,
+  // лог пишем fire-and-forget (редирект уже ушёл клиенту)
+  if (toParam) {
+    const destination = `https://t.me/${toParam.replace(/^@/, '')}`
+    // Fire-and-forget лог клика
+    void (async () => {
+      try {
+        if (customerParam) {
+          const supabase = getSupabase()
+          // Достаём project_id минимально — одна query, не блокирует редирект
+          const { data: msg } = await supabase
+            .from('scenario_messages')
+            .select('gate_channel_account_id, chatbot_scenarios!inner(telegram_bots!inner(project_id))')
+            .eq('id', msgId)
+            .maybeSingle()
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const projectId: string | undefined = (msg as any)?.chatbot_scenarios?.telegram_bots?.project_id
+          if (projectId) {
+            await supabase.from('customer_actions').insert({
+              customer_id: customerParam,
+              project_id: projectId,
+              action: 'gate_subscribe_click',
+              data: {
+                gate_message_id: msgId,
+                channel_account_id: msg?.gate_channel_account_id ?? null,
+                destination: toParam,
+              },
+            })
+          }
+        }
+      } catch (err) {
+        console.error('gate click log error:', err)
+      }
+    })()
+    return NextResponse.redirect(destination, { status: 302 })
+  }
+
+  // Fallback: старые сообщения без ?to= — делаем lookup (медленнее)
   const supabase = getSupabase()
-
   const { data: msg } = await supabase
     .from('scenario_messages')
-    .select('id, scenario_id, gate_channel_account_id, chatbot_scenarios!inner(telegram_bots!inner(project_id))')
+    .select('id, gate_channel_account_id, chatbot_scenarios!inner(telegram_bots!inner(project_id))')
     .eq('id', msgId)
     .maybeSingle()
 
@@ -55,7 +94,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const projectId: string | undefined = (msg as any).chatbot_scenarios?.telegram_bots?.project_id
 
-  // Fire-and-forget лог клика
   void (async () => {
     try {
       if (customerParam && projectId) {
