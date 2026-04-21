@@ -3,7 +3,7 @@ import { decryptSecret } from './crypto-vault'
 import { fetchManagerDialogs, downloadPeerAvatar, type IncomingMessage } from './telegram-mtproto'
 import { emitEvent } from './event-triggers'
 
-const AVATAR_REFRESH_MS = 7 * 24 * 3600_000 // 7 дней
+const AVATAR_REFRESH_MS = 24 * 3600_000    // 1 день
 const MAX_AVATARS_PER_SYNC = 10            // сколько аватарок тянем за один крон
 
 type AvatarTask = {
