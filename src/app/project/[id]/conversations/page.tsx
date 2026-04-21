@@ -18,6 +18,14 @@ type ManagerAccount = {
   description?: string | null
 }
 
+const PERIOD_OPTIONS: { label: string; days: number; hint?: string }[] = [
+  { label: '7 дней', days: 7 },
+  { label: '30 дней', days: 30, hint: 'Рекомендуется' },
+  { label: '90 дней', days: 90 },
+  { label: '1 год', days: 365 },
+  { label: 'Всё время', days: 3650, hint: 'Может не всё успеть за один проход' },
+]
+
 export default function ConversationsIndexPage() {
   const params = useParams()
   const projectId = params.id as string
@@ -157,7 +165,7 @@ function AddManagerModal({ projectId, onClose, onDone }: {
   onClose: () => void
   onDone: () => void
 }) {
-  const [step, setStep] = useState<'guide' | 'creds' | 'code' | 'done'>('guide')
+  const [step, setStep] = useState<'guide' | 'creds' | 'code' | 'choice' | 'period' | 'running' | 'done'>('guide')
   const [apiId, setApiId] = useState('')
   const [apiHash, setApiHash] = useState('')
   const [phone, setPhone] = useState('')
@@ -166,8 +174,11 @@ function AddManagerModal({ projectId, onClose, onDone }: {
   const [password, setPassword] = useState('')
   const [needsPassword, setNeedsPassword] = useState(false)
   const [flowId, setFlowId] = useState<string | null>(null)
+  const [accountId, setAccountId] = useState<string | null>(null)
+  const [days, setDays] = useState(30)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [doneText, setDoneText] = useState<string>('Начинаем с чистого листа.')
 
   async function sendCode() {
     setLoading(true); setError(null)
@@ -194,28 +205,79 @@ function AddManagerModal({ projectId, onClose, onDone }: {
       const json = await res.json()
       if (json.needs_password) { setNeedsPassword(true); setError('Введи пароль 2FA и нажми Подтвердить снова'); return }
       if (json.error) { setError(json.error); return }
-      // Чистый старт по умолчанию — аккаунт сразу активен, крон подтянет только новые сообщения.
-      // Если надо загрузить старые переписки — это делается из настроек аккаунта.
-      try {
-        await fetch('/api/social/telegram/manager/start-fresh', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accountId: json.account_id }),
-        })
-      } catch { /* ignore */ }
-      setStep('done')
-      setTimeout(onDone, 3500)
+      setAccountId(json.account_id)
+      setStep('choice')
     } catch (err) { setError(err instanceof Error ? err.message : 'Сеть недоступна') }
     finally { setLoading(false) }
   }
 
+  async function chooseFresh() {
+    if (!accountId) return
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/api/social/telegram/manager/start-fresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId }),
+      })
+      const json = await res.json()
+      if (json.error) { setError(json.error); return }
+      setDoneText('Начинаем с чистого листа. Новые диалоги будут появляться автоматически.')
+      setStep('done')
+      setTimeout(onDone, 3000)
+    } catch (err) { setError(err instanceof Error ? err.message : 'Сеть недоступна') }
+    finally { setLoading(false) }
+  }
+
+  async function runImport() {
+    if (!accountId) return
+    setStep('running'); setError(null)
+    try {
+      const res = await fetch('/api/social/telegram/manager/import-history', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, days }),
+      })
+      const json = await res.json()
+      if (json.error) { setError(json.error); setStep('period'); return }
+      const fetched = json.fetched ?? 0
+      const newConv = json.newConversations ?? 0
+      setDoneText(`Импорт завершён: загружено ${fetched} сообщений из ${newConv} диалогов.`)
+      setStep('done')
+      setTimeout(onDone, 3500)
+    } catch (err) { setError(err instanceof Error ? err.message : 'Сеть недоступна'); setStep('period') }
+  }
+
+  // При закрытии модалки после подключения, но до выбора режима —
+  // по умолчанию включаем чистый старт. Импорт можно запустить позже из настроек.
+  async function handleClose() {
+    if ((step === 'choice' || step === 'period') && accountId) {
+      try {
+        await fetch('/api/social/telegram/manager/start-fresh', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId }),
+        })
+      } catch { /* ignore */ }
+      onDone()
+      return
+    }
+    onClose()
+  }
+
+  const closeLocked = step === 'running'
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={closeLocked ? undefined : handleClose}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
           <h2 className="font-semibold text-gray-900">
-            {step === 'done' ? 'Аккаунт подключён' : 'Подключить аккаунт менеджера'}
+            {step === 'done' ? 'Аккаунт подключён'
+              : step === 'choice' ? 'Как загрузить переписки?'
+              : step === 'period' ? 'Выбери период'
+              : step === 'running' ? 'Импорт переписок…'
+              : 'Подключить аккаунт менеджера'}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg">✕</button>
+          {!closeLocked && (
+            <button onClick={handleClose} className="text-gray-400 hover:text-gray-700 text-lg">✕</button>
+          )}
         </div>
         <div className="p-6 space-y-4">
           {step === 'guide' && (
@@ -302,21 +364,107 @@ function AddManagerModal({ projectId, onClose, onDone }: {
             </div>
           )}
 
+          {step === 'choice' && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600 mb-2">
+                Аккаунт подключён. Выбери как начать — если закроешь это окно, по умолчанию активируется чистый старт. Потом можно запустить импорт из настроек аккаунта.
+              </p>
+
+              <button onClick={chooseFresh} disabled={loading}
+                className="w-full text-left border-2 border-gray-200 hover:border-[#6A55F8] rounded-xl p-5 transition-all disabled:opacity-50">
+                <div className="flex items-start gap-3">
+                  <div className="text-2xl">✨</div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 mb-1">Начать с чистого листа</p>
+                    <p className="text-sm text-gray-600">
+                      Старых переписок не будет. В платформе появятся только те диалоги, в которых клиенты напишут с этого момента.
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      Подходит если в Telegram много личных или старых диалогов, которые не нужны в CRM
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              <button onClick={() => setStep('period')} disabled={loading}
+                className="w-full text-left border-2 border-gray-200 hover:border-[#6A55F8] rounded-xl p-5 transition-all disabled:opacity-50">
+                <div className="flex items-start gap-3">
+                  <div className="text-2xl">📥</div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900 mb-1">Импортировать старые переписки</p>
+                    <p className="text-sm text-gray-600">
+                      Загрузить в платформу диалоги и сообщения за выбранный период. От 1 до 5 минут.
+                    </p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      Подходит если уже ведёшь продажи в этом аккаунте и хочешь видеть историю
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+            </div>
+          )}
+
+          {step === 'period' && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-700">За какой период импортировать переписки?</p>
+
+              <div className="space-y-2">
+                {PERIOD_OPTIONS.map(opt => (
+                  <button key={opt.days} onClick={() => setDays(opt.days)} disabled={loading}
+                    className={`w-full text-left border rounded-lg px-4 py-3 transition-all disabled:opacity-60 ${
+                      days === opt.days ? 'border-[#6A55F8] bg-[#F7F5FF]' : 'border-gray-200 hover:border-gray-300'
+                    }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-gray-900">{opt.label}</span>
+                      {opt.hint && (
+                        <span className="text-[10px] uppercase bg-[#6A55F8]/10 text-[#6A55F8] px-2 py-0.5 rounded font-semibold">
+                          {opt.hint}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+                ⚠️ Будут загружены только диалоги с активностью в выбранном периоде. Если не уложимся за один проход — оставшиеся подтянутся в фоне по мере активности.
+              </div>
+
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+
+              <div className="flex justify-between pt-2">
+                <button onClick={() => setStep('choice')} disabled={loading} className="text-sm text-gray-500">← Назад</button>
+                <button onClick={runImport} disabled={loading}
+                  className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                  Запустить импорт
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'running' && (
+            <div className="py-10 text-center">
+              <div className="inline-block w-10 h-10 border-2 border-[#6A55F8] border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-sm font-medium text-gray-900 mb-1">Идёт импорт переписок…</p>
+              <p className="text-xs text-gray-500">От 1 до 5 минут. Не закрывай окно.</p>
+            </div>
+          )}
+
           {step === 'done' && (
             <div className="space-y-4 py-4">
               <div className="text-center">
                 <div className="inline-flex w-14 h-14 rounded-full bg-emerald-50 items-center justify-center text-3xl mb-3">✓</div>
                 <p className="text-base font-semibold text-gray-900">Аккаунт успешно подключён</p>
-                <p className="text-sm text-gray-500 mt-1">Начинаем с чистого листа.</p>
+                <p className="text-sm text-gray-500 mt-1">{doneText}</p>
               </div>
               <div className="bg-[#F7F5FF] border border-[#6A55F8]/20 rounded-xl p-4 text-sm text-gray-700 space-y-2">
                 <p>
-                  <b>Что дальше:</b> новые сообщения будут подтягиваться автоматически раз в минуту —
-                  в платформе появятся только те диалоги, в которых клиенты напишут с этого момента.
+                  <b>Что дальше:</b> новые сообщения будут подтягиваться автоматически раз в минуту.
                 </p>
                 <p>
-                  Если хочешь загрузить <b>старые переписки</b> за какой-то период, это можно сделать в настройках аккаунта
-                  через кнопку <b>«Синхронизировать диалоги»</b> в любое время.
+                  Если когда-нибудь захочешь загрузить <b>старые переписки</b> (или догрузить ещё), это можно сделать в настройках аккаунта через кнопку <b>«Синхронизировать диалоги»</b>.
                 </p>
               </div>
             </div>
