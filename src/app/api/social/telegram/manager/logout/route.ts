@@ -9,6 +9,16 @@ function getSupabase() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 }
 
+/**
+ * POST /api/social/telegram/manager/logout
+ * Body: { accountId }
+ *
+ * Полностью удаляет менеджер-аккаунт:
+ * 1. Отзывает session в Telegram (если получится — не блокирует удаление при ошибке)
+ * 2. DELETE из manager_accounts — cascade удалит manager_conversations, manager_messages,
+ *    manager_account_grants через FK ON DELETE CASCADE.
+ * После этого можно заново подключить аккаунт с нуля.
+ */
 export async function POST(request: NextRequest) {
   try {
     const { accountId } = await request.json()
@@ -21,6 +31,7 @@ export async function POST(request: NextRequest) {
       .eq('id', accountId)
       .single()
 
+    // Попытка отозвать session в Telegram — если ошибка, всё равно удаляем из БД
     if (acc?.mtproto_session_enc && acc.mtproto_api_hash_enc) {
       try {
         await revokeSession(
@@ -28,15 +39,13 @@ export async function POST(request: NextRequest) {
           decryptSecret(acc.mtproto_api_hash_enc),
           decryptSecret(acc.mtproto_session_enc),
         )
-      } catch (err) { console.error('manager logout remote:', err) }
+      } catch (err) {
+        console.error('manager logout remote revoke failed (продолжаем удаление из БД):', err)
+      }
     }
 
-    await supabase.from('manager_accounts').update({
-      status: 'disabled',
-      mtproto_session_enc: null,
-      mtproto_api_hash_enc: null,
-      mtproto_phone_enc: null,
-    }).eq('id', accountId)
+    const { error } = await supabase.from('manager_accounts').delete().eq('id', accountId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     return NextResponse.json({ ok: true })
   } catch (err) {

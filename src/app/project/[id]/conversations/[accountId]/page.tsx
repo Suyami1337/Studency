@@ -602,14 +602,18 @@ function SettingsTab({ account, onDone, onReload }: {
   }
 
   async function disconnectAccount() {
-    if (!confirm('Отвязать аккаунт? Session будет отозвана в Telegram, диалоги и сообщения в БД останутся.')) return
+    if (!confirm('Полностью удалить аккаунт? Будут удалены ВСЕ диалоги, сообщения и доступы сотрудников. Session в Telegram будет отозвана. Действие необратимо.')) return
     setDisconnecting(true)
     try {
       const res = await fetch('/api/social/telegram/manager/logout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountId: account.id }),
       })
-      if (!res.ok) { alert('Не удалось отвязать'); return }
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json.error) {
+        alert('Не удалось удалить: ' + (json.error ?? 'неизвестная ошибка'))
+        return
+      }
       onDone()
     } finally { setDisconnecting(false) }
   }
@@ -700,12 +704,13 @@ function SettingsTab({ account, onDone, onReload }: {
       <div className="bg-white rounded-xl border border-red-200 p-5 space-y-3">
         <h3 className="font-semibold text-red-700">Опасная зона</h3>
         <p className="text-sm text-gray-600">
-          Отвязка отзывает session в Telegram (дальше этот аккаунт не сможет работать в платформе через нас).
-          Диалоги и история останутся в БД — при повторном подключении того же аккаунта можно будет смотреть прошлые переписки.
+          Полное удаление аккаунта из платформы. Отзываем session в Telegram, удаляем из БД сам аккаунт,
+          все синхронизированные <b>диалоги, сообщения и выданные доступы</b> сотрудников. Действие <b>необратимо</b>.
+          Если позже захочешь подключить этот же аккаунт — пройдёшь процесс с нуля.
         </p>
         <button onClick={disconnectAccount} disabled={disconnecting}
           className="border border-red-300 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-          {disconnecting ? 'Отвязываю…' : 'Отвязать аккаунт'}
+          {disconnecting ? 'Удаляю…' : 'Удалить аккаунт'}
         </button>
       </div>
     </div>
