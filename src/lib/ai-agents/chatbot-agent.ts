@@ -8,7 +8,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const MODEL = 'claude-sonnet-4-5'
-const MAX_AGENT_ITERATIONS = 10
+const MAX_AGENT_ITERATIONS = 12
+// Vercel Hobby обрезает функции на 60s. Возвращаем partial-результат раньше,
+// чтобы клиент всегда получил валидный JSON.
+const TIMEOUT_BUDGET_MS = 45000
 
 type ChatMessage =
   | { role: 'user'; content: string }
@@ -95,6 +98,14 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
 7. Инструмент \`read_scenario_state\` можешь вызывать когда угодно — чтобы видеть текущее состояние сценария.
 
 **Если пользователь сразу говорит «просто сделай N сообщений по теме X»** — всё равно сначала покажи черновик в тексте, дождись «да». Один цикл уточнения минимум.
+
+## Лимит времени — КРИТИЧНО
+
+У тебя ~45 секунд на одну сессию вызовов. Большая воронка (6+ сообщений с кнопками и триггерами) может не влезть. Правила:
+- За один ход делай **максимум 6-8 write-операций** (create_message, add_button и т.п.).
+- Если задач больше — делай порциями. Создай первую порцию, напиши «создал #1-#3, нажми любую клавишу — продолжу с #4-#6». Пользователь ответит «продолжай», ты продолжишь.
+- Связи (next_message_id) ставь сразу при создании через \`create_message\` — не плоди потом кучу update_message только чтобы проставить ссылки.
+- Если прилетел system-сообщение «⏱ Не успел доделать» — не паникуй, просто продолжи с того места на следующем «продолжай».
 
 **Если пользователь говорит «удали всё и сделай заново»** — покажи что именно удалишь (список текущих сообщений) и что создашь (черновик новых), дождись подтверждения, потом за одно действие: удалить старые → создать новые.
 
@@ -589,28 +600,41 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
   const toolCalls: Array<{ name: string; summary: string; ok: boolean }> = []
   let changesApplied = false
   let assistantText = ''
+  const startedAt = Date.now()
+  let timedOut = false
 
   for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: getTools(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      messages: conversation as any,
-    })
+    if (Date.now() - startedAt > TIMEOUT_BUDGET_MS) {
+      timedOut = true
+      console.warn(`[chatbot-agent] timeout budget exceeded at iter=${iter}, returning partial result`)
+      break
+    }
 
-    // Record assistant turn
+    let response: Anthropic.Messages.Message
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        tools: getTools(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: conversation as any,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[chatbot-agent] anthropic api error at iter=${iter}:`, msg)
+      assistantText += (assistantText ? '\n\n' : '') + `⚠️ Anthropic API вернул ошибку: ${msg}. Попробуй ещё раз или переформулируй.`
+      break
+    }
+
     conversation.push({ role: 'assistant', content: response.content })
 
-    // Collect any text the model produced in this turn
     for (const block of response.content) {
       if (block.type === 'text') assistantText += (assistantText ? '\n\n' : '') + block.text
     }
 
     if (response.stop_reason !== 'tool_use') break
 
-    // Execute each tool_use block
     const toolResults: Anthropic.Messages.ToolResultBlockParam[] = []
     for (const block of response.content) {
       if (block.type !== 'tool_use') continue
@@ -630,6 +654,10 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
     }
 
     conversation.push({ role: 'user', content: toolResults })
+  }
+
+  if (timedOut) {
+    assistantText += (assistantText ? '\n\n' : '') + `⏱ Не успел доделать за один заход (Vercel ограничивает 60с). Часть изменений уже применена — посмотри в редакторе. Напиши «продолжай» чтобы дозаписать остальное.`
   }
 
   return {

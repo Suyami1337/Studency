@@ -126,11 +126,20 @@ export function AiAssistantOverlay({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...agent.payload, history: agentHistory, userMessage: question }),
         })
-        const json = await res.json()
-        if (json.error) {
-          setEntries(prev => [...prev, { kind: 'ai', text: `⚠️ Ошибка: ${json.error}${json.hint ? '\n' + json.hint : ''}` }])
+        // Если Vercel обрезал функцию по таймауту — ответ приходит не JSON,
+        // а plain-text ("An error occurred..."). Обрабатываем мягко, не теряя переписку.
+        const text = await res.text()
+        let json: { error?: string; hint?: string; assistantText?: string; toolCalls?: ToolCallInfo[]; history?: unknown[]; changesApplied?: boolean } | null = null
+        try { json = JSON.parse(text) } catch { /* не JSON */ }
+        if (!json) {
+          const looksLikeTimeout = /An error occurred|FUNCTION_INVOCATION_TIMEOUT|504|Gateway/i.test(text)
+          setEntries(prev => [...prev, { kind: 'ai', text: looksLikeTimeout
+            ? '⏱ Сервер не успел обработать запрос за 60с. Часть изменений могла примениться — проверь редактор. Напиши «продолжай» чтобы дозаписать остальное маленькими шагами.'
+            : `⚠️ Сервер вернул не-JSON ответ (status ${res.status}). Попробуй ещё раз.` }])
+        } else if (json.error) {
+          setEntries(prev => [...prev, { kind: 'ai', text: `⚠️ Ошибка: ${json!.error}${json!.hint ? '\n' + json!.hint : ''}` }])
         } else {
-          setEntries(prev => [...prev, { kind: 'ai', text: json.assistantText || 'Готово.', tools: json.toolCalls }])
+          setEntries(prev => [...prev, { kind: 'ai', text: json!.assistantText || 'Готово.', tools: json!.toolCalls }])
           setAgentHistory(json.history ?? [])
           if (json.changesApplied && agent.onChangesApplied) agent.onChangesApplied()
         }
