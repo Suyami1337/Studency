@@ -2680,12 +2680,13 @@ function GateChannelSelect({ projectId, value, onChange }: {
       </div>
     )
   }
+  const isDeadReference = !!value && !channels.some(c => c.id === value)
   return (
     <div className="bg-[#F0EDFF] border border-[#6A55F8]/20 rounded-lg p-3 space-y-2">
       <div>
         <label className="block text-xs font-medium text-gray-700 mb-1">Какой канал проверять</label>
-        <select value={value ?? ''} onChange={ev => onChange(ev.target.value || null)}
-          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+        <select value={isDeadReference ? '' : (value ?? '')} onChange={ev => onChange(ev.target.value || null)}
+          className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:border-[#6A55F8] ${isDeadReference ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
           <option value="">— Выбери канал —</option>
           {channels.map(c => (
             <option key={c.id} value={c.id}>
@@ -2694,6 +2695,12 @@ function GateChannelSelect({ projectId, value, onChange }: {
           ))}
         </select>
       </div>
+      {isDeadReference && (
+        <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg p-2.5">
+          ⚠️ <b>Канал удалён или переподключён</b> — ссылка из БД уже невалидна, поэтому проверка подписки сейчас не работает.
+          Выбери канал в списке выше и нажми «Сохранить».
+        </div>
+      )}
       <p className="text-[11px] text-gray-500">
         Если клиент уже подписан — этот шаг автоматически пропустится, бот сразу отправит следующее сообщение.
         Если нет — клиент получит кнопку «Подписаться». Как только подпишется, бот автоматически продолжит цепочку.
