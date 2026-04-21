@@ -588,6 +588,7 @@ function MessageCard({
   initialExpanded = false,
   hideFollowups = false,
   displayNumber,
+  onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -599,6 +600,10 @@ function MessageCard({
   initialExpanded?: boolean
   hideFollowups?: boolean
   displayNumber?: number
+  onMoveUp?: (id: string) => void
+  onMoveDown?: (id: string) => void
+  canMoveUp?: boolean
+  canMoveDown?: boolean
 }) {
   const supabase = createClient()
   const [expanded, setExpanded] = useState(initialExpanded)
@@ -658,6 +663,24 @@ function MessageCard({
     <div className={`bg-white rounded-xl border ${expanded ? 'border-[#6A55F8]/40 shadow-sm' : isDirty ? 'border-amber-300' : 'border-gray-100'} transition-all`}>
       {/* Header — always visible */}
       <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        {(onMoveUp || onMoveDown) && (
+          <div className="flex flex-col items-center -my-2" onClick={ev => ev.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => canMoveUp && onMoveUp?.(msg.id)}
+              disabled={!canMoveUp}
+              title="Переместить вверх"
+              className="w-6 h-5 flex items-center justify-center text-gray-400 hover:text-[#6A55F8] hover:bg-[#F0EDFF] rounded disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:cursor-not-allowed text-[10px]"
+            >▲</button>
+            <button
+              type="button"
+              onClick={() => canMoveDown && onMoveDown?.(msg.id)}
+              disabled={!canMoveDown}
+              title="Переместить вниз"
+              className="w-6 h-5 flex items-center justify-center text-gray-400 hover:text-[#6A55F8] hover:bg-[#F0EDFF] rounded disabled:opacity-20 disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:cursor-not-allowed text-[10px]"
+            >▼</button>
+          </div>
+        )}
         <div className="w-8 h-8 rounded-lg bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8]">
           {displayNumber ?? msg.order_position + 1}
         </div>
@@ -1873,6 +1896,35 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...data } : m))
   }
 
+  async function moveMessage(id: string, direction: 'up' | 'down') {
+    const idx = messages.findIndex(m => m.id === id)
+    if (idx === -1) return
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (targetIdx < 0 || targetIdx >= messages.length) return
+
+    const a = messages[idx]
+    const b = messages[targetIdx]
+    const posA = a.order_position
+    const posB = b.order_position
+
+    setMessages(prev => {
+      const i = prev.findIndex(m => m.id === id)
+      if (i === -1) return prev
+      const t = direction === 'up' ? i - 1 : i + 1
+      if (t < 0 || t >= prev.length) return prev
+      const next = [...prev]
+      next[i] = { ...prev[t], order_position: prev[i].order_position }
+      next[t] = { ...prev[i], order_position: prev[t].order_position }
+      return next
+    })
+
+    if (a.id.startsWith('temp-') || b.id.startsWith('temp-')) return
+    // Swap через sideline (-1) — переживёт возможный unique constraint на (scenario_id, order_position)
+    await supabase.from('scenario_messages').update({ order_position: -1 }).eq('id', b.id)
+    await supabase.from('scenario_messages').update({ order_position: posB }).eq('id', a.id)
+    await supabase.from('scenario_messages').update({ order_position: posA }).eq('id', b.id)
+  }
+
   async function deleteMessage(id: string) {
     const remaining = messages.filter(m => m.id !== id)
     setMessages(remaining)
@@ -2012,6 +2064,10 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                       onAddButton={addButton}
                       onDeleteButton={deleteButton}
                       onUpdateButton={updateButton}
+                      onMoveUp={id => moveMessage(id, 'up')}
+                      onMoveDown={id => moveMessage(id, 'down')}
+                      canMoveUp={idx > 0}
+                      canMoveDown={idx < messages.length - 1}
                     />
                   </div>
                 )
