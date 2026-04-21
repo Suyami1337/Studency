@@ -27,10 +27,17 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabase()
     const { data: conv } = await supabase
       .from('manager_conversations')
-      .select('id, manager_account_id, peer_telegram_id')
+      .select('id, manager_account_id, peer_telegram_id, unread_count')
       .eq('id', conversationId)
       .single()
     if (!conv) return NextResponse.json({ error: 'conversation not found' }, { status: 404 })
+
+    // No-op: нечего отмечать прочитанным. Защита от ping-pong когда UI
+    // случайно шлёт mark-read для уже прочитанного диалога (это могло бы
+    // ReadHistory-ить Telegram вперёд, подавляя свежие входящие на мобильном).
+    if ((conv.unread_count ?? 0) === 0) {
+      return NextResponse.json({ ok: true, skipped: true })
+    }
 
     const { data: acc } = await supabase
       .from('manager_accounts')
