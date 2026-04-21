@@ -289,17 +289,22 @@ export async function fetchManagerDialogs(params: {
 
         const topMsg = topMsgById.get(userId)
         const topDate = topMsg ? Number(topMsg.date) || 0 : 0
+        const unreadCount = Number(d.unreadCount ?? 0)
 
-        // Всегда добавляем в dialogs — даже если GetHistory не будет
+        // Пропускаем диалог полностью если топ-сообщение старее sinceIso И нет непрочитанных.
+        // Иначе «чистый старт» (sinceIso = now) всё равно импортировал бы все старые диалоги
+        // пустыми записями, только из-за того что они есть в GetDialogs.
+        if (sinceTs && topDate < sinceTs && unreadCount === 0) continue
+
         allDialogs.push({
           peerTelegramId: userId,
           peerUsername: userObj.username ?? null,
           peerFirstName: userObj.firstName ?? null,
-          unreadCount: Number(d.unreadCount ?? 0),
+          unreadCount,
           topMessageDate: topDate ? new Date(topDate * 1000).toISOString() : null,
         })
 
-        // Skip GetHistory если топ-сообщение старее sinceIso
+        // Skip GetHistory если топ-сообщение старее sinceIso (но unread > 0, поэтому диалог в списке)
         if (sinceTs && topDate < sinceTs) continue
 
         try {
