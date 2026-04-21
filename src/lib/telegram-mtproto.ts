@@ -177,8 +177,10 @@ export type DialogMeta = {
   peerTelegramId: number
   peerUsername: string | null
   peerFirstName: string | null
-  unreadCount: number          // ← СЫРОЕ значение из Telegram (то же что видит юзер в TG)
+  unreadCount: number          // ← СЫРОЕ значение из Telegram (ненадёжно для свежих session'ов)
   topMessageDate: string | null
+  topMessageId: number | null
+  readInboxMaxId: number       // id последнего прочитанного incoming из TG, 0 если session не синхронизирован
 }
 
 export type FetchManagerDialogsResult = {
@@ -301,6 +303,8 @@ export async function fetchManagerDialogs(params: {
           peerFirstName: userObj.firstName ?? null,
           unreadCount,
           topMessageDate: topDate ? new Date(topDate * 1000).toISOString() : null,
+          topMessageId: topMsg?.id ? Number(topMsg.id) : null,
+          readInboxMaxId: Number(d.readInboxMaxId ?? 0),
         })
 
         // Skip GetHistory если топ-сообщение старее sinceIso (unread-only диалоги всё равно

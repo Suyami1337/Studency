@@ -186,7 +186,36 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       }
     }
 
-    // unread_count берём ИЗ TELEGRAM (dialog.unreadCount) — это то что видит юзер в TG
+    // unread_count считаем сами из наших сообщений в БД: incoming с sent_at > last_read_at.
+    // Telegram возвращает unreadCount некорректно для свежих session'ов (readInboxMaxId=0),
+    // поэтому ему нельзя доверять напрямую. Но если TG говорит «всё прочитано» И
+    // readInboxMaxId >= topMessageId — значит прочитано на другом устройстве,
+    // синхронизируем обратно (Telegram → платформа).
+    const { data: convRow } = await supabase
+      .from('manager_conversations')
+      .select('last_read_at')
+      .eq('id', convId)
+      .single()
+    let lastReadAt = convRow?.last_read_at ?? null
+
+    const readInboxMaxId = dialogMeta?.readInboxMaxId ?? 0
+    const topMessageId = dialogMeta?.topMessageId ?? 0
+    const tgSaysAllRead = telegramUnread === 0 && readInboxMaxId > 0 && topMessageId > 0 && readInboxMaxId >= topMessageId
+    if (tgSaysAllRead) {
+      // На другом устройстве прочитали всё — обнуляем наше unread и двигаем last_read_at
+      lastReadAt = new Date().toISOString()
+    }
+
+    let computedUnread = 0
+    const { count: cnt } = await supabase
+      .from('manager_messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('conversation_id', convId)
+      .eq('direction', 'incoming')
+      .gt('sent_at', lastReadAt ?? '1970-01-01')
+    computedUnread = Number(cnt ?? 0)
+    const finalUnread = tgSaysAllRead ? 0 : Math.max(computedUnread, telegramUnread)
+
     const incomingTimes = peerMsgs.filter(m => !m.isOutgoing).map(m => m.sentAt)
     const outgoingTimes = peerMsgs.filter(m => m.isOutgoing).map(m => m.sentAt)
     const lastIncomingAt = incomingTimes.length > 0 ? incomingTimes[incomingTimes.length - 1] : null
@@ -200,8 +229,9 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       peer_username: peerUsername,
       peer_first_name: peerFirstName,
       updated_at: new Date().toISOString(),
-      unread_count: telegramUnread,  // ← источник истины Telegram
+      unread_count: finalUnread,
     }
+    if (tgSaysAllRead) updates.last_read_at = lastReadAt
     if (lastIncomingAt) updates.last_incoming_at = lastIncomingAt
     if (lastOutgoingAt) updates.last_outgoing_at = lastOutgoingAt
     if (lastMessageAt) updates.last_message_at = lastMessageAt
