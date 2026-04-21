@@ -589,6 +589,7 @@ function MessageCard({
   hideFollowups = false,
   displayNumber,
   onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false,
+  isOrphan = false,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -604,6 +605,7 @@ function MessageCard({
   onMoveDown?: (id: string) => void
   canMoveUp?: boolean
   canMoveDown?: boolean
+  isOrphan?: boolean
 }) {
   const supabase = createClient()
   const [expanded, setExpanded] = useState(initialExpanded)
@@ -660,7 +662,7 @@ function MessageCard({
   const typeColor = e.is_start ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'
 
   return (
-    <div className={`bg-white rounded-xl border ${expanded ? 'border-[#6A55F8]/40 shadow-sm' : isDirty ? 'border-amber-300' : 'border-gray-100'} transition-all`}>
+    <div className={`bg-white rounded-xl border ${isOrphan ? 'border-red-300' : expanded ? 'border-[#6A55F8]/40 shadow-sm' : isDirty ? 'border-amber-300' : 'border-gray-100'} transition-all`}>
       {/* Header — always visible */}
       <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         {(onMoveUp || onMoveDown) && (
@@ -685,8 +687,13 @@ function MessageCard({
           {displayNumber ?? msg.order_position + 1}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${typeColor}`}>{typeLabel}</span>
+            {isOrphan && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full border bg-red-50 text-red-700 border-red-200">
+                ⚠️ никто не ведёт
+              </span>
+            )}
             {msg.is_subscription_gate && (
               <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${msg.gate_channel_account_id ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
                 🚪 {msg.gate_channel_account_id ? 'Gate (сохранено в БД)' : 'Gate — канал не выбран!'}
@@ -2053,6 +2060,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                 const linkedFrom = messages.find(m => m.next_message_id === msg.id)
                 const buttonLinkedFrom = buttons.find(b => b.action_goto_message_id === msg.id)
                 const hasIncomingLink = !!linkedFrom || !!buttonLinkedFrom
+                const isOrphan = !hasIncomingLink && !msg.is_start
 
                 return (
                   <div key={msg.id}>
@@ -2060,11 +2068,11 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                     {idx > 0 && (
                       <div className="flex items-center gap-2 py-1.5 pl-4">
                         <div className="flex flex-col items-center">
-                          <div className="w-px h-2 bg-[#6A55F8]/30" />
-                          <div className="text-[#6A55F8] text-xs">↓</div>
-                          <div className="w-px h-2 bg-[#6A55F8]/30" />
+                          <div className={`w-px h-2 ${isOrphan ? 'bg-red-200' : 'bg-[#6A55F8]/30'}`} />
+                          <div className={`text-xs ${isOrphan ? 'text-red-300' : 'text-[#6A55F8]'}`}>↓</div>
+                          <div className={`w-px h-2 ${isOrphan ? 'bg-red-200' : 'bg-[#6A55F8]/30'}`} />
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           {linkedFrom && (
                             <span className="text-[10px] bg-[#F0EDFF] text-[#6A55F8] px-1.5 py-0.5 rounded font-medium">
                               от #{linkedFrom.order_position + 1}
@@ -2085,9 +2093,16 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                               дожим
                             </span>
                           )}
-                          {!hasIncomingLink && !msg.is_start && (
-                            <span className="text-[10px] text-gray-300">не привязано</span>
-                          )}
+                        </div>
+                      </div>
+                    )}
+                    {isOrphan && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-1 text-xs text-red-700 flex items-start gap-2">
+                        <span className="text-sm">⚠️</span>
+                        <div>
+                          <b>В это сообщение никто не ведёт</b> — бот его не отправит никому.
+                          Чтобы задействовать, укажи его в поле «↓ Следующее сообщение» у предыдущего сообщения,
+                          или сделай кнопку с действием «Перейти к сообщению» → это.
                         </div>
                       </div>
                     )}
@@ -2105,6 +2120,7 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                       onMoveDown={id => moveMessage(id, 'down')}
                       canMoveUp={idx > 0}
                       canMoveDown={idx < messages.length - 1}
+                      isOrphan={isOrphan}
                     />
                   </div>
                 )
