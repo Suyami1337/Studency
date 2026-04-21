@@ -36,13 +36,17 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     ? (acc.last_sync_at ?? new Date(Date.now() - 24 * 3600_000).toISOString())
     : new Date(Date.now() - (options.initialDays ?? 30) * 24 * 3600_000).toISOString()
 
+  // Ограничения сознательно уменьшены чтобы укладываться в 60 сек Vercel:
+  //   initial: 80 диалогов × 40 сообщений = 3200 запросов max
+  //   incremental: 100 диалогов × 30 сообщений (обычно актуальных мало)
+  // Если за раз не всё попало — следующий cron-тик продолжит (sinceIso сдвинется).
   const msgs: IncomingMessage[] = await fetchManagerDialogs({
     apiId: acc.mtproto_api_id,
     apiHash,
     sessionString: session,
     sinceIso,
-    maxDialogs: 100,
-    messagesPerDialog: acc.initial_import_done ? 30 : 100,
+    maxDialogs: acc.initial_import_done ? 100 : 80,
+    messagesPerDialog: acc.initial_import_done ? 30 : 40,
   })
 
   let saved = 0

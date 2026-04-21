@@ -193,6 +193,8 @@ export async function fetchManagerDialogs(params: {
   const sinceTs = sinceIso ? Math.floor(new Date(sinceIso).getTime() / 1000) : 0
   const client = await createClient(apiId, apiHash, sessionString)
   const all: IncomingMessage[] = []
+  // Временной бюджет — 50 сек (при Vercel maxDuration 60 оставляем запас)
+  const deadline = Date.now() + 50_000
   try {
     const { Api } = await import('telegram')
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -209,12 +211,30 @@ export async function fetchManagerDialogs(params: {
     const users = new Map<number, any>()
     for (const u of dialogs.users ?? []) users.set(Number(u.id), u)
 
+    // Собираем top message id для каждого диалога — чтоб оценить нужен ли GetHistory
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const topMsgById = new Map<number, any>()
+    for (const m of dialogs.messages ?? []) {
+      if (m.className === 'Message' && m.peerId?.userId) {
+        const uid = Number(m.peerId.userId)
+        if (!topMsgById.has(uid)) topMsgById.set(uid, m)
+      }
+    }
+
     for (const d of dialogs.dialogs ?? []) {
+      if (Date.now() > deadline) break  // кончилось время — выходим, следующий cron подхватит
       // peer типа PeerUser = личный диалог
       if (d.peer?.className !== 'PeerUser') continue
       const userId = Number(d.peer.userId)
       const userObj = users.get(userId)
       if (!userObj || userObj.self || userObj.bot) continue  // пропускаем себя и ботов
+
+      // Оптимизация: если sinceIso задан и top message диалога старее —
+      // GetHistory не нужен, в этом диалоге нет новых сообщений.
+      if (sinceTs) {
+        const topMsg = topMsgById.get(userId)
+        if (topMsg && Number(topMsg.date) < sinceTs) continue
+      }
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
