@@ -101,11 +101,15 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
 
 ## Лимит времени — КРИТИЧНО
 
-У тебя ~45 секунд на одну сессию вызовов. Большая воронка (6+ сообщений с кнопками и триггерами) может не влезть. Правила:
-- За один ход делай **максимум 6-8 write-операций** (create_message, add_button и т.п.).
-- Если задач больше — делай порциями. Создай первую порцию, напиши «создал #1-#3, нажми любую клавишу — продолжу с #4-#6». Пользователь ответит «продолжай», ты продолжишь.
-- Связи (next_message_id) ставь сразу при создании через \`create_message\` — не плоди потом кучу update_message только чтобы проставить ссылки.
-- Если прилетел system-сообщение «⏱ Не успел доделать» — не паникуй, просто продолжи с того места на следующем «продолжай».
+У тебя ~45 секунд на одну сессию вызовов. Правила:
+
+**Для создания НОВОЙ цепочки — всегда используй \`create_scenario_chain\`.** Это ОДИН tool call создаёт сразу все сообщения, кнопки и связи. Экономит 90% времени vs последовательных create_message + add_button + update_message. Принимает массив сообщений с \`local_id\` (строки-метки которые ты сам придумал), внутри массива ссылайся на них через \`next_local_id\` и \`action_goto_local_id\`.
+
+**\`create_message\` / \`add_button\` / \`update_message\`** — оставляй только для точечных правок существующего сценария (например «перепиши #3», «добавь кнопку к последнему сообщению»).
+
+Если всё равно нужно много последовательных вызовов — максимум 6 write-операций за ход. Если задач больше — скажи пользователю «создал часть, напиши «продолжай» для остального».
+
+Если прилетит system-сообщение «⏱ Не успел доделать» — продолжи с того места на следующем «продолжай».
 
 **Если пользователь говорит «удали всё и сделай заново»** — покажи что именно удалишь (список текущих сообщений) и что создашь (черновик новых), дождись подтверждения, потом за одно действие: удалить старые → создать новые.
 
@@ -311,6 +315,58 @@ ID объектов всегда бери из list_project_targets. Имя (lab
       },
     },
     {
+      name: 'create_scenario_chain',
+      description: `Атомарно создать ЦЕЛУЮ цепочку сообщений + кнопки + связи между ними за ОДИН вызов. Это предпочтительный способ создания воронки — быстрее и не упирается в таймаут Vercel. Используй когда пользователь подтвердил план из 2+ сообщений.
+
+Как это работает:
+1. Ты передаёшь массив сообщений с временными local_id (любые строки, например "start", "gate", "lesson1").
+2. В полях next_local_id / action_goto_local_id ссылайся на local_id других сообщений этой же цепочки.
+3. Сервер создаёт все сообщения и кнопки одной транзакцией, сам подставляя реальные UUID вместо local_id.
+
+Не используй для простых правок существующих сообщений — там оставляй update_message.`,
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          messages: {
+            type: 'array',
+            description: 'Массив сообщений в порядке их появления в цепочке (первое = точка входа).',
+            items: {
+              type: 'object',
+              properties: {
+                local_id: { type: 'string', description: 'Временный ID для ссылок внутри этого вызова (напр. "start", "gate", "video1")' },
+                text: { type: 'string' },
+                is_start: { type: 'boolean' },
+                trigger_word: { type: 'string', description: 'Только для is_start=true' },
+                next_local_id: { type: 'string', description: 'local_id следующего сообщения (линейный переход)' },
+                delay_minutes: { type: 'number' },
+                delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+                is_subscription_gate: { type: 'boolean' },
+                gate_channel_account_id: { type: 'string' },
+                gate_button_label: { type: 'string' },
+                buttons: {
+                  type: 'array',
+                  description: 'Кнопки этого сообщения',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      text: { type: 'string' },
+                      action_type: { type: 'string', enum: ['url', 'trigger', 'goto_message'] },
+                      action_url: { type: 'string' },
+                      action_trigger_word: { type: 'string' },
+                      action_goto_local_id: { type: 'string', description: 'local_id целевого сообщения (для goto_message)' },
+                    },
+                    required: ['text', 'action_type'],
+                  },
+                },
+              },
+              required: ['local_id', 'text'],
+            },
+          },
+        },
+        required: ['messages'],
+      },
+    },
+    {
       name: 'delete_trigger_group',
       description: 'Удалить триггер-группу целиком со всеми её сообщениями и дожимами.',
       input_schema: {
@@ -485,6 +541,79 @@ async function executeTool(
           summary: `прочитал каналы: ${channels.length}`,
           ok: true,
           wrote: false,
+        }
+      }
+
+      case 'create_scenario_chain': {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const plan: any[] = Array.isArray(input.messages) ? input.messages : []
+        if (plan.length === 0) throw new Error('messages пустой')
+
+        // Узнаём текущую максимальную позицию чтобы добавлять в конец
+        const { data: lastRows } = await supabase
+          .from('scenario_messages')
+          .select('order_position')
+          .eq('scenario_id', scenarioId)
+          .order('order_position', { ascending: false })
+          .limit(1)
+        let pos = lastRows && lastRows[0] ? lastRows[0].order_position + 1 : 0
+
+        // Шаг 1: создать все сообщения (без next_message_id, с пустыми FK), собрать map local_id → uuid
+        const localToReal: Record<string, string> = {}
+        for (const p of plan) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const row: any = {
+            scenario_id: scenarioId,
+            text: p.text ?? '',
+            is_start: p.is_start ?? false,
+            trigger_word: p.trigger_word ?? null,
+            order_position: pos++,
+          }
+          if (p.delay_minutes !== undefined) row.delay_minutes = p.delay_minutes
+          if (p.delay_unit !== undefined) row.delay_unit = p.delay_unit
+          if (p.is_subscription_gate !== undefined) row.is_subscription_gate = p.is_subscription_gate
+          if (p.gate_channel_account_id !== undefined) row.gate_channel_account_id = p.gate_channel_account_id
+          if (p.gate_button_label !== undefined) row.gate_button_label = p.gate_button_label
+
+          const { data: created, error } = await supabase.from('scenario_messages').insert(row).select('id').single()
+          if (error || !created) throw new Error(`create message "${p.local_id}": ${error?.message}`)
+          localToReal[p.local_id] = created.id
+        }
+
+        // Шаг 2: проставить next_message_id по мапе
+        for (const p of plan) {
+          if (!p.next_local_id) continue
+          const targetId = localToReal[p.next_local_id]
+          if (!targetId) throw new Error(`next_local_id "${p.next_local_id}" не найден в плане`)
+          await supabase.from('scenario_messages').update({ next_message_id: targetId }).eq('id', localToReal[p.local_id])
+        }
+
+        // Шаг 3: создать кнопки
+        let btnCount = 0
+        for (const p of plan) {
+          if (!Array.isArray(p.buttons)) continue
+          let btnPos = 0
+          for (const b of p.buttons) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const row: any = {
+              message_id: localToReal[p.local_id],
+              text: b.text,
+              action_type: b.action_type,
+              action_url: b.action_url ?? null,
+              action_trigger_word: b.action_trigger_word ?? null,
+              action_goto_message_id: b.action_goto_local_id ? (localToReal[b.action_goto_local_id] ?? null) : null,
+              order_position: btnPos++,
+            }
+            const { error } = await supabase.from('scenario_buttons').insert(row)
+            if (error) throw new Error(`create button "${b.text}": ${error.message}`)
+            btnCount++
+          }
+        }
+
+        return {
+          content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length, buttons_created: btnCount }),
+          summary: `создал цепочку: ${plan.length} сообщений, ${btnCount} кнопок`,
+          ok: true, wrote: true,
         }
       }
 
