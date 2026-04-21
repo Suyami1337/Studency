@@ -178,7 +178,10 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
       .order('sent_at', { ascending: true })
       .limit(500)
     setMessages((data ?? []) as Msg[])
-    await supabase.from('manager_conversations').update({ unread_count: 0 }).eq('id', activeConvId)
+    await supabase.from('manager_conversations').update({
+      unread_count: 0,
+      last_read_at: new Date().toISOString(),
+    }).eq('id', activeConvId)
     // Мгновенно в конец — без анимации чтобы не было эффекта «листания»
     requestAnimationFrame(() => scrollToBottom())
     // ещё раз через 100ms чтобы подхватить подгрузку медиа/шрифтов
