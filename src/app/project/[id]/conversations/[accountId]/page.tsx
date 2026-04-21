@@ -684,12 +684,19 @@ function SettingsTab({ account, onDone, onReload }: {
         <div className="flex flex-wrap gap-2">
           <button onClick={resyncNow} disabled={resyncing}
             className="border border-gray-200 hover:bg-gray-50 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-            {resyncing ? 'Синхронизирую…' : '↻ Синхронизировать сейчас'}
+            {resyncing ? 'Синхронизирую…' : '↻ Подтянуть новые сообщения'}
           </button>
         </div>
+        <p className="text-xs text-gray-500">
+          Принудительно запускает тот же процесс, что и автоматический крон раз в минуту.
+          Подтянет то что клиенты написали с момента последней синхронизации.
+        </p>
       </div>
 
-      {/* Опасная зона */}
+      {/* Импорт старых переписок */}
+      <SyncHistorySection accountId={account.id} onDone={onReload} />
+
+      {/* Опасная зона ↓ */}
       <div className="bg-white rounded-xl border border-red-200 p-5 space-y-3">
         <h3 className="font-semibold text-red-700">Опасная зона</h3>
         <p className="text-sm text-gray-600">
@@ -701,6 +708,106 @@ function SettingsTab({ account, onDone, onReload }: {
           {disconnecting ? 'Отвязываю…' : 'Отвязать аккаунт'}
         </button>
       </div>
+    </div>
+  )
+}
+
+// ==================== SYNC HISTORY SECTION ====================
+
+const SYNC_PERIOD_OPTIONS: { label: string; days: number; hint?: string }[] = [
+  { label: '7 дней', days: 7 },
+  { label: '30 дней', days: 30, hint: 'Рекомендуется' },
+  { label: '90 дней', days: 90 },
+  { label: '1 год', days: 365 },
+  { label: 'Всё время', days: 3650, hint: 'Может не всё успеть за один проход' },
+]
+
+function SyncHistorySection({ accountId, onDone }: { accountId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [days, setDays] = useState(30)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<string | null>(null)
+
+  async function runImport() {
+    setRunning(true); setError(null); setResult(null)
+    try {
+      const res = await fetch('/api/social/telegram/manager/import-history', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId, days }),
+      })
+      const json = await res.json()
+      if (json.error) { setError(json.error); return }
+      const fetched = json.fetched ?? 0
+      const newConv = json.newConversations ?? 0
+      setResult(`✅ Загружено ${fetched} сообщений из ${newConv} новых диалогов`)
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Сеть недоступна')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="font-semibold text-gray-900">Синхронизация старых диалогов</h3>
+          <p className="text-xs text-gray-500 mt-1 max-w-xl">
+            Загрузит в платформу диалоги и сообщения из Telegram за выбранный период.
+            Новые сообщения дальше подтягиваются автоматически — это нужно только если хочешь
+            видеть историю до подключения.
+          </p>
+        </div>
+        {!open && (
+          <button onClick={() => setOpen(true)}
+            className="whitespace-nowrap border border-[#6A55F8] text-[#6A55F8] hover:bg-[#F7F5FF] px-3 py-2 rounded-lg text-sm font-medium">
+            Синхронизировать диалоги
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="pt-3 border-t border-gray-100 space-y-3">
+          <p className="text-sm font-medium text-gray-800">За какой период загрузить?</p>
+          <div className="space-y-2">
+            {SYNC_PERIOD_OPTIONS.map(opt => (
+              <button key={opt.days} onClick={() => setDays(opt.days)} disabled={running}
+                className={`w-full text-left border rounded-lg px-4 py-3 transition-all disabled:opacity-60 ${
+                  days === opt.days ? 'border-[#6A55F8] bg-[#F7F5FF]' : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-gray-900">{opt.label}</span>
+                  {opt.hint && (
+                    <span className="text-[10px] uppercase bg-[#6A55F8]/10 text-[#6A55F8] px-2 py-0.5 rounded font-semibold">
+                      {opt.hint}
+                    </span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+            ⚠️ Импорт займёт от 1 до 5 минут. Если у тебя много диалогов за долгий период — оставшиеся подтянутся в фоне по мере того как клиенты будут писать.
+          </div>
+
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+          {result && <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded p-3">{result}</div>}
+
+          <div className="flex items-center justify-between pt-1">
+            <button onClick={() => { setOpen(false); setError(null); setResult(null) }} disabled={running}
+              className="text-sm text-gray-500 disabled:opacity-50">
+              Отмена
+            </button>
+            <button onClick={runImport} disabled={running}
+              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+              {running ? 'Загружаю…' : 'Запустить импорт'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
