@@ -36,17 +36,16 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     ? (acc.last_sync_at ?? new Date(Date.now() - 24 * 3600_000).toISOString())
     : new Date(Date.now() - (options.initialDays ?? 30) * 24 * 3600_000).toISOString()
 
-  // Ограничения сознательно уменьшены чтобы укладываться в 60 сек Vercel:
-  //   initial: 80 диалогов × 40 сообщений = 3200 запросов max
-  //   incremental: 100 диалогов × 30 сообщений (обычно актуальных мало)
-  // Если за раз не всё попало — следующий cron-тик продолжит (sinceIso сдвинется).
+  // Ограничения уменьшены чтобы надёжно укладываться в 60 сек Vercel:
+  //   initial: 40 диалогов × 30 сообщений
+  //   incremental: 100 диалогов × 30 сообщений (обычно актуальных мало, skip-оптимизация работает)
   const msgs: IncomingMessage[] = await fetchManagerDialogs({
     apiId: acc.mtproto_api_id,
     apiHash,
     sessionString: session,
     sinceIso,
-    maxDialogs: acc.initial_import_done ? 100 : 80,
-    messagesPerDialog: acc.initial_import_done ? 30 : 40,
+    maxDialogs: acc.initial_import_done ? 100 : 40,
+    messagesPerDialog: acc.initial_import_done ? 30 : 30,
   })
 
   let saved = 0
@@ -112,24 +111,42 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       previousCustomerId = customer.id
     }
 
-    // Вставляем сообщения (ON CONFLICT DO NOTHING)
+    // Вставляем сообщения батчем (ON CONFLICT DO NOTHING через upsert)
     let incomingCountForConv = 0
     let firstIncomingMessageInSession: IncomingMessage | null = null
-    for (const m of peerMsgs) {
-      const { error } = await supabase.from('manager_messages').insert({
-        conversation_id: convId,
-        telegram_message_id: m.messageId,
-        direction: m.isOutgoing ? 'outgoing' : 'incoming',
-        text: m.text,
-        media_type: m.mediaType,
-        media_url: null,
-        sent_at: m.sentAt,
-      })
-      if (!error) {
-        saved++
-        if (!m.isOutgoing) {
-          incomingCountForConv++
-          if (!firstIncomingMessageInSession) firstIncomingMessageInSession = m
+    const rows = peerMsgs.map(m => ({
+      conversation_id: convId,
+      telegram_message_id: m.messageId,
+      direction: m.isOutgoing ? 'outgoing' : 'incoming',
+      text: m.text,
+      media_type: m.mediaType,
+      media_url: null,
+      sent_at: m.sentAt,
+    }))
+    if (rows.length > 0) {
+      // Сначала узнаём какие уже есть (чтобы не инкрементить unread повторно через триггер)
+      const existingIds = new Set<number>()
+      const msgIds = peerMsgs.map(m => m.messageId)
+      if (msgIds.length > 0) {
+        const { data: existing } = await supabase
+          .from('manager_messages')
+          .select('telegram_message_id')
+          .eq('conversation_id', convId)
+          .in('telegram_message_id', msgIds)
+        for (const e of existing ?? []) existingIds.add(Number(e.telegram_message_id))
+      }
+      const newRows = rows.filter(r => !existingIds.has(Number(r.telegram_message_id)))
+      if (newRows.length > 0) {
+        const { error } = await supabase.from('manager_messages').insert(newRows)
+        if (!error) {
+          saved += newRows.length
+          for (const m of peerMsgs) {
+            if (existingIds.has(m.messageId)) continue
+            if (!m.isOutgoing) {
+              incomingCountForConv++
+              if (!firstIncomingMessageInSession) firstIncomingMessageInSession = m
+            }
+          }
         }
       }
     }
