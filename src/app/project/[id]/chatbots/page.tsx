@@ -2661,13 +2661,13 @@ function GateChannelSelect({ projectId, value, onChange }: {
   const [channels, setChannels] = useState<Array<{ id: string; external_title: string | null; external_username: string | null; external_id: string }>>([])
   useEffect(() => {
     supabase.from('social_accounts')
-      .select('id, external_title, external_username, external_id, mtproto_status')
+      .select('id, external_title, external_username, external_id')
       .eq('project_id', projectId)
       .eq('platform', 'telegram')
       .eq('is_active', true)
-      .is('mtproto_status', null)  // только публичные каналы, не менеджер-аккаунты
       .then(({ data }) => {
-        const onlyChannels = (data ?? []).filter(a => a.external_id && a.external_id.startsWith('-'))  // каналы имеют отрицательный chat_id
+        // Каналы имеют отрицательный chat_id (-100...), user-аккаунты (менеджеры MTProto) — положительный
+        const onlyChannels = (data ?? []).filter(a => a.external_id && a.external_id.startsWith('-'))
         setChannels(onlyChannels as typeof channels)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
