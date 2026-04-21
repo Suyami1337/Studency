@@ -106,8 +106,8 @@ const SYSTEM_PROMPT = `Ты — AI-агент чат-бота платформы
 1. **Твой следующий ответ = вызов \`create_scenario_chain\` с полным планом**. Без долгих вступлений. Максимум одна короткая строка типа «Создаю…» и СРАЗУ tool_use.
 2. **НЕ пиши в чат черновик всех сообщений заново.** Черновик ты уже показывал, теперь делай.
 3. **НЕ обещай «дай мне 5-7 минут», «сейчас пишу», «собираю черновик».** Это съедает токены и провоцирует таймаут. Ты либо делаешь (один tool call), либо говоришь «готово».
-4. Для новой цепочки всегда \`create_scenario_chain\` (один вызов = вся воронка). Для точечных правок — \`update_message\`, \`add_button\` и т.п.
-5. Если всё не влезает в одну цепочку (триггеры например требуют \`create_trigger_group\` отдельно) — сначала \`create_scenario_chain\`, потом триггеры, потом финальный короткий «готово, посмотри в редакторе».
+4. Для новой цепочки всегда \`create_scenario_chain\` (один вызов = ВСЯ воронка). Для точечных правок — \`update_message\`, \`add_button\` и т.п.
+5. \`create_scenario_chain\` принимает ДВА массива: \`messages\` (основная цепочка /start → gate → контент) И \`triggers\` (триггер-группы с immediate и дожимами — их тексты и кнопки задаются прямо там же). **Не вызывай \`create_trigger_group\` отдельно если можно передать триггеры прямо в chain** — это съест лишний round-trip и провоцирует таймаут.
 
 ## Лимит времени
 
@@ -333,7 +333,7 @@ ID объектов всегда бери из list_project_targets. Имя (lab
         properties: {
           messages: {
             type: 'array',
-            description: 'Массив сообщений в порядке их появления в цепочке (первое = точка входа).',
+            description: 'Массив сообщений основной цепочки (первое = точка входа).',
             items: {
               type: 'object',
               properties: {
@@ -364,6 +364,41 @@ ID объектов всегда бери из list_project_targets. Имя (lab
                 },
               },
               required: ['local_id', 'text'],
+            },
+          },
+          triggers: {
+            type: 'array',
+            description: 'Опционально: массив триггер-групп (события типа video_start/landing_visit/order_created/order_paid и т.п.). Каждая группа создаётся атомарно вместе с её immediate-сообщением и дожимами. Текст и кнопки каждого сообщения задаются прямо здесь — не надо отдельных update_message.',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string', description: 'Понятное имя триггера' },
+                event_type: { type: 'string', description: 'video_start / video_progress / video_complete / landing_visit / form_submit / channel_joined / order_created / order_paid' },
+                event_params: { type: 'object', description: '{ videoId, landingSlug, productId, formSlug, channelId, minPercent } — используй list_project_targets чтобы узнать ID' },
+                immediate: {
+                  type: 'object',
+                  description: 'Сообщение которое бот шлёт СРАЗУ при событии. Пропусти если не нужно.',
+                  properties: {
+                    text: { type: 'string' },
+                    buttons: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, action_type: { type: 'string' }, action_url: { type: 'string' } }, required: ['text', 'action_type'] } },
+                  },
+                },
+                followups: {
+                  type: 'array',
+                  description: 'Дожимы: если НЕ случилось отменяющее событие за wait_value/wait_unit — шлётся дожим.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      wait_value: { type: 'number' },
+                      wait_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+                      text: { type: 'string' },
+                      buttons: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, action_type: { type: 'string' }, action_url: { type: 'string' } }, required: ['text', 'action_type'] } },
+                    },
+                    required: ['wait_value', 'wait_unit', 'text'],
+                  },
+                },
+              },
+              required: ['label', 'event_type', 'event_params'],
             },
           },
         },
@@ -614,9 +649,88 @@ async function executeTool(
           }
         }
 
+        // Шаг 4: триггерные группы (если есть)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const triggerPlans: any[] = Array.isArray(input.triggers) ? input.triggers : []
+        let triggersCreated = 0
+        let triggerMsgsCount = 0
+        const CANCEL_MAP: Record<string, string> = {
+          video_start: 'video_complete',
+          video_progress: 'video_complete',
+          landing_visit: 'order_created',
+          order_created: 'order_paid',
+        }
+        const UNIT_MIN: Record<string, number> = { sec: 1 / 60, min: 1, hour: 60, day: 1440 }
+
+        for (const tg of triggerPlans) {
+          const groupId = crypto.randomUUID()
+          const cancelOn = CANCEL_MAP[tg.event_type] ?? null
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const followups: any[] = Array.isArray(tg.followups) ? tg.followups : []
+          if (followups.length > 0 && !cancelOn) continue // финальные события — дожимы игнор
+          let sort = 0
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          async function createTriggerMsgWithText(isNegative: boolean, waitValue: number, waitUnit: string, text: string, buttons: any[]) {
+            const { data: m, error: mErr } = await supabase.from('scenario_messages').insert({
+              scenario_id: scenarioId,
+              parent_trigger_group_id: groupId,
+              text: text ?? '',
+              is_start: false,
+              order_position: sort,
+            }).select('id').single()
+            if (mErr || !m) throw new Error(`trigger message: ${mErr?.message}`)
+            triggerMsgsCount++
+
+            const waitMinutes = isNegative ? Math.max(1, Math.round(waitValue * (UNIT_MIN[waitUnit] ?? 1))) : 0
+            const { error: tErr } = await supabase.from('scenario_event_triggers').insert({
+              scenario_id: scenarioId,
+              start_message_id: m.id,
+              event_type: tg.event_type,
+              event_params: tg.event_params ?? {},
+              is_negative: isNegative,
+              enabled: true,
+              wait_value: isNegative ? waitValue : 0,
+              wait_unit: isNegative ? waitUnit : 'min',
+              wait_minutes: waitMinutes,
+              cancel_on_event_type: isNegative ? cancelOn : null,
+              label: tg.label,
+              group_id: groupId,
+              sort_in_group: sort,
+            })
+            if (tErr) throw new Error(`trigger insert: ${tErr.message}`)
+            sort++
+
+            // Кнопки дожима/immediate
+            if (Array.isArray(buttons)) {
+              let bp = 0
+              for (const b of buttons) {
+                await supabase.from('scenario_buttons').insert({
+                  message_id: m.id,
+                  text: b.text,
+                  action_type: b.action_type,
+                  action_url: b.action_url ?? null,
+                  action_trigger_word: b.action_trigger_word ?? null,
+                  action_goto_message_id: null,
+                  order_position: bp++,
+                })
+                btnCount++
+              }
+            }
+          }
+
+          if (tg.immediate && (tg.immediate.text || (tg.immediate.buttons && tg.immediate.buttons.length))) {
+            await createTriggerMsgWithText(false, 0, 'min', tg.immediate.text ?? '', tg.immediate.buttons ?? [])
+          }
+          for (const fu of followups) {
+            await createTriggerMsgWithText(true, Number(fu.wait_value), String(fu.wait_unit), fu.text ?? '', fu.buttons ?? [])
+          }
+          triggersCreated++
+        }
+
         return {
-          content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length, buttons_created: btnCount }),
-          summary: `создал цепочку: ${plan.length} сообщений, ${btnCount} кнопок`,
+          content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length + triggerMsgsCount, buttons_created: btnCount, triggers_created: triggersCreated }),
+          summary: `создал: ${plan.length} сообщ.${triggerMsgsCount ? ` + ${triggerMsgsCount} из триггеров` : ''}, ${btnCount} кнопок${triggersCreated ? `, ${triggersCreated} триггер-групп` : ''}`,
           ok: true, wrote: true,
         }
       }
@@ -748,8 +862,10 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
       response = await client.messages.create({
         model: MODEL,
         max_tokens: 2048,
-        system: SYSTEM_PROMPT,
-        tools: getTools(),
+        // Prompt caching: system prompt и tools schema кешируются на сервере Anthropic,
+        // повторный вызов с теми же блоками стоит 10% от input-ставки
+        system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+        tools: getTools().map((t, i, arr) => i === arr.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         messages: conversation as any,
       })
