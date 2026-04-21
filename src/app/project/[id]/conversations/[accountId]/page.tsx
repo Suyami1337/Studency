@@ -132,7 +132,18 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const msgEndRef = useRef<HTMLDivElement>(null)
+  const [customerPanelOpen, setCustomerPanelOpen] = useState(false)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+
+  function scrollToBottom(instant = true) {
+    const el = messagesContainerRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    if (!instant) {
+      // second frame to catch layout after images/media load
+      requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight })
+    }
+  }
 
   async function loadConversations() {
     const { data } = await supabase
@@ -154,7 +165,10 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
       .limit(500)
     setMessages((data ?? []) as Msg[])
     await supabase.from('manager_conversations').update({ unread_count: 0 }).eq('id', activeConvId)
-    setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    // Мгновенно в конец — без анимации чтобы не было эффекта «листания»
+    requestAnimationFrame(() => scrollToBottom())
+    // ещё раз через 100ms чтобы подхватить подгрузку медиа/шрифтов
+    setTimeout(() => scrollToBottom(), 100)
   }
 
   useEffect(() => { loadConversations() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accountId])
@@ -237,12 +251,13 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                 <p className="text-[11px] text-gray-400">Telegram ID: {activeConv.peer_telegram_id}</p>
               </div>
               {activeConv.customer_id && (
-                <Link href={`/project/${projectId}/users?open=${activeConv.customer_id}`} className="text-xs text-[#6A55F8] hover:underline">
-                  Карточка клиента →
-                </Link>
+                <button onClick={() => setCustomerPanelOpen(v => !v)}
+                  className={`text-xs px-2 py-1 rounded-lg border transition-colors ${customerPanelOpen ? 'bg-[#6A55F8] text-white border-[#6A55F8]' : 'border-[#6A55F8] text-[#6A55F8] hover:bg-[#F0EDFF]'}`}>
+                  {customerPanelOpen ? 'Скрыть карточку ×' : '👤 Карточка клиента'}
+                </button>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2">
               {messages.length === 0 ? (
                 <div className="text-center text-xs text-gray-400 py-10">Нет сообщений</div>
               ) : messages.map(m => (
@@ -257,7 +272,6 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                   </div>
                 </div>
               ))}
-              <div ref={msgEndRef} />
             </div>
             <div className="p-3 border-t border-gray-100 flex gap-2">
               <input value={input} onChange={e => setInput(e.target.value)}
@@ -272,8 +286,165 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
           </>
         )}
       </div>
+
+      {/* Инлайн-панель клиента справа — не уводит со страницы */}
+      {customerPanelOpen && activeConv?.customer_id && (
+        <CustomerPanel
+          projectId={projectId}
+          customerId={activeConv.customer_id}
+          onClose={() => setCustomerPanelOpen(false)}
+        />
+      )}
     </div>
   )
+}
+
+// ==================== CUSTOMER PANEL ====================
+type CustomerData = {
+  id: string
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  telegram_id: string | null
+  telegram_username: string | null
+  source_name: string | null
+  source_slug: string | null
+  channel_subscribed: boolean | null
+  created_at: string
+  notes?: string | null
+}
+
+type CustomerActionRow = {
+  id: string
+  action: string
+  data: Record<string, unknown> | null
+  created_at: string
+}
+
+function CustomerPanel({ projectId, customerId, onClose }: {
+  projectId: string
+  customerId: string
+  onClose: () => void
+}) {
+  const supabase = createClient()
+  const [customer, setCustomer] = useState<CustomerData | null>(null)
+  const [actions, setActions] = useState<CustomerActionRow[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const [cust, acts] = await Promise.all([
+        supabase.from('customers').select('*').eq('id', customerId).maybeSingle(),
+        supabase.from('customer_actions').select('id, action, data, created_at')
+          .eq('customer_id', customerId).order('created_at', { ascending: false }).limit(30),
+      ])
+      setCustomer(cust.data as CustomerData | null)
+      setActions((acts.data ?? []) as CustomerActionRow[])
+      setLoading(false)
+    }
+    load()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId])
+
+  return (
+    <div className="w-80 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <h3 className="font-semibold text-gray-900 text-sm">Карточка клиента</h3>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg">✕</button>
+      </div>
+      {loading ? (
+        <div className="p-6 text-center text-xs text-gray-400">Загрузка…</div>
+      ) : !customer ? (
+        <div className="p-6 text-center text-xs text-gray-400">Клиент не найден</div>
+      ) : (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <p className="font-semibold text-gray-900">{customer.full_name ?? 'Без имени'}</p>
+            {customer.telegram_username && (
+              <p className="text-xs text-gray-500">@{customer.telegram_username.replace(/^@/, '')}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5 text-xs">
+            {customer.email && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 w-16 shrink-0">Email</span>
+                <span className="text-gray-800 truncate">{customer.email}</span>
+              </div>
+            )}
+            {customer.phone && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 w-16 shrink-0">Телефон</span>
+                <span className="text-gray-800">{customer.phone}</span>
+              </div>
+            )}
+            {customer.telegram_id && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 w-16 shrink-0">TG ID</span>
+                <span className="text-gray-800 font-mono">{customer.telegram_id}</span>
+              </div>
+            )}
+            {customer.source_name && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 w-16 shrink-0">Источник</span>
+                <span className="text-gray-800">{customer.source_name}</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-gray-400 w-16 shrink-0">Канал</span>
+              <span className={customer.channel_subscribed ? 'text-emerald-600' : 'text-gray-500'}>
+                {customer.channel_subscribed ? '✓ подписан' : '— не подписан'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-400 w-16 shrink-0">В CRM с</span>
+              <span className="text-gray-800">{new Date(customer.created_at).toLocaleDateString('ru-RU')}</span>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase text-gray-500 mb-2">История действий</p>
+            {actions.length === 0 ? (
+              <p className="text-xs text-gray-400">Событий нет</p>
+            ) : (
+              <div className="space-y-1.5">
+                {actions.map(a => (
+                  <div key={a.id} className="text-xs border-l-2 border-gray-200 pl-2">
+                    <p className="text-gray-800 font-medium">{translateAction(a.action)}</p>
+                    <p className="text-[11px] text-gray-400">{new Date(a.created_at).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Link href={`/project/${projectId}/users?open=${customer.id}`}
+            target="_blank"
+            className="block text-center text-xs text-[#6A55F8] hover:underline py-2 border-t border-gray-100">
+            Открыть полностью в CRM ↗
+          </Link>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function translateAction(action: string): string {
+  const map: Record<string, string> = {
+    bot_started: '🤖 Запустил бота',
+    channel_subscribed: '📣 Подписался на канал',
+    channel_unsubscribed: '📣 Отписался от канала',
+    button_click: '🔘 Клик по кнопке',
+    landing_visit: '🌐 Зашёл на сайт',
+    form_submit: '📝 Отправил форму',
+    order_created: '🛒 Создал заказ',
+    order_paid: '💰 Оплатил заказ',
+    manager_conversation_started: '✉️ Написал менеджеру',
+    mini_app_opened: '📱 Открыл Mini App',
+    video_watched: '▶️ Посмотрел видео',
+  }
+  return map[action] ?? action
 }
 
 // ==================== SETTINGS TAB ====================
