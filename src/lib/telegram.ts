@@ -4,11 +4,12 @@ type InlineButton = { text: string; url?: string; callback_data?: string }
 
 function buildReplyMarkup(buttons?: InlineButton[]) {
   if (!buttons || buttons.length === 0) return undefined
+  // Каждая кнопка — в своём ряду (вертикальная раскладка)
   return {
-    inline_keyboard: [buttons.map(b => {
-      if (b.url) return { text: b.text, url: b.url }
-      return { text: b.text, callback_data: b.callback_data || b.text }
-    })],
+    inline_keyboard: buttons.map(b => {
+      if (b.url) return [{ text: b.text, url: b.url }]
+      return [{ text: b.text, callback_data: b.callback_data || b.text }]
+    }),
   }
 }
 
