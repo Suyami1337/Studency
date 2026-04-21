@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import { Avatar } from '@/components/ui/Avatar'
 
 type ManagerAccount = {
   id: string
@@ -102,9 +103,14 @@ export default function ConversationsIndexPage() {
       <div className="space-y-3">
         {accounts.map(acc => {
           const isPending = acc.status === 'pending_import'
+          const displayName = acc.title ?? acc.telegram_first_name ?? acc.telegram_username ?? 'Аккаунт'
           const header = (
             <>
-              <div className="w-12 h-12 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xl flex-shrink-0">💬</div>
+              <Avatar
+                name={displayName}
+                seed={acc.telegram_user_id ?? acc.id}
+                size="lg"
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-semibold text-gray-900 truncate">

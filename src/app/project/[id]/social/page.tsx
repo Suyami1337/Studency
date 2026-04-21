@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import { Avatar } from '@/components/ui/Avatar'
 
 type Platform = 'telegram' | 'instagram' | 'youtube'
 
@@ -166,12 +167,12 @@ function ChannelPreview({ projectId, account }: { projectId: string; account: So
       href={`/project/${projectId}/social/telegram/${account.id}`}
       className="bg-white rounded-xl border border-gray-100 hover:border-[#6A55F8]/40 hover:shadow-sm transition-all p-4 flex items-center gap-3"
     >
-      <div className="w-12 h-12 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xl flex-shrink-0">
-        {account.external_avatar_url
-          // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={account.external_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
-          : '💬'}
-      </div>
+      <Avatar
+        name={account.external_title ?? account.external_username ?? 'Канал'}
+        seed={account.id}
+        photoUrl={account.external_avatar_url}
+        size="lg"
+      />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="font-semibold text-gray-900 truncate">{account.external_title ?? account.external_username ?? 'Без названия'}</p>

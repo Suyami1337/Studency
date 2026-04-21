@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import { Avatar } from '@/components/ui/Avatar'
 
 type SocialAccount = {
   id: string
@@ -180,12 +181,12 @@ export default function TelegramChannelPage() {
 
       {/* Хедер канала */}
       <div className="bg-white rounded-xl border border-gray-100 p-5 flex items-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-[#F0EDFF] flex items-center justify-center text-2xl flex-shrink-0">
-          {account.external_avatar_url
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={account.external_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
-            : '💬'}
-        </div>
+        <Avatar
+          name={account.external_title ?? 'Канал'}
+          seed={account.id}
+          photoUrl={account.external_avatar_url}
+          size="xl"
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-bold text-gray-900 truncate">{account.external_title ?? 'Без названия'}</h1>
@@ -575,6 +576,11 @@ function SubscribersList({ log }: { log: SubsLogRow[] }) {
             <span className={`text-lg w-6 text-center ${row.action === 'join' ? 'text-emerald-600' : 'text-rose-600'}`}>
               {row.action === 'join' ? '+' : '−'}
             </span>
+            <Avatar
+              name={row.first_name ?? row.username ?? '?'}
+              seed={row.id}
+              size="xs"
+            />
             <span className="text-sm text-gray-800 truncate">
               {row.first_name ?? '—'}{row.username ? ` · @${row.username.replace(/^@/, '')}` : ''}
             </span>

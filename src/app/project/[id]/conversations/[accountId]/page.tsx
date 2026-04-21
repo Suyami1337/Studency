@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import { Avatar } from '@/components/ui/Avatar'
 
 type ManagerAccount = {
   id: string
@@ -268,36 +269,44 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
             const borderClass = unread ? 'border-l-4 border-l-blue-500' : waitingReply ? 'border-l-4 border-l-amber-400' : ''
             return (
               <button key={c.id} onClick={() => { setActiveConvId(c.id); markConversationRead(c.id) }}
-                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${borderClass}`}>
-                {/* Имя + время */}
-                <div className="flex items-center justify-between gap-2">
-                  <p className={`text-sm truncate flex-1 min-w-0 ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
-                    {c.peer_first_name ?? '—'}
-                    {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
-                  </p>
-                  <span className={`text-[10px] shrink-0 ${unread ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
-                    {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
-                  </span>
-                </div>
-                {/* Превью + бейдж в одной строке */}
-                <div className="flex items-center gap-2 mt-1">
-                  {c.last_message_preview ? (
-                    <p className={`text-xs truncate flex-1 min-w-0 ${unread ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
-                      {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
-                      {c.last_message_preview}
+                className={`w-full text-left px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors flex gap-3 ${activeConvId === c.id ? 'bg-[#F0EDFF]' : ''} ${borderClass}`}>
+                <Avatar
+                  name={c.peer_first_name ?? c.peer_username ?? '?'}
+                  seed={c.peer_telegram_id}
+                  size="md"
+                  className="mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  {/* Имя + время */}
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={`text-sm truncate flex-1 min-w-0 ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-900'}`}>
+                      {c.peer_first_name ?? '—'}
+                      {c.peer_username ? <span className="text-gray-400 font-normal"> · @{c.peer_username.replace(/^@/, '')}</span> : null}
                     </p>
-                  ) : <span className="flex-1" />}
-                  {unread ? (
-                    <span className="bg-blue-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0">
-                      {c.unread_count}
+                    <span className={`text-[10px] shrink-0 ${unread ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
+                      {c.last_message_at ? formatShortTime(c.last_message_at) : ''}
                     </span>
-                  ) : waitingReply ? (
-                    <span className="text-amber-600 text-[14px] shrink-0" title="Нужен ответ">●</span>
-                  ) : null}
+                  </div>
+                  {/* Превью + бейдж в одной строке */}
+                  <div className="flex items-center gap-2 mt-1">
+                    {c.last_message_preview ? (
+                      <p className={`text-xs truncate flex-1 min-w-0 ${unread ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
+                        {c.last_message_direction === 'outgoing' && <span className="text-gray-400">Ты: </span>}
+                        {c.last_message_preview}
+                      </p>
+                    ) : <span className="flex-1" />}
+                    {unread ? (
+                      <span className="bg-blue-500 text-white min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0">
+                        {c.unread_count}
+                      </span>
+                    ) : waitingReply ? (
+                      <span className="text-amber-600 text-[14px] shrink-0" title="Нужен ответ">●</span>
+                    ) : null}
+                  </div>
+                  {c.customer_id && (
+                    <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
+                  )}
                 </div>
-                {c.customer_id && (
-                  <p className="text-[10px] text-[#6A55F8] mt-0.5">· в CRM</p>
-                )}
               </button>
             )
           })}
@@ -311,12 +320,19 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
         ) : (
           <>
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="font-semibold text-gray-900">
-                  {activeConv.peer_first_name ?? '—'}
-                  {activeConv.peer_username && <span className="text-gray-400 font-normal"> · @{activeConv.peer_username.replace(/^@/, '')}</span>}
-                </p>
-                <p className="text-[11px] text-gray-400">Telegram ID: {activeConv.peer_telegram_id}</p>
+              <div className="flex items-center gap-3 min-w-0">
+                <Avatar
+                  name={activeConv.peer_first_name ?? activeConv.peer_username ?? '?'}
+                  seed={activeConv.peer_telegram_id}
+                  size="lg"
+                />
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900 truncate">
+                    {activeConv.peer_first_name ?? '—'}
+                    {activeConv.peer_username && <span className="text-gray-400 font-normal"> · @{activeConv.peer_username.replace(/^@/, '')}</span>}
+                  </p>
+                  <p className="text-[11px] text-gray-400">Telegram ID: {activeConv.peer_telegram_id}</p>
+                </div>
               </div>
               {activeConv.customer_id && (
                 <button onClick={() => setCustomerPanelOpen(v => !v)}
