@@ -341,13 +341,20 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                 </div>
               ))}
             </div>
-            <div className="p-3 border-t border-gray-100 flex gap-2">
-              <input value={input} onChange={e => setInput(e.target.value)}
+            <div className="p-3 border-t border-gray-100 flex gap-2 items-end">
+              <textarea value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply() } }}
-                placeholder="Сообщение…" disabled={sending}
-                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                placeholder="Сообщение… (Shift+Enter — новая строка)" disabled={sending}
+                rows={1}
+                ref={el => {
+                  if (el) {
+                    el.style.height = 'auto'
+                    el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+                  }
+                }}
+                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm resize-none focus:outline-none focus:border-[#6A55F8] overflow-y-auto max-h-40" />
               <button onClick={sendReply} disabled={sending || !input.trim()}
-                className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+                className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0">
                 {sending ? '…' : 'Отправить'}
               </button>
             </div>
