@@ -29,19 +29,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const customerParam = url.searchParams.get('c') || null
 
   const supabase = getSupabase()
-  // Ищем кнопку
-  const { data: btn } = await supabase
+  // Простой запрос — без nested join, который раньше молча падал и ронял весь redirect
+  const { data: btn, error: btnErr } = await supabase
     .from('scenario_buttons')
-    .select('id, action_url, action_type, message_id, scenario_messages!inner(scenario_id, chatbot_scenarios!inner(telegram_bot_id, telegram_bots!inner(project_id)))')
+    .select('id, action_url, action_type, message_id')
     .eq('id', token)
     .maybeSingle()
+
+  if (btnErr) console.error('[btn] lookup error:', btnErr.code, btnErr.message)
+  if (!btn) console.warn(`[btn] not found token=${token}`)
+  if (btn && !btn.action_url) console.warn(`[btn] found but action_url is empty id=${btn.id} type=${btn.action_type}`)
 
   if (!btn || !btn.action_url) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const projectId: string | undefined = (btn as any).scenario_messages?.chatbot_scenarios?.telegram_bots?.project_id
   // Если пользователь сохранил URL без схемы (например "t.me/channel") — Next.js
   // трактует это как относительный путь и редиректит на корень. Добавляем https://.
   let destination = btn.action_url.trim()
@@ -49,9 +51,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     destination = 'https://' + destination.replace(/^\/+/, '')
   }
 
-  // Fire-and-forget лог (не ждём)
+  // Fire-and-forget лог (не ждём) — projectId достаём отдельной цепочкой,
+  // не блокируем редирект
   void (async () => {
     try {
+      let projectId: string | undefined
+      if (btn.message_id) {
+        const { data: msg } = await supabase
+          .from('scenario_messages')
+          .select('scenario_id, chatbot_scenarios!inner(telegram_bot_id, telegram_bots!inner(project_id))')
+          .eq('id', btn.message_id)
+          .maybeSingle()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        projectId = (msg as any)?.chatbot_scenarios?.telegram_bots?.project_id
+      }
       const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
       const ipHash = createHash('sha256').update(ip + (projectId ?? '')).digest('hex').slice(0, 16)
       await supabase.from('button_clicks').insert({
@@ -63,7 +76,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         ip_hash: ipHash,
         referrer: request.headers.get('referer') || null,
       })
-      // Плюс пишем customer_action если customer известен
       if (customerParam && projectId) {
         await supabase.from('customer_actions').insert({
           customer_id: customerParam,
