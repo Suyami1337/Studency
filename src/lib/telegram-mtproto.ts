@@ -170,13 +170,26 @@ export type IncomingMessage = {
   text: string | null
   mediaType: string | null
   sentAt: string
-  isOutgoing: boolean  // сообщение отправлено менеджером (не клиентом)
+  isOutgoing: boolean
+}
+
+export type DialogMeta = {
+  peerTelegramId: number
+  peerUsername: string | null
+  peerFirstName: string | null
+  unreadCount: number          // ← СЫРОЕ значение из Telegram (то же что видит юзер в TG)
+  topMessageDate: string | null
+}
+
+export type FetchManagerDialogsResult = {
+  messages: IncomingMessage[]
+  dialogs: DialogMeta[]
 }
 
 /**
- * Достаёт входящие (и исходящие) сообщения из личных диалогов менеджера за
- * последние N дней или новее указанной даты. Только приватные чаты (user-to-user),
- * каналы и группы игнорим.
+ * Тянет все user-to-user диалоги пагинацией и сообщения из них.
+ * Возвращает и список сообщений для записи, и meta каждого диалога (включая
+ * unread_count — источник истины из Telegram).
  */
 export async function fetchManagerDialogs(params: {
   apiId: number
@@ -184,95 +197,167 @@ export async function fetchManagerDialogs(params: {
   sessionString: string
   /** Только сообщения новее этой даты (UTC ISO) — для incremental */
   sinceIso?: string
-  /** Максимум диалогов за вызов */
-  maxDialogs?: number
-  /** Максимум сообщений на диалог */
+  /** Страница GetDialogs (обычно 100) */
+  pageSize?: number
+  /** Максимум страниц пагинации */
+  maxPages?: number
+  /** Максимум сообщений на диалог при GetHistory */
   messagesPerDialog?: number
-}): Promise<IncomingMessage[]> {
-  const { apiId, apiHash, sessionString, sinceIso, maxDialogs = 100, messagesPerDialog = 100 } = params
+}): Promise<FetchManagerDialogsResult> {
+  const { apiId, apiHash, sessionString, sinceIso, pageSize = 100, maxPages = 10, messagesPerDialog = 30 } = params
   const sinceTs = sinceIso ? Math.floor(new Date(sinceIso).getTime() / 1000) : 0
   const client = await createClient(apiId, apiHash, sessionString)
-  const all: IncomingMessage[] = []
-  // Временной бюджет — 50 сек (при Vercel maxDuration 60 оставляем запас)
+  const allMessages: IncomingMessage[] = []
+  const allDialogs: DialogMeta[] = []
   const deadline = Date.now() + 50_000
   try {
     const { Api } = await import('telegram')
+
+    // === Пагинация GetDialogs ===
+    // offsetDate, offsetId, offsetPeer переопределяем из последнего element каждой страницы
+    let offsetDate = 0
+    let offsetId = 0
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dialogs: any = await client.invoke(new Api.messages.GetDialogs({
-      offsetDate: 0,
-      offsetId: 0,
-      offsetPeer: new Api.InputPeerEmpty(),
-      limit: maxDialogs,
+    let offsetPeer: any = new Api.InputPeerEmpty()
+    // Собираем все страницы
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pages: any[] = []
+
+    for (let page = 0; page < maxPages; page++) {
+      if (Date.now() > deadline) break
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      hash: 0 as any,
-    }))
+      const resp: any = await client.invoke(new Api.messages.GetDialogs({
+        offsetDate,
+        offsetId,
+        offsetPeer,
+        limit: pageSize,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        hash: 0 as any,
+      }))
+      pages.push(resp)
+      const dialogsOnPage = resp.dialogs ?? []
+      if (dialogsOnPage.length < pageSize) break  // больше нет диалогов
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const users = new Map<number, any>()
-    for (const u of dialogs.users ?? []) users.set(Number(u.id), u)
+      // Подготовка offset для следующей страницы — последнее сообщение последнего диалога
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lastDialog: any = dialogsOnPage[dialogsOnPage.length - 1]
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lastTopMsg: any = (resp.messages ?? []).find((m: { id: number }) => m.id === lastDialog.topMessage)
+      if (!lastTopMsg) break
+      offsetDate = Number(lastTopMsg.date) || 0
 
-    // Собираем top message id для каждого диалога — чтоб оценить нужен ли GetHistory
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const topMsgById = new Map<number, any>()
-    for (const m of dialogs.messages ?? []) {
-      if (m.className === 'Message' && m.peerId?.userId) {
-        const uid = Number(m.peerId.userId)
-        if (!topMsgById.has(uid)) topMsgById.set(uid, m)
+      // Если все диалоги на этой странице уже старше sinceIso → дальше тем более старее, стоп
+      if (sinceTs && offsetDate < sinceTs) break
+
+      offsetId = Number(lastTopMsg.id) || 0
+      // Определяем peer для offset
+      const lastPeer = lastDialog.peer
+      if (lastPeer?.className === 'PeerUser') {
+        const u = (resp.users ?? []).find((x: { id: number | string }) => String(x.id) === String(lastPeer.userId))
+        if (u) offsetPeer = new Api.InputPeerUser({ userId: u.id, accessHash: u.accessHash ?? 0 as unknown as bigint })
+      } else if (lastPeer?.className === 'PeerChannel') {
+        const c = (resp.chats ?? []).find((x: { id: number | string }) => String(x.id) === String(lastPeer.channelId))
+        if (c) offsetPeer = new Api.InputPeerChannel({ channelId: c.id, accessHash: c.accessHash ?? 0 as unknown as bigint })
+      } else if (lastPeer?.className === 'PeerChat') {
+        offsetPeer = new Api.InputPeerChat({ chatId: lastPeer.chatId })
       }
     }
 
-    for (const d of dialogs.dialogs ?? []) {
-      if (Date.now() > deadline) break  // кончилось время — выходим, следующий cron подхватит
-      // peer типа PeerUser = личный диалог
-      if (d.peer?.className !== 'PeerUser') continue
-      const userId = Number(d.peer.userId)
-      const userObj = users.get(userId)
-      if (!userObj || userObj.self || userObj.bot) continue  // пропускаем себя и ботов
-
-      // Оптимизация: если sinceIso задан и top message диалога старее —
-      // GetHistory не нужен, в этом диалоге нет новых сообщений.
-      if (sinceTs) {
-        const topMsg = topMsgById.get(userId)
-        if (topMsg && Number(topMsg.date) < sinceTs) continue
-      }
-
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const history: any = await client.invoke(new Api.messages.GetHistory({
-          peer: userObj,
-          limit: messagesPerDialog,
-          offsetId: 0,
-          offsetDate: 0,
-          addOffset: 0,
-          maxId: 0,
-          minId: 0,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          hash: 0 as any,
-        }))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const m of (history.messages ?? []) as any[]) {
-          if (m.className !== 'Message') continue
-          const msgDate = Number(m.date) || 0
-          if (sinceTs && msgDate < sinceTs) continue
-          all.push({
-            messageId: Number(m.id),
-            peerTelegramId: userId,
-            peerUsername: userObj.username ?? null,
-            peerFirstName: userObj.firstName ?? null,
-            text: m.message ?? null,
-            mediaType: m.media ? (m.media.className || 'unknown') : null,
-            sentAt: new Date(msgDate * 1000).toISOString(),
-            isOutgoing: Boolean(m.out),
-          })
+    // === Сборка user map + top message map ===
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const users = new Map<number, any>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const topMsgById = new Map<number, any>()
+    for (const resp of pages) {
+      for (const u of resp.users ?? []) users.set(Number(u.id), u)
+      for (const m of resp.messages ?? []) {
+        if (m.className === 'Message' && m.peerId?.userId) {
+          const uid = Number(m.peerId.userId)
+          if (!topMsgById.has(uid)) topMsgById.set(uid, m)
         }
-      } catch (err) {
-        console.error('fetchManagerDialogs history err for user', userId, err)
+      }
+    }
+
+    // === Для каждого user-диалога решаем нужен ли GetHistory ===
+    for (const resp of pages) {
+      for (const d of resp.dialogs ?? []) {
+        if (Date.now() > deadline) break
+        if (d.peer?.className !== 'PeerUser') continue
+        const userId = Number(d.peer.userId)
+        const userObj = users.get(userId)
+        if (!userObj || userObj.self || userObj.bot) continue
+
+        const topMsg = topMsgById.get(userId)
+        const topDate = topMsg ? Number(topMsg.date) || 0 : 0
+
+        // Всегда добавляем в dialogs — даже если GetHistory не будет
+        allDialogs.push({
+          peerTelegramId: userId,
+          peerUsername: userObj.username ?? null,
+          peerFirstName: userObj.firstName ?? null,
+          unreadCount: Number(d.unreadCount ?? 0),
+          topMessageDate: topDate ? new Date(topDate * 1000).toISOString() : null,
+        })
+
+        // Skip GetHistory если топ-сообщение старее sinceIso
+        if (sinceTs && topDate < sinceTs) continue
+
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const history: any = await client.invoke(new Api.messages.GetHistory({
+            peer: userObj,
+            limit: messagesPerDialog,
+            offsetId: 0,
+            offsetDate: 0,
+            addOffset: 0,
+            maxId: 0,
+            minId: 0,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            hash: 0 as any,
+          }))
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          for (const m of (history.messages ?? []) as any[]) {
+            if (m.className !== 'Message') continue
+            const msgDate = Number(m.date) || 0
+            if (sinceTs && msgDate < sinceTs) continue
+            allMessages.push({
+              messageId: Number(m.id),
+              peerTelegramId: userId,
+              peerUsername: userObj.username ?? null,
+              peerFirstName: userObj.firstName ?? null,
+              text: m.message ?? null,
+              mediaType: m.media ? (m.media.className || 'unknown') : null,
+              sentAt: new Date(msgDate * 1000).toISOString(),
+              isOutgoing: Boolean(m.out),
+            })
+          }
+        } catch (err) {
+          console.error('fetchManagerDialogs history err for user', userId, err)
+        }
       }
     }
   } finally {
     await client.disconnect().catch(() => null)
   }
-  return all
+  return { messages: allMessages, dialogs: allDialogs }
+}
+
+/** Помечает весь диалог как прочитанный на стороне Telegram (ReadHistory). */
+export async function markDialogAsRead(params: {
+  apiId: number
+  apiHash: string
+  sessionString: string
+  peerTelegramId: number
+}): Promise<void> {
+  const client = await createClient(params.apiId, params.apiHash, params.sessionString)
+  try {
+    const { Api } = await import('telegram')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const peer: any = await client.getInputEntity(params.peerTelegramId)
+    await client.invoke(new Api.messages.ReadHistory({ peer, maxId: 0 }))
+  } finally {
+    await client.disconnect().catch(() => null)
+  }
 }
 
 /** Отправка сообщения от имени менеджера (через MTProto). */

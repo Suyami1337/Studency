@@ -178,10 +178,11 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
       .order('sent_at', { ascending: true })
       .limit(500)
     setMessages((data ?? []) as Msg[])
-    await supabase.from('manager_conversations').update({
-      unread_count: 0,
-      last_read_at: new Date().toISOString(),
-    }).eq('id', activeConvId)
+    // Помечаем прочитанным на стороне Telegram через MTProto + в нашей БД
+    fetch('/api/social/telegram/manager/mark-read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: activeConvId }),
+    }).catch(() => null)
     // Мгновенно в конец — без анимации чтобы не было эффекта «листания»
     requestAnimationFrame(() => scrollToBottom())
     // ещё раз через 100ms чтобы подхватить подгрузку медиа/шрифтов

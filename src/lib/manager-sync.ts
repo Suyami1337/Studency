@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { decryptSecret } from './crypto-vault'
 import { fetchManagerDialogs, type IncomingMessage } from './telegram-mtproto'
 import { emitEvent } from './event-triggers'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _IncomingMessage: IncomingMessage | null = null // keep import for types if needed
 
 export type ManagerAccount = {
   id: string
@@ -36,17 +38,25 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     ? (acc.last_sync_at ?? new Date(Date.now() - 24 * 3600_000).toISOString())
     : new Date(Date.now() - (options.initialDays ?? 30) * 24 * 3600_000).toISOString()
 
-  // Ограничения уменьшены чтобы надёжно укладываться в 60 сек Vercel:
-  //   initial: 40 диалогов × 30 сообщений
-  //   incremental: 100 диалогов × 30 сообщений (обычно актуальных мало, skip-оптимизация работает)
-  const msgs: IncomingMessage[] = await fetchManagerDialogs({
+  // Пагинация GetDialogs до 10 страниц × 100 = 1000 диалогов max (этого хватит)
+  // messagesPerDialog маленький чтобы уложиться во временной бюджет
+  const { messages: msgs, dialogs: dialogMetas } = await fetchManagerDialogs({
     apiId: acc.mtproto_api_id,
     apiHash,
     sessionString: session,
     sinceIso,
-    maxDialogs: acc.initial_import_done ? 100 : 40,
-    messagesPerDialog: acc.initial_import_done ? 30 : 30,
+    pageSize: 100,
+    maxPages: acc.initial_import_done ? 3 : 10,  // initial тянет все, incremental хватит 3 страниц
+    messagesPerDialog: 30,
   })
+
+  // Map peerId → unread_count из Telegram (источник истины)
+  const telegramUnreadByPeer = new Map<number, number>()
+  const dialogMetaByPeer = new Map<number, typeof dialogMetas[0]>()
+  for (const d of dialogMetas) {
+    telegramUnreadByPeer.set(d.peerTelegramId, d.unreadCount)
+    dialogMetaByPeer.set(d.peerTelegramId, d)
+  }
 
   let saved = 0
   let newConversations = 0
@@ -59,10 +69,23 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     byPeer.get(m.peerTelegramId)!.push(m)
   }
 
+  // Для диалогов без новых сообщений (только из dialogMetas) — всё равно создаём
+  // conversation запись если её нет, чтобы появилась в списке.
+  for (const [peerId, meta] of dialogMetaByPeer) {
+    if (byPeer.has(peerId)) continue
+    byPeer.set(peerId, [])  // заведём conversation с пустым набором сообщений
+    // peerMsgs будет пустой, но код ниже обновит unread_count из Telegram
+    void meta
+  }
+
   for (const [peerId, peerMsgs] of byPeer) {
     // Сортируем по времени
     peerMsgs.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())
-    const latest = peerMsgs[peerMsgs.length - 1]
+    const latest = peerMsgs[peerMsgs.length - 1] as IncomingMessage | undefined
+    const dialogMeta = dialogMetaByPeer.get(peerId)
+    const peerUsername = latest?.peerUsername ?? dialogMeta?.peerUsername ?? null
+    const peerFirstName = latest?.peerFirstName ?? dialogMeta?.peerFirstName ?? null
+    const telegramUnread = telegramUnreadByPeer.get(peerId) ?? 0
 
     // Upsert conversation
     const { data: existingConv } = await supabase
@@ -94,10 +117,11 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
         .insert({
           manager_account_id: acc.id,
           peer_telegram_id: peerId,
-          peer_username: latest.peerUsername,
-          peer_first_name: latest.peerFirstName,
+          peer_username: peerUsername,
+          peer_first_name: peerFirstName,
           customer_id: customer?.id ?? null,
           status: 'open',
+          unread_count: telegramUnread,
         })
         .select('id')
         .single()
@@ -151,27 +175,28 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       }
     }
 
-    // Обновляем агрегат на conversation
-    // unread_count считается автоматически через triggers (bump_manager_unread)
-    // при каждой вставке в manager_messages с direction='incoming'.
+    // unread_count берём ИЗ TELEGRAM (dialog.unreadCount) — это то что видит юзер в TG
     const incomingTimes = peerMsgs.filter(m => !m.isOutgoing).map(m => m.sentAt)
     const outgoingTimes = peerMsgs.filter(m => m.isOutgoing).map(m => m.sentAt)
     const lastIncomingAt = incomingTimes.length > 0 ? incomingTimes[incomingTimes.length - 1] : null
     const lastOutgoingAt = outgoingTimes.length > 0 ? outgoingTimes[outgoingTimes.length - 1] : null
-    const lastMessageAt = latest.sentAt
-    const preview = (latest.text ?? (latest.mediaType ? `[${latest.mediaType}]` : '')).slice(0, 200)
+    const lastMessageAt = latest?.sentAt ?? dialogMeta?.topMessageDate ?? null
+    const preview = latest ? (latest.text ?? (latest.mediaType ? `[${latest.mediaType}]` : '')).slice(0, 200) : null
     newIncoming += incomingCountForConv
 
-    await supabase.from('manager_conversations').update({
-      peer_username: latest.peerUsername,
-      peer_first_name: latest.peerFirstName,
-      last_incoming_at: lastIncomingAt ?? undefined,
-      last_outgoing_at: lastOutgoingAt ?? undefined,
-      last_message_at: lastMessageAt,
-      last_message_preview: preview,
-      last_message_direction: latest.isOutgoing ? 'outgoing' : 'incoming',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updates: any = {
+      peer_username: peerUsername,
+      peer_first_name: peerFirstName,
       updated_at: new Date().toISOString(),
-    }).eq('id', convId)
+      unread_count: telegramUnread,  // ← источник истины Telegram
+    }
+    if (lastIncomingAt) updates.last_incoming_at = lastIncomingAt
+    if (lastOutgoingAt) updates.last_outgoing_at = lastOutgoingAt
+    if (lastMessageAt) updates.last_message_at = lastMessageAt
+    if (preview) updates.last_message_preview = preview
+    if (latest) updates.last_message_direction = latest.isOutgoing ? 'outgoing' : 'incoming'
+    await supabase.from('manager_conversations').update(updates).eq('id', convId)
 
     // Emit событие "начал переписку с менеджером" — только для новых conversations
     // (при первом incoming после создания conversation)
