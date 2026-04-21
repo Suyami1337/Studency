@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 
@@ -20,7 +20,6 @@ type ManagerAccount = {
 
 export default function ConversationsIndexPage() {
   const params = useParams()
-  const router = useRouter()
   const projectId = params.id as string
   const supabase = createClient()
 
@@ -39,20 +38,9 @@ export default function ConversationsIndexPage() {
     const list = (data ?? []) as ManagerAccount[]
     setAccounts(list)
     setLoading(false)
-
-    // Persist last selected account. Если он один — сразу редирект
-    if (typeof window !== 'undefined') {
-      const last = localStorage.getItem(`conversations_last_${projectId}`)
-      const found = last && list.some(a => a.id === last)
-      if (found) {
-        router.replace(`/project/${projectId}/conversations/${last}`)
-        return
-      }
-      if (list.length === 1) {
-        router.replace(`/project/${projectId}/conversations/${list[0].id}`)
-        return
-      }
-    }
+    // Автоматических редиректов нет — менеджер всегда видит список аккаунтов
+    // и сам выбирает. URL-persist на refresh работает через сам URL
+    // (/conversations/[accountId] остаётся после F5).
   }
 
   useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId])
