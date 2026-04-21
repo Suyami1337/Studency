@@ -132,13 +132,21 @@ export async function sendScenarioMessage(
   // подписку, продолжим цепочку с msg.next_message_id автоматически.
   // =================================================================
   if (msg.is_subscription_gate && msg.gate_channel_account_id) {
-    const { data: channel } = await supabase
+    const { data: channel, error: channelErr } = await supabase
       .from('social_accounts')
       .select('id, external_id, external_username, telegram_invite_link, project_id')
       .eq('id', msg.gate_channel_account_id)
       .maybeSingle()
 
-    console.log(`[gate] msg=${msg.id} channel_lookup=${channel ? `found external_id=${channel.external_id} invite=${channel.telegram_invite_link ? 'yes' : 'no'} username=${channel.external_username || 'none'}` : 'NOT FOUND'}`)
+    console.log(`[gate] msg=${msg.id} channel_lookup=${channel ? `found external_id=${channel.external_id} invite=${channel.telegram_invite_link ? 'yes' : 'no'} username=${channel.external_username || 'none'}` : 'NOT FOUND'}${channelErr ? ` error=${channelErr.code}:${channelErr.message}` : ''}`)
+
+    // Доп. диагностика: какой вообще ключ в env
+    if (!channel) {
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+      const keyPrefix = serviceKey.slice(0, 20)
+      const keyRole = serviceKey.includes('service_role') ? 'service_role' : serviceKey.includes('anon') ? 'anon (WRONG!)' : 'unknown'
+      console.warn(`[gate] env check: SUPABASE_URL=${process.env.NEXT_PUBLIC_SUPABASE_URL} keyPrefix=${keyPrefix}... keyRole=${keyRole}`)
+    }
 
     if (channel) {
       // Находим customer по conversation → chat_id=telegram_id
