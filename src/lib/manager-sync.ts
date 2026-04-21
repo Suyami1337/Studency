@@ -1,7 +1,94 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decryptSecret } from './crypto-vault'
-import { fetchManagerDialogs, type IncomingMessage } from './telegram-mtproto'
+import { fetchManagerDialogs, downloadPeerAvatar, type IncomingMessage } from './telegram-mtproto'
 import { emitEvent } from './event-triggers'
+
+const AVATAR_REFRESH_MS = 7 * 24 * 3600_000 // 7 дней
+const MAX_AVATARS_PER_SYNC = 10            // сколько аватарок тянем за один крон
+
+type AvatarTask = {
+  convId: string
+  peerTelegramId: number
+  peerUsername: string | null
+}
+
+/**
+ * Скачивает аватарки пачкой через одну MTProto-сессию и загружает в Supabase Storage.
+ * Ограничено MAX_AVATARS_PER_SYNC чтобы не перелететь таймаут крона — остальные
+ * подтянутся на следующих запусках.
+ */
+async function batchSyncAvatars(
+  supabase: SupabaseClient,
+  acc: { mtproto_api_id: number; mtproto_api_hash_enc: string; mtproto_session_enc: string },
+  tasks: AvatarTask[],
+): Promise<void> {
+  if (tasks.length === 0) return
+  const limited = tasks.slice(0, MAX_AVATARS_PER_SYNC)
+
+  const apiHash = decryptSecret(acc.mtproto_api_hash_enc)
+  const session = decryptSecret(acc.mtproto_session_enc)
+  const { TelegramClient, Api } = (await import('telegram')) as typeof import('telegram') & { Api: typeof import('telegram').Api }
+  const { StringSession } = await import('telegram/sessions')
+  const client = new TelegramClient(new StringSession(session), acc.mtproto_api_id, apiHash, { connectionRetries: 2 })
+  await client.connect()
+
+  try {
+    // Один прогрев peer cache на всю пачку
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await client.invoke(new Api.messages.GetDialogs({
+        offsetDate: 0,
+        offsetId: 0,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        offsetPeer: new Api.InputPeerEmpty() as any,
+        limit: 200,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        hash: 0 as any,
+      }))
+    } catch { /* ignore */ }
+
+    for (const task of limited) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let entity: any = null
+        const cleanUsername = task.peerUsername?.replace(/^@/, '') || null
+        if (cleanUsername) {
+          try { entity = await client.getEntity(cleanUsername) } catch { /* fallback */ }
+        }
+        if (!entity) {
+          try { entity = await client.getEntity(task.peerTelegramId) } catch { continue }
+        }
+        if (!entity) continue
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const buf: any = await client.downloadProfilePhoto(entity, { isBig: false })
+        if (!buf || (Buffer.isBuffer(buf) && buf.length === 0)) {
+          // Явно помечаем что фото нет — чтобы не дёргать снова каждый крон
+          await supabase.from('manager_conversations').update({
+            peer_photo_updated_at: new Date().toISOString(),
+          }).eq('id', task.convId)
+          continue
+        }
+        const buffer = Buffer.isBuffer(buf) ? buf : Buffer.from(buf)
+        const storagePath = `manager/${task.peerTelegramId}_${Date.now()}.jpg`
+        const { error: upErr } = await supabase.storage.from('avatars').upload(storagePath, buffer, {
+          contentType: 'image/jpeg',
+          upsert: true,
+        })
+        if (upErr) { console.error('avatar upload err:', upErr); continue }
+        const { data: pub } = supabase.storage.from('avatars').getPublicUrl(storagePath)
+        await supabase.from('manager_conversations').update({
+          peer_photo_url: pub.publicUrl,
+          peer_photo_updated_at: new Date().toISOString(),
+        }).eq('id', task.convId)
+      } catch (err) {
+        console.error('avatar sync err for peer', task.peerTelegramId, err)
+      }
+    }
+  } finally {
+    await client.disconnect().catch(() => null)
+  }
+}
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _IncomingMessage: IncomingMessage | null = null // keep import for types if needed
 
@@ -25,7 +112,7 @@ export type ManagerAccount = {
  * - Если это первое incoming от нового клиента → emitEvent manager_conversation_started
  */
 export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerAccount, options: { initialDays?: number } = {}): Promise<{
-  fetched: number; saved: number; newConversations: number; newIncoming: number
+  fetched: number; saved: number; newConversations: number; newIncoming: number; avatars?: number
 }> {
   if (!acc.mtproto_session_enc || !acc.mtproto_api_hash_enc) {
     throw new Error('manager account не подключён (нет session)')
@@ -61,6 +148,7 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
   let saved = 0
   let newConversations = 0
   let newIncoming = 0
+  const avatarTasks: AvatarTask[] = []
 
   // Группируем сообщения по peer
   const byPeer = new Map<number, IncomingMessage[]>()
@@ -101,7 +189,7 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     // Upsert conversation
     const { data: existingConv } = await supabase
       .from('manager_conversations')
-      .select('id, customer_id, unread_count')
+      .select('id, customer_id, unread_count, peer_photo_updated_at')
       .eq('manager_account_id', acc.id)
       .eq('peer_telegram_id', peerId)
       .maybeSingle()
@@ -239,6 +327,16 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     if (latest) updates.last_message_direction = latest.isOutgoing ? 'outgoing' : 'incoming'
     await supabase.from('manager_conversations').update(updates).eq('id', convId)
 
+    // Собираем задачи на скачивание аватарок — будут выполнены пачкой после основного
+    // цикла в одной MTProto-сессии (экономим время, один коннект на все).
+    if (dialogMeta?.peerHasPhoto) {
+      const lastAvatarAt = existingConv?.peer_photo_updated_at ?? null
+      const needsRefresh = !lastAvatarAt || (Date.now() - new Date(lastAvatarAt).getTime()) > AVATAR_REFRESH_MS
+      if (needsRefresh) {
+        avatarTasks.push({ convId, peerTelegramId: peerId, peerUsername })
+      }
+    }
+
     // Emit событие "начал переписку с менеджером" — только для новых conversations
     // (при первом incoming после создания conversation)
     if (isNewConv && firstIncomingMessageInSession && previousCustomerId) {
@@ -277,5 +375,14 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     status: 'active',
   }).eq('id', acc.id)
 
-  return { fetched: msgs.length, saved, newConversations, newIncoming }
+  // Пачкой докачиваем аватарки — одна MTProto-сессия, до MAX_AVATARS_PER_SYNC за раз
+  if (avatarTasks.length > 0 && acc.mtproto_api_hash_enc && acc.mtproto_session_enc) {
+    await batchSyncAvatars(
+      supabase,
+      { mtproto_api_id: acc.mtproto_api_id, mtproto_api_hash_enc: acc.mtproto_api_hash_enc, mtproto_session_enc: acc.mtproto_session_enc },
+      avatarTasks,
+    ).catch(err => console.error('batchSyncAvatars err:', err))
+  }
+
+  return { fetched: msgs.length, saved, newConversations, newIncoming, avatars: avatarTasks.length }
 }

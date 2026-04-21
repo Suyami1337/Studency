@@ -177,6 +177,7 @@ export type DialogMeta = {
   peerTelegramId: number
   peerUsername: string | null
   peerFirstName: string | null
+  peerHasPhoto: boolean        // есть ли фото (для опционального скачивания)
   unreadCount: number          // ← СЫРОЕ значение из Telegram (ненадёжно для свежих session'ов)
   topMessageDate: string | null
   topMessageId: number | null
@@ -301,6 +302,7 @@ export async function fetchManagerDialogs(params: {
           peerTelegramId: userId,
           peerUsername: userObj.username ?? null,
           peerFirstName: userObj.firstName ?? null,
+          peerHasPhoto: Boolean(userObj.photo && userObj.photo.className !== 'UserProfilePhotoEmpty'),
           unreadCount,
           topMessageDate: topDate ? new Date(topDate * 1000).toISOString() : null,
           topMessageId: topMsg?.id ? Number(topMsg.id) : null,
@@ -349,6 +351,57 @@ export async function fetchManagerDialogs(params: {
     await client.disconnect().catch(() => null)
   }
   return { messages: allMessages, dialogs: allDialogs }
+}
+
+/**
+ * Скачивает фото профиля пользователя через MTProto (downloadProfilePhoto).
+ * Возвращает Buffer с jpeg-данными или null если у пира нет фото / скрыто настройками.
+ */
+export async function downloadPeerAvatar(params: {
+  apiId: number
+  apiHash: string
+  sessionString: string
+  peerTelegramId: number
+  peerUsername?: string | null
+}): Promise<Buffer | null> {
+  const client = await createClient(params.apiId, params.apiHash, params.sessionString)
+  try {
+    const { Api } = await import('telegram')
+    // Прогрев peer cache
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await client.invoke(new Api.messages.GetDialogs({
+        offsetDate: 0,
+        offsetId: 0,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        offsetPeer: new Api.InputPeerEmpty() as any,
+        limit: 200,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        hash: 0 as any,
+      }))
+    } catch { /* ignore */ }
+
+    const cleanUsername = params.peerUsername?.replace(/^@/, '') || null
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let entity: any = null
+    if (cleanUsername) {
+      try { entity = await client.getEntity(cleanUsername) } catch { /* fallback */ }
+    }
+    if (!entity) {
+      try { entity = await client.getEntity(params.peerTelegramId) } catch { return null }
+    }
+    if (!entity) return null
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const buffer: any = await client.downloadProfilePhoto(entity, { isBig: false })
+    if (!buffer || (Buffer.isBuffer(buffer) && buffer.length === 0)) return null
+    return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer)
+  } catch (err) {
+    console.error('downloadPeerAvatar error:', err)
+    return null
+  } finally {
+    await client.disconnect().catch(() => null)
+  }
 }
 
 /**

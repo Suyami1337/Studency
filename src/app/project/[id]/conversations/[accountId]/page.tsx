@@ -27,6 +27,7 @@ type Conversation = {
   peer_telegram_id: number
   peer_username: string | null
   peer_first_name: string | null
+  peer_photo_url: string | null
   customer_id: string | null
   status: 'open' | 'closed'
   last_message_at: string | null
@@ -163,7 +164,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
   async function loadConversations() {
     const { data } = await supabase
       .from('manager_conversations')
-      .select('id, peer_telegram_id, peer_username, peer_first_name, customer_id, status, last_message_at, unread_count, last_message_preview, last_message_direction')
+      .select('id, peer_telegram_id, peer_username, peer_first_name, peer_photo_url, customer_id, status, last_message_at, unread_count, last_message_preview, last_message_direction')
       .eq('manager_account_id', accountId)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200)
@@ -273,6 +274,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                 <Avatar
                   name={c.peer_first_name ?? c.peer_username ?? '?'}
                   seed={c.peer_telegram_id}
+                  photoUrl={c.peer_photo_url}
                   size="md"
                   className="mt-0.5"
                 />
@@ -324,6 +326,7 @@ function DialogsTab({ accountId, projectId }: { accountId: string; projectId: st
                 <Avatar
                   name={activeConv.peer_first_name ?? activeConv.peer_username ?? '?'}
                   seed={activeConv.peer_telegram_id}
+                  photoUrl={activeConv.peer_photo_url}
                   size="lg"
                 />
                 <div className="min-w-0">
