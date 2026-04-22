@@ -56,6 +56,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   void (async () => {
     try {
       let projectId: string | undefined
+      let botId: string | undefined
       // Находим message_id — либо напрямую, либо через followup
       let ownerMessageId: string | null = btn.message_id
       if (!ownerMessageId && btn.followup_id) {
@@ -69,11 +70,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       if (ownerMessageId) {
         const { data: msg } = await supabase
           .from('scenario_messages')
-          .select('scenario_id, chatbot_scenarios!inner(telegram_bot_id, telegram_bots!inner(project_id))')
+          .select('scenario_id, chatbot_scenarios!inner(telegram_bot_id, telegram_bots!inner(id, project_id))')
           .eq('id', ownerMessageId)
           .maybeSingle()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        projectId = (msg as any)?.chatbot_scenarios?.telegram_bots?.project_id
+        const scn = (msg as any)?.chatbot_scenarios
+        projectId = scn?.telegram_bots?.project_id
+        botId = scn?.telegram_bots?.id
       }
       const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
       const ipHash = createHash('sha256').update(ip + (projectId ?? '')).digest('hex').slice(0, 16)
@@ -93,6 +96,52 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           action: 'button_click',
           data: { button_id: btn.id, destination_url: destination },
         })
+      }
+
+      // Клик по URL-кнопке = активность клиента → отменяем pending-дожимы
+      // с cancel_on_reply=true в этом разговоре. Telegram webhook для URL-кнопок
+      // не шлётся, поэтому без этой логики дожимы продолжали приходить.
+      if (customerParam && botId) {
+        const { data: customer } = await supabase
+          .from('customers')
+          .select('telegram_id')
+          .eq('id', customerParam)
+          .maybeSingle()
+        if (customer?.telegram_id) {
+          const { data: conv } = await supabase
+            .from('chatbot_conversations')
+            .select('id')
+            .eq('telegram_bot_id', botId)
+            .eq('telegram_chat_id', Number(customer.telegram_id))
+            .maybeSingle()
+          if (conv?.id) {
+            const { data: pending } = await supabase
+              .from('followup_queue')
+              .select('id, followup_id')
+              .eq('conversation_id', conv.id)
+              .eq('status', 'pending')
+            if (pending && pending.length > 0) {
+              const fuIds = pending.map((p: { followup_id: string }) => p.followup_id)
+              const { data: cancelFus } = await supabase
+                .from('message_followups')
+                .select('id')
+                .in('id', fuIds)
+                .eq('cancel_on_reply', true)
+              if (cancelFus && cancelFus.length > 0) {
+                const cancelFuIdSet = new Set(cancelFus.map((f: { id: string }) => f.id))
+                const queueIds = pending
+                  .filter((p: { followup_id: string }) => cancelFuIdSet.has(p.followup_id))
+                  .map((p: { id: string }) => p.id)
+                if (queueIds.length > 0) {
+                  await supabase
+                    .from('followup_queue')
+                    .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+                    .in('id', queueIds)
+                }
+              }
+            }
+          }
+        }
       }
     } catch (err) {
       console.error('btn redirect log error:', err)
