@@ -72,7 +72,12 @@ const SYSTEM_PROMPT = `Ты AI-агент Studency. Ты работаешь ТО
 
 **Gate (🚪).** У сообщения \`is_subscription_gate=true\` + \`gate_channel_account_id\`. Подписан → шлёт \`next_message_id\`. Нет → шлёт текст + автокнопку «Подписаться». \`next_message_id\` у gate ОБЯЗАТЕЛЕН. Автокнопка генерится сама — не добавляй её через add_button.
 
-**Триггеры (event_type):** video_start / video_progress / video_complete / landing_visit / form_submit / channel_joined / order_created / order_paid. Отменяющие авто-парой: video_start→video_complete, landing_visit→order_created, order_created→order_paid. У финальных событий (video_complete/order_paid/form_submit/channel_joined) дожимов не бывает.
+**Два разных механизма дожимов — не путай:**
+
+1. **Дожимы сообщения (\`followups\` внутри сообщения, инструменты \`add_followup\` / \`update_followup\` / \`delete_followup\`)** — простые таймерные напоминания: после отправки сообщения через N времени прилетит дожим. Отменяется **любой** активностью клиента (ответ текстом или клик) если \`cancel_on_reply=true\` (дефолт). Используй когда хочешь «если клиент не ответил за 2ч — напомни».
+   - В \`create_scenario_chain\` у каждого message-item есть поле \`followups: [{ delay_value, delay_unit, text, cancel_on_reply? }]\` — создаются атомарно вместе с сообщением.
+
+2. **Триггеры событий (\`triggers\`, \`create_trigger_group\`)** — реагируют на платформенные события (видео, лендинг, заказ). Имеют пары «если случилось / если НЕ случилось за время». Отменяются только конкретным отменяющим событием, не любой активностью. Типы: video_start / video_progress / video_complete / landing_visit / form_submit / channel_joined / order_created / order_paid. Пары: video_start→video_complete, landing_visit→order_created, order_created→order_paid. У финальных событий (video_complete/order_paid/form_submit/channel_joined) дожимов не бывает.
 
 **Внутри create_scenario_chain.triggers:** каждая группа = { label, event_type, event_params: {videoId/landingSlug/productId/formSlug/channelId/minPercent}, immediate?: {text, buttons}, followups: [{wait_value, wait_unit, text, buttons}] }.
 
@@ -179,6 +184,48 @@ function getTools(): Anthropic.Messages.Tool[] {
       },
     },
     {
+      name: 'add_followup',
+      description: 'Добавить дожим (follow-up) к существующему сообщению. Дожим = автоматическое напоминание через N времени после отправки сообщения. Отменяется любой активностью клиента если cancel_on_reply=true (дефолт).',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          message_id: { type: 'string', description: 'К какому сообщению привязать' },
+          delay_value: { type: 'number', description: 'Число единиц задержки (напр. 2)' },
+          delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'], description: 'Единица задержки' },
+          text: { type: 'string', description: 'Текст дожима' },
+          cancel_on_reply: { type: 'boolean', description: 'Отменять при любой активности клиента. По умолчанию true.' },
+          channel: { type: 'string', enum: ['telegram', 'email', 'both'], description: 'Куда слать. По умолчанию telegram.' },
+        },
+        required: ['message_id', 'delay_value', 'delay_unit', 'text'],
+      },
+    },
+    {
+      name: 'update_followup',
+      description: 'Обновить существующий дожим.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          followup_id: { type: 'string' },
+          delay_value: { type: 'number' },
+          delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+          text: { type: 'string' },
+          cancel_on_reply: { type: 'boolean' },
+          channel: { type: 'string', enum: ['telegram', 'email', 'both'] },
+          is_active: { type: 'boolean' },
+        },
+        required: ['followup_id'],
+      },
+    },
+    {
+      name: 'delete_followup',
+      description: 'Удалить дожим.',
+      input_schema: {
+        type: 'object' as const,
+        properties: { followup_id: { type: 'string' } },
+        required: ['followup_id'],
+      },
+    },
+    {
       name: 'list_project_targets',
       description: 'Прочитать доступные объекты проекта, на которые можно ставить триггеры: видео (id, title), лендинги (id, name, slug), продукты (id, name). Нужно перед тем как создавать триггер — чтобы понимать какие id использовать.',
       input_schema: { type: 'object' as const, properties: {}, required: [] },
@@ -281,6 +328,21 @@ ID объектов всегда бери из list_project_targets. Имя (lab
                       action_goto_local_id: { type: 'string', description: 'local_id целевого сообщения (для goto_message)' },
                     },
                     required: ['text', 'action_type'],
+                  },
+                },
+                followups: {
+                  type: 'array',
+                  description: 'Дожимы этого сообщения — автонапоминания через N времени. Отменяются при любой активности клиента если cancel_on_reply=true.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      delay_value: { type: 'number' },
+                      delay_unit: { type: 'string', enum: ['sec', 'min', 'hour', 'day'] },
+                      text: { type: 'string' },
+                      cancel_on_reply: { type: 'boolean', description: 'По умолчанию true' },
+                      channel: { type: 'string', enum: ['telegram', 'email', 'both'] },
+                    },
+                    required: ['delay_value', 'delay_unit', 'text'],
                   },
                 },
               },
@@ -469,6 +531,52 @@ async function executeTool(
         return { content: JSON.stringify({ ok: true }), summary: `удалил кнопку`, ok: true, wrote: true }
       }
 
+      case 'add_followup': {
+        // Verify message belongs to this scenario
+        const { data: msg } = await supabase.from('scenario_messages').select('id').eq('id', input.message_id).eq('scenario_id', scenarioId).single()
+        if (!msg) throw new Error('message not in this scenario')
+        const { data: existing } = await supabase.from('message_followups').select('order_index').eq('scenario_message_id', input.message_id).order('order_index', { ascending: false }).limit(1)
+        const idx = existing && existing[0] ? existing[0].order_index + 1 : 0
+        const { data, error } = await supabase.from('message_followups').insert({
+          scenario_message_id: input.message_id,
+          order_index: idx,
+          delay_value: input.delay_value,
+          delay_unit: input.delay_unit,
+          text: input.text,
+          channel: input.channel ?? 'telegram',
+          cancel_on_reply: input.cancel_on_reply ?? true,
+          is_active: true,
+          duplicate_to_email: false,
+        }).select().single()
+        if (error) throw error
+        return { content: JSON.stringify({ id: data.id }), summary: `добавил дожим через ${input.delay_value}${input.delay_unit}`, ok: true, wrote: true }
+      }
+
+      case 'update_followup': {
+        const { data: fu } = await supabase.from('message_followups').select('scenario_message_id').eq('id', input.followup_id).single()
+        if (!fu) throw new Error('followup not found')
+        const { data: msg } = await supabase.from('scenario_messages').select('id').eq('id', fu.scenario_message_id).eq('scenario_id', scenarioId).single()
+        if (!msg) throw new Error('followup not in this scenario')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const updates: any = {}
+        for (const k of ['delay_value', 'delay_unit', 'text', 'channel', 'cancel_on_reply', 'is_active']) {
+          if (input[k] !== undefined) updates[k] = input[k]
+        }
+        const { error } = await supabase.from('message_followups').update(updates).eq('id', input.followup_id)
+        if (error) throw error
+        return { content: JSON.stringify({ ok: true }), summary: `обновил дожим`, ok: true, wrote: true }
+      }
+
+      case 'delete_followup': {
+        const { data: fu } = await supabase.from('message_followups').select('scenario_message_id').eq('id', input.followup_id).single()
+        if (!fu) throw new Error('followup not found')
+        const { data: msg } = await supabase.from('scenario_messages').select('id').eq('id', fu.scenario_message_id).eq('scenario_id', scenarioId).single()
+        if (!msg) throw new Error('followup not in this scenario')
+        const { error } = await supabase.from('message_followups').delete().eq('id', input.followup_id)
+        if (error) throw error
+        return { content: JSON.stringify({ ok: true }), summary: `удалил дожим`, ok: true, wrote: true }
+      }
+
       case 'list_project_targets': {
         const [vids, lands, prods] = await Promise.all([
           supabase.from('videos').select('id, title').eq('project_id', ctx.projectId),
@@ -570,6 +678,28 @@ async function executeTool(
           }
         }
 
+        // Шаг 3.5: дожимы сообщений (message_followups)
+        let followupCount = 0
+        for (const p of plan) {
+          if (!Array.isArray(p.followups)) continue
+          let fuIdx = 0
+          for (const f of p.followups) {
+            const { error } = await supabase.from('message_followups').insert({
+              scenario_message_id: localToReal[p.local_id],
+              order_index: fuIdx++,
+              delay_value: f.delay_value,
+              delay_unit: f.delay_unit,
+              text: f.text,
+              channel: f.channel ?? 'telegram',
+              cancel_on_reply: f.cancel_on_reply ?? true,
+              is_active: true,
+              duplicate_to_email: false,
+            })
+            if (error) throw new Error(`create followup for "${p.local_id}": ${error.message}`)
+            followupCount++
+          }
+        }
+
         // Шаг 4: триггерные группы (если есть)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const triggerPlans: any[] = Array.isArray(input.triggers) ? input.triggers : []
@@ -650,8 +780,8 @@ async function executeTool(
         }
 
         return {
-          content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length + triggerMsgsCount, buttons_created: btnCount, triggers_created: triggersCreated }),
-          summary: `создал: ${plan.length} сообщ.${triggerMsgsCount ? ` + ${triggerMsgsCount} из триггеров` : ''}, ${btnCount} кнопок${triggersCreated ? `, ${triggersCreated} триггер-групп` : ''}`,
+          content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length + triggerMsgsCount, buttons_created: btnCount, followups_created: followupCount, triggers_created: triggersCreated }),
+          summary: `создал: ${plan.length} сообщ.${triggerMsgsCount ? ` + ${triggerMsgsCount} из триггеров` : ''}, ${btnCount} кнопок${followupCount ? `, ${followupCount} дожимов` : ''}${triggersCreated ? `, ${triggersCreated} триггер-групп` : ''}`,
           ok: true, wrote: true,
         }
       }
