@@ -386,24 +386,30 @@ export async function sendScenarioMessage(
   if (followups && followups.length > 0) {
     const now = Date.now()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const shortDelay: any[] = []
+    const shortDelay: Array<{ f: any; delayMs: number; queueId: string }> = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const queueRows: any[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shortRows: any[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shortFollowups: any[] = []
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const f of followups as any[]) {
       const delayMs = delayToMs(f.delay_value, f.delay_unit)
+      const row = {
+        followup_id: f.id,
+        conversation_id: conversationId,
+        chat_id: chatId,
+        bot_token: botToken,
+        send_at: new Date(now + delayMs).toISOString(),
+        status: 'pending',
+      }
       if (delayMs < IMMEDIATE_THRESHOLD_MS) {
-        shortDelay.push({ f, delayMs })
+        shortRows.push(row)
+        shortFollowups.push({ f, delayMs })
       } else {
-        queueRows.push({
-          followup_id: f.id,
-          conversation_id: conversationId,
-          chat_id: chatId,
-          bot_token: botToken,
-          send_at: new Date(now + delayMs).toISOString(),
-          status: 'pending',
-        })
+        queueRows.push(row)
       }
     }
 
@@ -412,14 +418,40 @@ export async function sendScenarioMessage(
       if (error) console.error('followup_queue insert error:', error)
     }
 
+    // Короткие дожимы тоже пишем в очередь — чтобы webhook мог их отменить
+    // по cancel_on_reply. Перед отправкой перечитываем статус.
+    if (shortRows.length > 0) {
+      const { data: insertedShort, error: shortErr } = await supabase
+        .from('followup_queue')
+        .insert(shortRows)
+        .select('id, followup_id')
+      if (shortErr) console.error('followup_queue short insert error:', shortErr)
+
+      if (insertedShort && insertedShort.length > 0) {
+        for (const { f, delayMs } of shortFollowups) {
+          const queueRow = (insertedShort as Array<{ id: string; followup_id: string }>)
+            .find(r => r.followup_id === f.id)
+          if (queueRow) shortDelay.push({ f, delayMs, queueId: queueRow.id })
+        }
+      }
+    }
+
     if (shortDelay.length > 0) {
       const startedAt = Date.now()
-      waitUntil(Promise.all(shortDelay.map(({ f, delayMs }) =>
+      waitUntil(Promise.all(shortDelay.map(({ f, delayMs, queueId }) =>
         (async () => {
           const elapsed = Date.now() - startedAt
           const remaining = Math.max(0, delayMs - elapsed)
           await new Promise(res => setTimeout(res, remaining))
           try {
+            // Перепроверяем статус в очереди — webhook мог отменить
+            const { data: current } = await supabase
+              .from('followup_queue')
+              .select('status')
+              .eq('id', queueId)
+              .maybeSingle()
+            if (!current || current.status !== 'pending') return
+
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {
               const fuButtons = await loadFollowupButtons(supabase, f.id, customerIdForClicks, appUrl)
@@ -433,6 +465,10 @@ export async function sendScenarioMessage(
               direction: 'outgoing',
               content: f.text || `[${f.media_type}]`,
             })
+            await supabase
+              .from('followup_queue')
+              .update({ status: 'sent', sent_at: new Date().toISOString() })
+              .eq('id', queueId)
           } catch (err) {
             console.error('short followup send error:', err)
           }
