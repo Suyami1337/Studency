@@ -22,6 +22,16 @@ async function telegramRequest(token: string, method: string, body: Record<strin
   return res.json()
 }
 
+/**
+ * Лёгкий ping — проверяет доступен ли чат боту. Клиент ничего не видит
+ * (только кратко «печатает…» в своём чате если вообще). Используется для
+ * проактивной синхронизации подписчиков — если Telegram вернул 403/not found,
+ * значит бот заблокирован/удалён.
+ */
+export async function sendChatAction(token: string, chatId: number | string, action = 'typing') {
+  return telegramRequest(token, 'sendChatAction', { chat_id: chatId, action })
+}
+
 export async function sendTelegramMessage(token: string, chatId: number | string, text: string, buttons?: InlineButton[]) {
   return telegramRequest(token, 'sendMessage', {
     chat_id: chatId,

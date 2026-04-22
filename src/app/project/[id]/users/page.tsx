@@ -21,6 +21,11 @@ type Customer = {
   source_slug: string | null
   visitor_token: string | null
   created_at: string
+  bot_subscribed?: boolean | null
+  bot_blocked?: boolean | null
+  bot_subscribed_at?: string | null
+  bot_blocked_at?: string | null
+  channel_subscribed?: boolean | null
 }
 
 type Order = {
@@ -313,12 +318,45 @@ function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: 
                   placeholder={`${label}...`}
                   className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
                 />
+              ) : key === 'telegram_username' && current.telegram_username ? (
+                <a href={`https://t.me/${current.telegram_username}`} target="_blank" rel="noreferrer"
+                  className="text-sm font-medium text-[#6A55F8] hover:underline"
+                  title="Открыть чат в Telegram">
+                  @{current.telegram_username}
+                </a>
               ) : (
                 <p className="text-sm font-medium text-gray-800">{(current[key] as string | null) ?? '—'}</p>
               )}
             </div>
           ))}
         </div>
+
+        {/* Telegram-статусы */}
+        {(current.telegram_id || current.bot_subscribed !== undefined) && (
+          <div className="flex items-center flex-wrap gap-2 pt-1">
+            {current.bot_subscribed === true && !current.bot_blocked && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                🤖 Подписан на бота
+              </span>
+            )}
+            {current.bot_blocked && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
+                title={current.bot_blocked_at ? `С ${new Date(current.bot_blocked_at).toLocaleString('ru')}` : ''}>
+                🚫 Заблокировал бота
+              </span>
+            )}
+            {current.bot_subscribed === false && !current.bot_blocked && current.telegram_id && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                ⚪ Отписан от бота
+              </span>
+            )}
+            {current.channel_subscribed === true && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                📣 Подписан на канал
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Источник трафика */}
         {current.source_name && (

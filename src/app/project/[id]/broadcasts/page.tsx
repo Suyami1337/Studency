@@ -124,6 +124,7 @@ export default function BroadcastsPage() {
   // Preview count
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -236,6 +237,40 @@ export default function BroadcastsPage() {
       else setPreviewCount(json.count ?? 0)
     } finally {
       setPreviewLoading(false)
+    }
+  }
+
+  /**
+   * Проверить всех подписчиков бота через Telegram API (sendChatAction).
+   * Обновляет chat_blocked для тех кто заблокировал/удалил бота → следующий
+   * «Подсчитать» даст более точное число.
+   */
+  async function handleSyncSubscribers() {
+    if (!botId) {
+      alert('Выбери бота сначала')
+      return
+    }
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/broadcasts/sync-subscribers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_bot_id: botId }),
+      })
+      const json = await res.json()
+      if (json.error) {
+        alert('Ошибка: ' + json.error)
+        return
+      }
+      const msg = `Проверено ${json.checked} из ${json.total}.`
+        + (json.blocked ? ` Новых отписавшихся: ${json.blocked}.` : '')
+        + (json.unblocked ? ` Разблокировавших: ${json.unblocked}.` : '')
+        + (!json.blocked && !json.unblocked ? ' Изменений нет.' : '')
+      alert(msg)
+      // Автоматически обновляем счётчик после синка
+      await handlePreviewCount()
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -850,9 +885,9 @@ export default function BroadcastsPage() {
                 </div>
               )}
 
-              {/* Preview count */}
-              <div className="flex items-center gap-2 pt-1">
-                <button type="button" onClick={handlePreviewCount} disabled={previewLoading}
+              {/* Preview count + sync subscribers */}
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
+                <button type="button" onClick={handlePreviewCount} disabled={previewLoading || syncing}
                   className="text-xs text-[#6A55F8] font-medium hover:underline disabled:opacity-50">
                   {previewLoading ? 'Считаю…' : '🔢 Подсчитать получателей'}
                 </button>
@@ -860,6 +895,13 @@ export default function BroadcastsPage() {
                   <span className="text-xs text-gray-700">
                     → <b>{previewCount}</b> {previewCount === 1 ? 'клиент' : previewCount < 5 ? 'клиента' : 'клиентов'}
                   </span>
+                )}
+                {(channel === 'telegram' || channel === 'both') && botId && (
+                  <button type="button" onClick={handleSyncSubscribers} disabled={syncing || previewLoading}
+                    title="Проверить через Telegram кто реально доступен боту. Может занять до минуты для большой базы."
+                    className="text-xs text-gray-500 hover:text-[#6A55F8] hover:underline disabled:opacity-50">
+                    {syncing ? 'Синхронизирую…' : '🔄 Обновить подписчиков'}
+                  </button>
                 )}
               </div>
 
@@ -1043,8 +1085,7 @@ export default function BroadcastsPage() {
                       <tbody>
                         {filteredDeliveries.map(d => {
                           const name = d.customers?.full_name || d.customers?.telegram_username || 'Без имени'
-                          const tg = d.customers?.telegram_username ? '@' + d.customers.telegram_username : d.customers?.telegram_id
-                          const contact = tg || d.customers?.email || '—'
+                          const uname = d.customers?.telegram_username
                           const href = d.customer_id ? `/project/${projectId}/users?open=${d.customer_id}` : null
                           return (
                             <tr key={d.id} className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors">
@@ -1053,7 +1094,21 @@ export default function BroadcastsPage() {
                                   <Link href={href} className="text-[#6A55F8] hover:underline">{name}</Link>
                                 ) : name}
                               </td>
-                              <td className="px-3 py-2 text-gray-500 truncate max-w-[140px]">{contact}</td>
+                              <td className="px-3 py-2 text-gray-500 truncate max-w-[140px]">
+                                {uname ? (
+                                  <a href={`https://t.me/${uname}`} target="_blank" rel="noreferrer"
+                                    title={`Открыть чат в Telegram с @${uname}`}
+                                    className="text-[#6A55F8] hover:underline">
+                                    @{uname}
+                                  </a>
+                                ) : d.customers?.email ? (
+                                  <a href={`mailto:${d.customers.email}`} className="hover:underline">
+                                    {d.customers.email}
+                                  </a>
+                                ) : d.customers?.telegram_id ? (
+                                  <span>{d.customers.telegram_id}</span>
+                                ) : '—'}
+                              </td>
                               <td className="px-3 py-2">
                                 {d.status === 'sent' ? (
                                   <span className="text-green-600">✓ Отправлено</span>
