@@ -2,9 +2,26 @@
 
 import { useEffect, useRef } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
+import { Mark, mergeAttributes } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
+
+// Кастомный inline-mark для Telegram-спойлера. Работает как жирный/курсив —
+// toggle на выделенном тексте, сериализуется в <tg-spoiler>...</tg-spoiler>.
+// Вызывается через editor.chain().toggleMark('spoiler') — addCommands не нужен.
+const Spoiler = Mark.create({
+  name: 'spoiler',
+  parseHTML() {
+    return [
+      { tag: 'tg-spoiler' },
+      { tag: 'span.tg-spoiler' },
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['tg-spoiler', mergeAttributes(HTMLAttributes), 0]
+  },
+})
 
 type Props = {
   value: string
@@ -63,6 +80,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           rel: 'noopener noreferrer',
         },
       }),
+      Spoiler,
     ],
     content: fromTelegramHtml(value),
     immediatelyRender: false,
@@ -104,14 +122,51 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
     editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
   }
 
-  // Спойлер: оборачиваем выделение в span с атрибутом, который переживёт
-  // TipTap-сериализацию (inline HTML marks у StarterKit нет — используем raw insert)
+  // Спойлер — inline mark через кастомное расширение, работает как bold/italic
   function toggleSpoiler() {
     if (!editor) return
+    editor.chain().focus().toggleMark('spoiler').run()
+  }
+
+  // Цитата: blockquote — блочный элемент (и в HTML, и в Telegram), охватывает
+  // целый абзац. Если юзер выделил только часть абзаца — разбиваем абзац
+  // так, чтобы только выделенное оказалось в blockquote.
+  function toggleBlockquoteSmart() {
+    if (!editor) return
     const { from, to } = editor.state.selection
-    if (from === to) return
-    const text = editor.state.doc.textBetween(from, to, ' ')
-    editor.chain().focus().insertContent(`<tg-spoiler>${text}</tg-spoiler>`).run()
+    if (from === to) {
+      editor.chain().focus().toggleBlockquote().run()
+      return
+    }
+    // Уже в blockquote — снимаем
+    if (editor.isActive('blockquote')) {
+      editor.chain().focus().toggleBlockquote().run()
+      return
+    }
+    // Проверяем: выделение покрывает весь текущий параграф или только часть
+    const $from = editor.state.doc.resolve(from)
+    const paragraphStart = $from.start($from.depth)
+    const paragraphEnd = $from.end($from.depth)
+    if (from <= paragraphStart && to >= paragraphEnd) {
+      // Весь параграф — просто toggle
+      editor.chain().focus().toggleBlockquote().run()
+      return
+    }
+    // Часть параграфа — разбиваем: до, blockquote, после
+    editor.chain()
+      .focus()
+      .command(({ tr, dispatch }) => {
+        if (dispatch) {
+          // Сначала разбиваем в конце выделения
+          tr.split(to)
+          // Потом в начале (индексы сдвинулись)
+          tr.split(from)
+        }
+        return true
+      })
+      .setTextSelection({ from: from + 1, to: to + 1 })
+      .toggleBlockquote()
+      .run()
   }
 
   if (!editor) {
@@ -140,12 +195,12 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
         <button type="button" onClick={() => editor.chain().focus().toggleCode().run()}
           title="Моноширинный"
           className={`min-w-7 h-7 px-1.5 rounded text-[10px] font-mono transition-colors flex items-center justify-center ${editor.isActive('code') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>{'</>'}</button>
-        <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          title="Цитата"
+        <button type="button" onClick={toggleBlockquoteSmart}
+          title="Цитата (блочная — охватывает строку)"
           className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('blockquote') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>❝</button>
         <button type="button" onClick={toggleSpoiler}
           title="Спойлер"
-          className="min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700">⊘</button>
+          className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('spoiler') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>⊘</button>
         <button type="button" onClick={setLink}
           title="Ссылка"
           className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('link') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>🔗</button>
