@@ -47,11 +47,15 @@ function toTelegramHtml(html: string): string {
   out = out.replace(/<em(?:\s[^>]*)?>/gi, '<i>').replace(/<\/em>/gi, '</i>')
   // <br> → \n
   out = out.replace(/<br\s*\/?>/gi, '\n')
-  // Схлопываем пустые строки внутри blockquote/до/после
+  // Схлопываем пустые строки внутри blockquote
   out = out.replace(/\n+(<blockquote[^>]*>)/gi, '\n$1')
   out = out.replace(/(<blockquote[^>]*>)\n+/gi, '$1')
   out = out.replace(/\n+<\/blockquote>/gi, '</blockquote>')
   out = out.replace(/<\/blockquote>\n+/gi, '</blockquote>\n')
+  // Гарантируем ровно один \n перед <blockquote> и после </blockquote>.
+  // Иначе соседний текст прилипает к цитате и при загрузке ломается структура.
+  out = out.replace(/([^\n])(<blockquote[^>]*>)/gi, '$1\n$2')
+  out = out.replace(/(<\/blockquote>)([^\n])/gi, '$1\n$2')
   // Убираем trailing \n в конце всего текста
   out = out.replace(/\n+$/g, '')
   return out
