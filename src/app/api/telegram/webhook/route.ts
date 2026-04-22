@@ -313,7 +313,9 @@ export async function POST(request: NextRequest) {
 
     const projectId = bot.project_id
 
-    // Find or create conversation
+    // Find or create conversation.
+    // chat_blocked=false — клиент что-то нам написал или нажал кнопку,
+    // значит бот у него больше не заблокирован (если был помечен ранее).
     const { data: conversation } = await supabase
       .from('chatbot_conversations')
       .upsert({
@@ -322,6 +324,7 @@ export async function POST(request: NextRequest) {
         telegram_user_id: userId,
         telegram_username: username,
         telegram_first_name: firstName,
+        chat_blocked: false,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'telegram_bot_id,telegram_chat_id' })
       .select()

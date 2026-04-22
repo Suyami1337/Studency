@@ -9,11 +9,34 @@ function getSupabase() {
   )
 }
 
-type Recipient = { id: string; telegram_id: string | null; email: string | null }
+type Recipient = {
+  id: string
+  telegram_id: string | null
+  email: string | null
+  // Диалог с ботом — берём отсюда chat_id для отправки и id для пометки chat_blocked.
+  // Заполнен только для тех клиентов что делали /start этому боту.
+  conversation_id: string | null
+  conversation_chat_id: number | null
+}
 
 export type BroadcastResult =
   | { ok: false; error: string; status?: number }
   | { ok: true; sent: number; failed: number; total: number }
+
+/**
+ * Telegram возвращает эти ошибки для клиентов которые (а) заблокировали бота,
+ * (б) удалили аккаунт или (в) не нажимали /start. В любом случае бот больше
+ * не может им писать — помечаем conversation.chat_blocked=true и исключаем
+ * из следующих рассылок.
+ */
+function isUnreachable(errorText: string): boolean {
+  const e = errorText.toLowerCase()
+  return e.includes('forbidden')
+      || e.includes('chat not found')
+      || e.includes('user is deactivated')
+      || e.includes("bot can't initiate conversation")
+      || e.includes('bot was blocked by the user')
+}
 
 /**
  * Ядро отправки рассылки — используется UI-кнопкой и cron.
@@ -79,41 +102,40 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
       let recipientSent = false
       const errors: string[] = []
 
-      if (useTelegram && r.telegram_id && bot) {
-        const chatId = parseInt(r.telegram_id, 10)
-        if (chatId) {
-          try {
-            const res = await sendFollowupContent(bot.token, chatId, {
-              text: broadcast.text,
-              media_type: broadcast.media_type,
-              media_url: broadcast.media_url,
+      // ── Telegram ──
+      // Отправляем только если у клиента есть активный диалог с этим ботом.
+      // Без /start от юзера Telegram возвращает 403 «can't initiate conversation».
+      if (useTelegram && bot && r.conversation_id && r.conversation_chat_id) {
+        try {
+          const res = await sendFollowupContent(bot.token, r.conversation_chat_id, {
+            text: broadcast.text,
+            media_type: broadcast.media_type,
+            media_url: broadcast.media_url,
+          })
+          if (res.ok) {
+            await supabase.from('chatbot_messages').insert({
+              conversation_id: r.conversation_id,
+              direction: 'outgoing',
+              content: broadcast.text || `[${broadcast.media_type}]`,
             })
-            if (res.ok) {
-              const { data: conv } = await supabase
-                .from('chatbot_conversations')
-                .select('id')
-                .eq('telegram_bot_id', bot.id)
-                .eq('telegram_chat_id', chatId)
-                .maybeSingle()
-              if (conv) {
-                await supabase.from('chatbot_messages').insert({
-                  conversation_id: conv.id,
-                  direction: 'outgoing',
-                  content: broadcast.text || `[${broadcast.media_type}]`,
-                })
-              }
-              recipientSent = true
-            } else {
-              errors.push('tg:' + res.error)
+            recipientSent = true
+          } else {
+            errors.push('tg:' + res.error)
+            // Бот заблокирован / чат недоступен — помечаем, чтобы больше не пытаться
+            if (res.error && isUnreachable(res.error)) {
+              await supabase.from('chatbot_conversations')
+                .update({ chat_blocked: true })
+                .eq('id', r.conversation_id)
             }
-          } catch (err) {
-            errors.push('tg:' + (err instanceof Error ? err.message : 'err'))
           }
-          // Rate limit для Telegram Bot API
-          await new Promise(res => setTimeout(res, 40))
+        } catch (err) {
+          errors.push('tg:' + (err instanceof Error ? err.message : 'err'))
         }
+        // Rate limit для Telegram Bot API
+        await new Promise(res => setTimeout(res, 40))
       }
 
+      // ── Email ──
       if (useEmail && r.email) {
         try {
           const res = await sendProjectEmail(supabase, {
@@ -166,14 +188,42 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
 }
 
 /**
- * Собирает получателей по сегменту.
- * - .neq('is_blocked', true) чтобы не терять клиентов с is_blocked IS NULL.
- * - scenario_message_in/not_in — через join chatbot_messages → chatbot_conversations.
+ * Собирает реальных получателей:
+ * - Для Telegram-канала — только те кто делал /start этому боту
+ *   (есть в chatbot_conversations c этим telegram_bot_id, chat_blocked=false).
+ * - Для Email-канала — любые клиенты с email.
+ * - Для «both» — клиент попадает если доступен хотя бы один канал.
+ *
+ * Сегменты (funnel_stage/tag/source/scenario_message_*) применяются поверх.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { useTelegram: boolean; useEmail: boolean }): Promise<Recipient[]> {
   const { useTelegram, useEmail } = opts
 
+  // ─── Карта customer_id → conversation для Telegram ───
+  // Если useTelegram: собираем всех кто делал /start этому боту (не заблокировал).
+  const telegramConvMap = new Map<string, { conversation_id: string; chat_id: number }>()
+  if (useTelegram && broadcast.telegram_bot_id) {
+    const { data: convs } = await supabase
+      .from('chatbot_conversations')
+      .select('id, customer_id, telegram_chat_id')
+      .eq('telegram_bot_id', broadcast.telegram_bot_id)
+      .eq('chat_blocked', false)
+      .not('customer_id', 'is', null)
+
+    for (const c of (convs ?? []) as Array<{ id: string; customer_id: string; telegram_chat_id: number | string }>) {
+      const chatId = typeof c.telegram_chat_id === 'string'
+        ? parseInt(c.telegram_chat_id, 10)
+        : c.telegram_chat_id
+      if (!chatId) continue
+      // Если у одного клиента несколько conversations (переподписка) — берём любую.
+      if (!telegramConvMap.has(c.customer_id)) {
+        telegramConvMap.set(c.customer_id, { conversation_id: c.id, chat_id: chatId })
+      }
+    }
+  }
+
+  // ─── Сегмент по блокам сценария ───
   let customerIdFilter: string[] | null = null
   if (broadcast.segment_type === 'scenario_message_in' && broadcast.segment_value) {
     customerIdFilter = await customersWhoReceivedBlock(supabase, broadcast.project_id, broadcast.segment_value)
@@ -191,6 +241,7 @@ async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { 
     customerIdFilter = ids
   }
 
+  // ─── Базовая выборка customers ───
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let query: any = supabase
     .from('customers')
@@ -202,12 +253,6 @@ async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { 
     query = query.in('id', customerIdFilter)
   }
 
-  if (useTelegram && !useEmail) {
-    query = query.not('telegram_id', 'is', null)
-  } else if (useEmail && !useTelegram) {
-    query = query.not('email', 'is', null)
-  }
-
   if (broadcast.segment_type === 'funnel_stage' && broadcast.segment_value) {
     query = query.eq('funnel_stage_id', broadcast.segment_value)
   } else if (broadcast.segment_type === 'source' && broadcast.segment_value) {
@@ -217,7 +262,24 @@ async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { 
   }
 
   const { data } = await query
-  return (data ?? []) as Recipient[]
+  const allCustomers = (data ?? []) as Array<{ id: string; telegram_id: string | null; email: string | null }>
+
+  // ─── Финальный фильтр по доступным каналам ───
+  const out: Recipient[] = []
+  for (const c of allCustomers) {
+    const tgConv = telegramConvMap.get(c.id)
+    const canTg = useTelegram && !!tgConv
+    const canEmail = useEmail && !!c.email
+    if (!canTg && !canEmail) continue
+    out.push({
+      id: c.id,
+      telegram_id: c.telegram_id,
+      email: c.email,
+      conversation_id: tgConv?.conversation_id ?? null,
+      conversation_chat_id: tgConv?.chat_id ?? null,
+    })
+  }
+  return out
 }
 
 /**
