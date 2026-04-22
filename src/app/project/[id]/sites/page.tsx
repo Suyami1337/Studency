@@ -373,6 +373,18 @@ function LandingDetail({
         <h1 className="text-xl font-bold text-gray-900">{landing.name}</h1>
         <StatusBadge status={landing.status} />
         <div className="ml-auto flex items-center gap-2">
+          <a
+            href="https://claude.ai/design"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Сделай дизайн в Claude Design → экспортируй HTML → вставь во вкладку «HTML код»"
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-gray-300 text-gray-700 hover:bg-gray-50"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+            Claude Design
+          </a>
           <AiAssistantButton isOpen={aiOpen} onClick={() => setAiOpen(!aiOpen)} />
         </div>
       </div>
