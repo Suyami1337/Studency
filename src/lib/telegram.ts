@@ -27,6 +27,8 @@ export async function sendTelegramMessage(token: string, chatId: number | string
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
+    // Не показывать превью веб-страниц под сообщениями — ссылки остаются просто в тексте
+    link_preview_options: { is_disabled: true },
     reply_markup: buildReplyMarkup(buttons),
   })
 }
