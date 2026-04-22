@@ -677,7 +677,7 @@ export default function BroadcastsPage() {
       {/* Create / Edit Modal */}
       {editorOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setEditorId(null)}>
-          <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <h3 className="text-base font-semibold text-gray-900">
                 {isEditing ? 'Редактирование рассылки' : 'Новая рассылка'}
