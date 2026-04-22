@@ -107,19 +107,16 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
       // Без /start от юзера Telegram возвращает 403 «can't initiate conversation».
       if (useTelegram && bot && r.conversation_id && r.conversation_chat_id) {
         try {
-          // Кнопки рассылки — массив { text, url }. Пробрасываем в формат
-          // inline_keyboard который ждёт sendTelegramMessage.
-          const buttons = Array.isArray(broadcast.buttons)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ? (broadcast.buttons as any[])
-                .filter(b => b && b.text && b.url)
-                .map(b => ({ text: String(b.text), url: String(b.url) }))
-            : undefined
+          // Кнопки рассылки — массив с action_type:
+          //  - url → инлайн-кнопка со ссылкой
+          //  - trigger / goto_message → callback_data 'brd:<bid>:<idx>',
+          //    webhook обработает и запустит нужный блок сценария.
+          const buttons = buildBroadcastButtons(broadcast)
           const res = await sendFollowupContent(bot.token, r.conversation_chat_id, {
             text: broadcast.text,
             media_type: broadcast.media_type,
             media_url: broadcast.media_url,
-          }, buttons && buttons.length > 0 ? buttons : undefined)
+          }, buttons)
           if (res.ok) {
             await supabase.from('chatbot_messages').insert({
               conversation_id: r.conversation_id,
@@ -290,6 +287,32 @@ export async function loadRecipients(supabase: SupabaseClient, broadcast: any, o
     })
   }
   return out
+}
+
+/**
+ * Преобразует broadcast.buttons (jsonb массив) в inline_keyboard для Telegram.
+ * Старый формат { text, url } трактуется как action_type='url' — backward compat.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildBroadcastButtons(broadcast: any): Array<{ text: string; url?: string; callback_data?: string }> | undefined {
+  if (!Array.isArray(broadcast.buttons)) return undefined
+  const out: Array<{ text: string; url?: string; callback_data?: string }> = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const [idx, raw] of (broadcast.buttons as any[]).entries()) {
+    if (!raw || !raw.text) continue
+    const text = String(raw.text).trim()
+    if (!text) continue
+    const actionType = raw.action_type || (raw.url ? 'url' : null)
+    if (actionType === 'url' && raw.url) {
+      out.push({ text, url: String(raw.url) })
+    } else if (actionType === 'trigger' && raw.action_trigger_word) {
+      out.push({ text, callback_data: `brd:${broadcast.id}:${idx}` })
+    } else if (actionType === 'goto_message' && raw.action_goto_message_id) {
+      out.push({ text, callback_data: `brd:${broadcast.id}:${idx}` })
+    }
+    // кнопки с пустыми action-данными пропускаются
+  }
+  return out.length > 0 ? out : undefined
 }
 
 /**

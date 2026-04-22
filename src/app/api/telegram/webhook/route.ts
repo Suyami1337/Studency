@@ -503,6 +503,53 @@ export async function POST(request: NextRequest) {
     // =============================================
     // HANDLE BUTTON CALLBACK
     // =============================================
+    // =============================================
+    // HANDLE BROADCAST BUTTON CALLBACK
+    // =============================================
+    // Формат: brd:<broadcast_id>:<button_index>
+    // Кнопки рассылок хранятся в broadcasts.buttons jsonb, не в scenario_buttons.
+    // Поддерживаем те же action_type что и у scenario-кнопок: trigger / goto_message.
+    // (url-кнопки не приходят через callback — Telegram сам открывает URL.)
+    if (callbackData && callbackData.startsWith('brd:')) {
+      const parts = callbackData.split(':')
+      const broadcastId = parts[1]
+      const idx = parseInt(parts[2] ?? '', 10)
+      if (broadcastId && !Number.isNaN(idx)) {
+        const { data: bcast } = await supabase
+          .from('broadcasts').select('buttons, project_id').eq('id', broadcastId).single()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const btn = Array.isArray(bcast?.buttons) ? (bcast.buttons as any[])[idx] : null
+
+        if (btn) {
+          if (customerId) {
+            await supabase.from('customer_actions').insert({
+              customer_id: customerId, project_id: projectId, action: 'broadcast_button_click',
+              data: { broadcast_id: broadcastId, button_text: btn.text, action_type: btn.action_type },
+            })
+          }
+
+          if (btn.action_type === 'goto_message' && btn.action_goto_message_id) {
+            await sendScenarioMessage(supabase, botToken, chatId, btn.action_goto_message_id, conversation.id, userId)
+          } else if (btn.action_type === 'trigger' && btn.action_trigger_word) {
+            const { data: triggerMsgs } = await supabase
+              .from('scenario_messages').select('*')
+              .in('scenario_id', scenarioIds).eq('is_start', true)
+              .eq('trigger_word', btn.action_trigger_word).limit(1)
+            if (triggerMsgs && triggerMsgs[0]) {
+              await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId, triggerMsgs[0].scenario_id)
+            }
+          }
+        }
+      }
+
+      if (body.callback_query?.id) {
+        void answerCallbackQuery(botToken, body.callback_query.id).catch(err =>
+          console.error('answerCallbackQuery error:', err)
+        )
+      }
+      return NextResponse.json({ ok: true })
+    }
+
     if (callbackData && callbackData.startsWith('btn:')) {
       const buttonId = callbackData.replace('btn:', '')
       const { data: btn } = await supabase.from('scenario_buttons').select('*').eq('id', buttonId).single()

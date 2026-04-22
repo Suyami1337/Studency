@@ -6,7 +6,14 @@ import { createClient } from '@/lib/supabase'
 import RichTextEditor from '@/components/RichTextEditor'
 import { MediaUpload } from '@/components/MediaUpload'
 
-type BroadcastButton = { text: string; url: string }
+type BroadcastButton = {
+  text: string
+  action_type: 'url' | 'trigger' | 'goto_message'
+  url?: string
+  action_trigger_word?: string
+  action_goto_message_id?: string
+  // legacy для обратной совместимости со старыми рассылками, где было { text, url }
+}
 
 type Broadcast = {
   id: string
@@ -226,7 +233,7 @@ export default function BroadcastsPage() {
   }
 
   function addButton() {
-    setButtons(prev => [...prev, { text: '', url: '' }])
+    setButtons(prev => [...prev, { text: '', action_type: 'url', url: '' }])
   }
   function updateButton(i: number, patch: Partial<BroadcastButton>) {
     setButtons(prev => prev.map((b, idx) => idx === i ? { ...b, ...patch } : b))
@@ -258,16 +265,25 @@ export default function BroadcastsPage() {
       alert('Выбери блок сценария')
       return
     }
-    // Валидация кнопок — если текст есть, URL должен быть и начинаться с http
+    // Валидация кнопок по action_type
     for (const b of buttons) {
-      if (!b.text.trim() && !b.url.trim()) continue
-      if (!isDraft && (!b.text.trim() || !b.url.trim())) {
-        alert('У кнопок должен быть и текст, и ссылка')
+      const hasAnyValue = b.text.trim() || b.url?.trim() || b.action_trigger_word?.trim() || b.action_goto_message_id
+      if (!hasAnyValue) continue
+      if (isDraft) continue
+      if (!b.text.trim()) {
+        alert('У кнопок должен быть текст')
         return
       }
-      if (!isDraft && b.url && !/^https?:\/\//i.test(b.url.trim())) {
-        alert('Ссылка кнопки должна начинаться с http:// или https://')
-        return
+      if (b.action_type === 'url') {
+        if (!b.url?.trim()) { alert('У URL-кнопки должна быть ссылка'); return }
+        if (!/^https?:\/\//i.test(b.url.trim())) {
+          alert('Ссылка кнопки должна начинаться с http:// или https://')
+          return
+        }
+      } else if (b.action_type === 'trigger') {
+        if (!b.action_trigger_word?.trim()) { alert('Укажи кодовое слово в кнопке'); return }
+      } else if (b.action_type === 'goto_message') {
+        if (!b.action_goto_message_id) { alert('Выбери сообщение в кнопке'); return }
       }
     }
 
@@ -286,7 +302,22 @@ export default function BroadcastsPage() {
     }
 
     setSaving(true)
-    const cleanButtons = buttons.filter(b => b.text.trim() && b.url.trim())
+    // Фильтруем «пустые» кнопки и обрезаем лишние поля по action_type
+    const cleanButtons = buttons
+      .filter(b => {
+        if (!b.text.trim()) return false
+        if (b.action_type === 'url') return !!b.url?.trim()
+        if (b.action_type === 'trigger') return !!b.action_trigger_word?.trim()
+        if (b.action_type === 'goto_message') return !!b.action_goto_message_id
+        return false
+      })
+      .map(b => ({
+        text: b.text.trim(),
+        action_type: b.action_type,
+        ...(b.action_type === 'url' ? { url: b.url?.trim() } : {}),
+        ...(b.action_type === 'trigger' ? { action_trigger_word: b.action_trigger_word?.trim() } : {}),
+        ...(b.action_type === 'goto_message' ? { action_goto_message_id: b.action_goto_message_id } : {}),
+      }))
     const res = await fetch('/api/broadcasts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -581,23 +612,58 @@ export default function BroadcastsPage() {
                     className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить</button>
                 </div>
                 {buttons.length === 0 ? (
-                  <p className="text-[10px] text-gray-400">Добавь кнопки со ссылками — появятся под сообщением в Telegram</p>
+                  <p className="text-[10px] text-gray-400">Добавь кнопки — появятся под сообщением в Telegram. Можно вести на ссылку, запускать кодовое слово или переводить на конкретный блок сценария.</p>
                 ) : (
                   <div className="space-y-2">
                     {buttons.map((b, i) => (
-                      <div key={i} className="flex items-start gap-2">
-                        <div className="flex-1 space-y-1">
+                      <div key={i} className="bg-gray-50 rounded-lg p-2 space-y-2 border border-gray-100">
+                        <div className="flex items-center gap-2">
                           <input type="text" value={b.text}
                             onChange={e => updateButton(i, { text: e.target.value })}
                             placeholder="Текст кнопки"
-                            className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
-                          <input type="url" value={b.url}
-                            onChange={e => updateButton(i, { url: e.target.value })}
-                            placeholder="https://…"
-                            className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                            className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                          <button type="button" onClick={() => removeButton(i)}
+                            className="text-gray-400 hover:text-red-500 text-xs">✕</button>
                         </div>
-                        <button type="button" onClick={() => removeButton(i)}
-                          className="text-gray-400 hover:text-red-500 text-sm px-1 pt-1">✕</button>
+                        <div className="flex items-center gap-2">
+                          <select value={b.action_type}
+                            onChange={e => updateButton(i, {
+                              action_type: e.target.value as BroadcastButton['action_type'],
+                              url: '', action_trigger_word: '', action_goto_message_id: undefined,
+                            })}
+                            className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+                            <option value="url">Ссылка</option>
+                            <option value="trigger">Запустить кодовое слово</option>
+                            <option value="goto_message">Перейти к сообщению</option>
+                          </select>
+                          {b.action_type === 'url' && (
+                            <input type="url" value={b.url ?? ''}
+                              onChange={e => updateButton(i, { url: e.target.value })}
+                              placeholder="https://..."
+                              className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                          )}
+                          {b.action_type === 'trigger' && (
+                            <input type="text" value={b.action_trigger_word ?? ''}
+                              onChange={e => updateButton(i, { action_trigger_word: e.target.value })}
+                              placeholder="Кодовое слово..."
+                              className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8]" />
+                          )}
+                          {b.action_type === 'goto_message' && (
+                            <select value={b.action_goto_message_id ?? ''}
+                              onChange={e => updateButton(i, { action_goto_message_id: e.target.value || undefined })}
+                              className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+                              <option value="">Выбери сообщение…</option>
+                              {blocks
+                                .filter(bl => !botId || bots.find(b2 => b2.id === botId)?.name === bl.bot_name)
+                                .map(bl => (
+                                  <option key={bl.id} value={bl.id}>
+                                    {bl.bot_name} / {bl.scenario_name} / #{bl.order_position}
+                                    {bl.text ? ` — ${stripHtml(bl.text).slice(0, 30)}` : ''}
+                                  </option>
+                                ))}
+                            </select>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -757,11 +823,21 @@ export default function BroadcastsPage() {
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Кнопки</p>
                   <div className="flex flex-wrap gap-1">
-                    {selectedBroadcast.buttons.map((btn, i) => (
-                      <span key={i} className="text-xs bg-[#F8F7FF] text-[#6A55F8] px-2 py-1 rounded border border-[#6A55F8]/20">
-                        {btn.text} → {btn.url}
-                      </span>
-                    ))}
+                    {selectedBroadcast.buttons.map((btn, i) => {
+                      const type = btn.action_type || (btn.url ? 'url' : 'url')
+                      let target = ''
+                      if (type === 'url') target = btn.url ?? ''
+                      else if (type === 'trigger') target = btn.action_trigger_word ? `/${btn.action_trigger_word}` : ''
+                      else if (type === 'goto_message') {
+                        const blk = blocks.find(b => b.id === btn.action_goto_message_id)
+                        target = blk ? `блок #${blk.order_position}` : 'блок сценария'
+                      }
+                      return (
+                        <span key={i} className="text-xs bg-[#F8F7FF] text-[#6A55F8] px-2 py-1 rounded border border-[#6A55F8]/20">
+                          {btn.text} → {target}
+                        </span>
+                      )
+                    })}
                   </div>
                 </div>
               )}
