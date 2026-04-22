@@ -47,22 +47,31 @@ export async function GET(_request: NextRequest) {
       try {
         const channel = followup.channel ?? 'telegram'
         if (channel === 'telegram' || channel === 'both') {
-          // Найдём customer для прокси-трекинга кликов по кнопкам
+          // Найдём customer для прокси-трекинга кликов по кнопкам.
+          // customer_id уже заполнен в chatbot_conversations webhook'ом, используем его;
+          // fallback — по telegram_id + project_id через join с telegram_bots
+          // (колонки project_id в chatbot_conversations НЕТ).
           let customerIdForClicks: string | null = null
           try {
             const { data: conv } = await supabase
               .from('chatbot_conversations')
-              .select('project_id, telegram_chat_id')
+              .select('customer_id, telegram_chat_id, telegram_bots(project_id)')
               .eq('id', item.conversation_id)
               .maybeSingle()
-            if (conv) {
-              const { data: customer } = await supabase
-                .from('customers')
-                .select('id')
-                .eq('telegram_id', String(conv.telegram_chat_id))
-                .eq('project_id', conv.project_id)
-                .maybeSingle()
-              if (customer) customerIdForClicks = customer.id
+            if (conv?.customer_id) {
+              customerIdForClicks = conv.customer_id
+            } else if (conv) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const projectId = (conv as any)?.telegram_bots?.project_id as string | undefined
+              if (projectId) {
+                const { data: customer } = await supabase
+                  .from('customers')
+                  .select('id')
+                  .eq('telegram_id', String(conv.telegram_chat_id))
+                  .eq('project_id', projectId)
+                  .maybeSingle()
+                if (customer) customerIdForClicks = customer.id
+              }
             }
           } catch { /* ignore */ }
           const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')

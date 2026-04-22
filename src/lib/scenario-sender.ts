@@ -174,18 +174,22 @@ export async function sendScenarioMessage(
     console.log(`[gate] msg=${msg.id} channel_lookup=${channel ? `found external_id=${channel.external_id} username=${channel.external_username || 'none'}` : 'NOT FOUND'}${channelErr ? ` error=${channelErr.code}:${channelErr.message}` : ''}`)
 
     if (channel) {
-      // Находим customer по conversation → chat_id=telegram_id
+      // Находим customer по conversation → chat_id=telegram_id.
+      // project_id достаём через join с telegram_bots (колонки project_id
+      // в chatbot_conversations нет).
       const { data: conv } = await supabase
         .from('chatbot_conversations')
-        .select('telegram_chat_id, project_id')
+        .select('telegram_chat_id, telegram_bots(project_id)')
         .eq('id', conversationId)
         .maybeSingle()
 
-      const { data: customer } = conv ? await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const convProjectId = (conv as any)?.telegram_bots?.project_id as string | undefined
+      const { data: customer } = conv && convProjectId ? await supabase
         .from('customers')
         .select('id, channel_subscribed')
         .eq('telegram_id', String(conv.telegram_chat_id))
-        .eq('project_id', conv.project_id)
+        .eq('project_id', convProjectId)
         .maybeSingle() : { data: null }
 
       // Реалтайм-проверка через Bot API (getChatMember) — источник истины
@@ -291,22 +295,31 @@ export async function sendScenarioMessage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
 
-  // Находим customer_id для прокси-трекинга кликов
+  // Находим customer_id для прокси-трекинга кликов.
+  // В chatbot_conversations.customer_id обычно уже заполнен webhook'ом при /start,
+  // используем его напрямую. Fallback — поиск по telegram_id + project_id через
+  // join с telegram_bots (в chatbot_conversations колонки project_id НЕТ).
   let customerIdForClicks: string | null = null
   try {
     const { data: conv } = await supabase
       .from('chatbot_conversations')
-      .select('project_id')
+      .select('customer_id, telegram_bots(project_id)')
       .eq('id', conversationId)
       .maybeSingle()
-    if (conv) {
-      const { data: customer } = await supabase
-        .from('customers')
-        .select('id')
-        .eq('telegram_id', String(chatId))
-        .eq('project_id', conv.project_id)
-        .maybeSingle()
-      if (customer) customerIdForClicks = customer.id
+    if (conv?.customer_id) {
+      customerIdForClicks = conv.customer_id
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const projectId = (conv as any)?.telegram_bots?.project_id as string | undefined
+      if (projectId) {
+        const { data: customer } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('telegram_id', String(chatId))
+          .eq('project_id', projectId)
+          .maybeSingle()
+        if (customer) customerIdForClicks = customer.id
+      }
     }
   } catch { /* ignore */ }
 
