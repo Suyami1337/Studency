@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 
 type Props = {
   value: string
@@ -10,91 +10,11 @@ type Props = {
 }
 
 /**
- * Escape только амперсанды. Угловые скобки оставляем как есть —
- * если юзер пишет `<b>` руками или через тулбар, Telegram увидит
- * тег и отрендерит его. Ошибочные `<xyz` просто останутся в тексте
- * (Telegram проигнорирует неизвестные теги).
+ * Telegram HTML → HTML пригодный для dangerouslySetInnerHTML в превью.
+ * \n → <br>, <tg-spoiler> → <span class="tg-spoiler"> для стилизации.
  */
-function escapeForTelegram(s: string) {
-  return s.replace(/&/g, '&amp;')
-}
-
-/**
- * DOM → Telegram HTML. Нормализует <strong>→<b>, <span style=bold>→<b>
- * и т.п. Пропускает текст с угловыми скобками как есть — если юзер
- * напечатал `<b>` руками, он останется в output.
- */
-function domToTelegramHtml(root: Node): string {
-  let out = ''
-
-  function walk(node: Node) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      out += escapeForTelegram(node.textContent || '')
-      return
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return
-
-    const el = node as HTMLElement
-    const tag = el.tagName.toLowerCase()
-    const style = el.getAttribute('style') || ''
-    const cls = el.getAttribute('class') || ''
-
-    if (tag === 'br') { out += '\n'; return }
-    if (tag === 'div' || tag === 'p') {
-      if (out && !out.endsWith('\n')) out += '\n'
-      Array.from(el.childNodes).forEach(walk)
-      if (!out.endsWith('\n')) out += '\n'
-      return
-    }
-
-    if (tag === 'span') {
-      if (cls.includes('tg-spoiler')) { out += '<tg-spoiler>'; Array.from(el.childNodes).forEach(walk); out += '</tg-spoiler>'; return }
-      if (/font-weight:\s*(bold|[6-9]\d\d)/i.test(style)) { out += '<b>'; Array.from(el.childNodes).forEach(walk); out += '</b>'; return }
-      if (/font-style:\s*italic/i.test(style)) { out += '<i>'; Array.from(el.childNodes).forEach(walk); out += '</i>'; return }
-      if (/text-decoration:[^;]*underline/i.test(style)) { out += '<u>'; Array.from(el.childNodes).forEach(walk); out += '</u>'; return }
-      if (/text-decoration:[^;]*line-through/i.test(style)) { out += '<s>'; Array.from(el.childNodes).forEach(walk); out += '</s>'; return }
-      Array.from(el.childNodes).forEach(walk)
-      return
-    }
-
-    const mapped: Record<string, string> = {
-      strong: 'b', b: 'b',
-      em: 'i', i: 'i',
-      ins: 'u', u: 'u',
-      del: 's', strike: 's', s: 's',
-      code: 'code', pre: 'pre',
-      blockquote: 'blockquote',
-      'tg-spoiler': 'tg-spoiler',
-    }
-    const canonical = mapped[tag]
-    if (canonical) {
-      out += `<${canonical}>`
-      Array.from(el.childNodes).forEach(walk)
-      out += `</${canonical}>`
-      return
-    }
-
-    if (tag === 'a') {
-      const href = el.getAttribute('href') || ''
-      out += `<a href="${href.replace(/"/g, '&quot;')}">`
-      Array.from(el.childNodes).forEach(walk)
-      out += '</a>'
-      return
-    }
-
-    Array.from(el.childNodes).forEach(walk)
-  }
-
-  Array.from(root.childNodes).forEach(walk)
-  return out.replace(/\n+$/, '')
-}
-
-/**
- * Telegram HTML → editable HTML для contenteditable.
- * \n → <br>, <tg-spoiler> → <span.tg-spoiler>.
- */
-function telegramToEditable(html: string): string {
-  let out = html || ''
+function toPreviewHtml(text: string): string {
+  let out = text || ''
   out = out.replace(/\r\n/g, '\n')
   out = out.split('\n').join('<br>')
   out = out.replace(/<tg-spoiler>/gi, '<span class="tg-spoiler">')
@@ -102,235 +22,130 @@ function telegramToEditable(html: string): string {
   return out
 }
 
+type FormatTag = 'b' | 'i' | 'u' | 's' | 'code' | 'blockquote' | 'tg-spoiler'
+
 export default function RichTextEditor({ value, onChange, placeholder, rows = 4 }: Props) {
-  const ref = useRef<HTMLDivElement>(null)
-  const lastEmitted = useRef<string>('')
-  const [isEmpty, setIsEmpty] = useState(!value)
-  const [hint, setHint] = useState<string | null>(null)
+  const ref = useRef<HTMLTextAreaElement>(null)
 
-  useEffect(() => {
-    if (!ref.current) return
-    if (value === lastEmitted.current) return
-    const editable = telegramToEditable(value || '')
-    if (ref.current.innerHTML !== editable) {
-      ref.current.innerHTML = editable
-      lastEmitted.current = value || ''
-      setIsEmpty(!value)
-    }
-  }, [value])
+  function wrap(tag: FormatTag) {
+    const ta = ref.current
+    if (!ta) return
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const selected = value.substring(start, end)
+    const before = `<${tag}>`
+    const after = `</${tag}>`
 
-  function emit() {
-    if (!ref.current) return
-    const html = domToTelegramHtml(ref.current)
-    lastEmitted.current = html
-    setIsEmpty(!ref.current.innerText.trim())
-    onChange(html)
-  }
+    const insertText = selected
+      ? `${before}${selected}${after}`
+      : `${before}${after}`
 
-  function showHint(msg: string) {
-    setHint(msg)
-    setTimeout(() => setHint(null), 2500)
-  }
+    const newValue = value.substring(0, start) + insertText + value.substring(end)
+    onChange(newValue)
 
-  /**
-   * Оборачивает текущее выделение в указанный тег (реальный DOM-элемент,
-   * не строку — браузер сразу отрисует форматирование).
-   * spoiler/code — через специальный путь (spoiler = span.tg-spoiler).
-   */
-  function applyFormat(tag: string) {
-    if (!ref.current) return
-    ref.current.focus()
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      showHint('Сначала выдели текст — потом жми кнопку')
-      return
-    }
-    const range = sel.getRangeAt(0)
-    if (!ref.current.contains(range.commonAncestorContainer)) {
-      showHint('Выдели текст внутри этого поля')
-      return
-    }
-    const text = range.toString()
-    if (!text) return
-
-    const el = tag === 'tg-spoiler' ? document.createElement('span') : document.createElement(tag)
-    if (tag === 'tg-spoiler') el.className = 'tg-spoiler'
-    // используем extractContents чтобы сохранить inline-форматирование внутри
-    const contents = range.extractContents()
-    el.appendChild(contents)
-    range.insertNode(el)
-
-    const r2 = document.createRange()
-    r2.setStartAfter(el)
-    r2.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(r2)
-    emit()
+    setTimeout(() => {
+      if (!ref.current) return
+      const cursorPos = selected
+        ? start + insertText.length
+        : start + before.length
+      ref.current.focus()
+      ref.current.setSelectionRange(cursorPos, cursorPos)
+    }, 0)
   }
 
   function insertLink() {
-    if (!ref.current) return
-    ref.current.focus()
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0) {
-      showHint('Поставь курсор в тексте или выдели слово')
-      return
-    }
-    const range = sel.getRangeAt(0)
-    if (!ref.current.contains(range.commonAncestorContainer)) return
+    const ta = ref.current
+    if (!ta) return
     const url = prompt('URL ссылки (https://...):', 'https://')
     if (!url || url === 'https://') return
-    const text = range.toString() || 'текст ссылки'
-    const a = document.createElement('a')
-    a.href = url
-    a.textContent = text
-    range.deleteContents()
-    range.insertNode(a)
-    const r2 = document.createRange()
-    r2.setStartAfter(a)
-    r2.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(r2)
-    emit()
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const selected = value.substring(start, end) || 'текст ссылки'
+    const insertText = `<a href="${url}">${selected}</a>`
+    const newValue = value.substring(0, start) + insertText + value.substring(end)
+    onChange(newValue)
+
+    setTimeout(() => {
+      if (!ref.current) return
+      const cursorPos = start + insertText.length
+      ref.current.focus()
+      ref.current.setSelectionRange(cursorPos, cursorPos)
+    }, 0)
   }
 
-  function onKeyDown(ev: React.KeyboardEvent<HTMLDivElement>) {
+  function handleKeyDown(ev: React.KeyboardEvent<HTMLTextAreaElement>) {
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey) {
-      if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); applyFormat('b') }
-      else if (ev.key === 'i' || ev.key === 'I') { ev.preventDefault(); applyFormat('i') }
-      else if (ev.key === 'u' || ev.key === 'U') { ev.preventDefault(); applyFormat('u') }
+      if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); wrap('b') }
+      else if (ev.key === 'i' || ev.key === 'I') { ev.preventDefault(); wrap('i') }
+      else if (ev.key === 'u' || ev.key === 'U') { ev.preventDefault(); wrap('u') }
     }
   }
 
-  function onPaste(ev: React.ClipboardEvent<HTMLDivElement>) {
-    ev.preventDefault()
-    const text = ev.clipboardData.getData('text/plain')
-    document.execCommand('insertText', false, text)
-  }
-
-  /**
-   * Когда юзер напечатал `<b>текст</b>` руками как обычный текст,
-   * при потере фокуса превращаем эти теги в реальные DOM-элементы
-   * (self-healing). Поддерживаем теги Telegram + <tg-spoiler>.
-   */
-  function onBlur() {
-    if (!ref.current) return
-    // Читаем чистый текст с кодировкой через innerHTML (там `<` уже как &lt;)
-    // и нормализуем: заменяем escaped-сущности тегов на реальные теги
-    const supportedTags = ['b', 'i', 'u', 's', 'code', 'pre', 'blockquote', 'tg-spoiler']
-    let html = ref.current.innerHTML
-    let changed = false
-    for (const tag of supportedTags) {
-      const open = new RegExp(`&lt;${tag}&gt;`, 'gi')
-      const close = new RegExp(`&lt;/${tag}&gt;`, 'gi')
-      if (open.test(html) || close.test(html)) {
-        html = html.replace(open, `<${tag}>`).replace(close, `</${tag}>`)
-        changed = true
-      }
-    }
-    // <a href="..."> с экранированием
-    const linkRe = /&lt;a\s+href=(?:"|&quot;)([^"&]*?)(?:"|&quot;)&gt;([\s\S]*?)&lt;\/a&gt;/gi
-    if (linkRe.test(html)) {
-      html = html.replace(linkRe, (_, url, text) => `<a href="${url}">${text}</a>`)
-      changed = true
-    }
-    if (changed) {
-      ref.current.innerHTML = html
-      // tg-spoiler в видимой зоне → span.tg-spoiler для стилизации
-      const spoilers = ref.current.querySelectorAll('tg-spoiler')
-      spoilers.forEach(s => {
-        const span = document.createElement('span')
-        span.className = 'tg-spoiler'
-        span.innerHTML = s.innerHTML
-        s.replaceWith(span)
-      })
-      emit()
-    }
-  }
-
-  const minHeight = Math.max(rows * 24, 72)
-
-  // Рендер превью — тот же текст но с тегами как реальное форматирование
-  const previewHtml = telegramToEditable(value || '')
+  const previewHtml = toPreviewHtml(value)
+  const hasText = !!(value && value.trim())
 
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-1 px-0.5">
-        <button type="button" onClick={() => applyFormat('b')} title="Жирный (Ctrl+B)"
+        <button type="button" onClick={() => wrap('b')} title="Жирный (Ctrl+B)"
           className="min-w-7 h-7 px-1.5 rounded text-xs font-bold bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">B</button>
-        <button type="button" onClick={() => applyFormat('i')} title="Курсив (Ctrl+I)"
+        <button type="button" onClick={() => wrap('i')} title="Курсив (Ctrl+I)"
           className="min-w-7 h-7 px-1.5 rounded text-xs italic bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">I</button>
-        <button type="button" onClick={() => applyFormat('u')} title="Подчёркнутый (Ctrl+U)"
+        <button type="button" onClick={() => wrap('u')} title="Подчёркнутый (Ctrl+U)"
           className="min-w-7 h-7 px-1.5 rounded text-xs underline bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">U</button>
-        <button type="button" onClick={() => applyFormat('s')} title="Зачёркнутый"
+        <button type="button" onClick={() => wrap('s')} title="Зачёркнутый"
           className="min-w-7 h-7 px-1.5 rounded text-xs line-through bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">S</button>
-        <button type="button" onClick={() => applyFormat('code')} title="Моноширинный"
+        <button type="button" onClick={() => wrap('code')} title="Моноширинный"
           className="min-w-7 h-7 px-1.5 rounded text-[10px] font-mono bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">{'</>'}</button>
-        <button type="button" onClick={() => applyFormat('blockquote')} title="Цитата"
+        <button type="button" onClick={() => wrap('blockquote')} title="Цитата"
           className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">❝</button>
-        <button type="button" onClick={() => applyFormat('tg-spoiler')} title="Спойлер"
+        <button type="button" onClick={() => wrap('tg-spoiler')} title="Спойлер"
           className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">⊘</button>
         <button type="button" onClick={insertLink} title="Ссылка"
           className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">🔗</button>
-        {hint && (
-          <span className="ml-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
-            {hint}
-          </span>
-        )}
-      </div>
-      <div className="relative">
-        <div
-          ref={ref}
-          contentEditable
-          suppressContentEditableWarning
-          onInput={emit}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          onBlur={onBlur}
-          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8]/20 rich-editor whitespace-pre-wrap break-words"
-          style={{ minHeight: `${minHeight}px` }}
-        />
-        {isEmpty && placeholder && (
-          <div className="absolute top-2 left-3 text-sm text-gray-400 pointer-events-none select-none">
-            {placeholder}
-          </div>
-        )}
+        <span className="text-[10px] text-gray-400 ml-2">Выдели текст → жми кнопку</span>
       </div>
 
-      {/* Живой превью — как клиент увидит сообщение в Telegram */}
-      {!isEmpty && (
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={ev => onChange(ev.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        rows={rows}
+        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8]/20 resize-y font-mono text-[13px]"
+      />
+
+      {/* Живой предпросмотр — как клиент увидит в Telegram */}
+      {hasText && (
         <div className="mt-2">
           <div className="text-[11px] text-gray-500 mb-1 flex items-center gap-1.5">
             <span>👁</span> Предпросмотр (как увидит клиент в Telegram):
           </div>
           <div
-            className="px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-editor-preview whitespace-pre-wrap break-words"
+            className="px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-preview whitespace-pre-wrap break-words"
             dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
         </div>
       )}
+
       <style jsx global>{`
-        /* Форсированные стили — чтобы Tailwind preflight не гасил форматирование */
-        .rich-editor, .rich-editor-preview { line-height: 1.45; }
-        .rich-editor b, .rich-editor strong,
-        .rich-editor-preview b, .rich-editor-preview strong { font-weight: 700 !important; }
-        .rich-editor i, .rich-editor em,
-        .rich-editor-preview i, .rich-editor-preview em { font-style: italic !important; }
-        .rich-editor u, .rich-editor ins,
-        .rich-editor-preview u, .rich-editor-preview ins { text-decoration: underline !important; }
-        .rich-editor s, .rich-editor strike, .rich-editor del,
-        .rich-editor-preview s, .rich-editor-preview strike, .rich-editor-preview del { text-decoration: line-through !important; }
-        .rich-editor a, .rich-editor-preview a { color: #6A55F8 !important; text-decoration: underline !important; }
-        .rich-editor code, .rich-editor-preview code {
+        .rich-preview { line-height: 1.45; }
+        .rich-preview b, .rich-preview strong { font-weight: 700 !important; }
+        .rich-preview i, .rich-preview em { font-style: italic !important; }
+        .rich-preview u, .rich-preview ins { text-decoration: underline !important; }
+        .rich-preview s, .rich-preview strike, .rich-preview del { text-decoration: line-through !important; }
+        .rich-preview a { color: #6A55F8 !important; text-decoration: underline !important; }
+        .rich-preview code {
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
           background: #F3F4F6; padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
         }
-        .rich-editor pre, .rich-editor-preview pre {
+        .rich-preview pre {
           font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
           background: #F3F4F6; padding: 6px 8px; border-radius: 4px;
           white-space: pre-wrap;
         }
-        .rich-editor blockquote, .rich-editor-preview blockquote {
+        .rich-preview blockquote {
           border-left: 3px solid #6A55F8;
           padding: 2px 10px;
           margin: 4px 0;
@@ -338,7 +153,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           background: #F9FAFB;
           border-radius: 0 4px 4px 0;
         }
-        .rich-editor .tg-spoiler, .rich-editor-preview .tg-spoiler {
+        .rich-preview .tg-spoiler {
           background: #D1D5DB;
           color: transparent;
           text-shadow: 0 0 8px rgba(0,0,0,0.5);
@@ -346,7 +161,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           padding: 0 2px;
           cursor: pointer;
         }
-        .rich-editor .tg-spoiler:hover, .rich-editor-preview .tg-spoiler:hover {
+        .rich-preview .tg-spoiler:hover {
           color: inherit;
           text-shadow: none;
           background: transparent;
