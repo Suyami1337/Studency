@@ -1,11 +1,14 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
+
+// Lazy-load эмодзи-пикера: ~110KB gzipped, не тянем его пока юзер не нажмёт кнопку.
+const EmojiPicker = lazy(() => import('emoji-picker-react'))
 
 // Кастомный inline-mark для Telegram-спойлера. Работает как жирный/курсив —
 // toggle на выделенном тексте, сериализуется в <tg-spoiler>...</tg-spoiler>.
@@ -101,6 +104,20 @@ function fromTelegramHtml(html: string): string {
 
 export default function RichTextEditor({ value, onChange, placeholder, rows = 4 }: Props) {
   const lastEmitted = useRef<string>('')
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const emojiAnchorRef = useRef<HTMLDivElement>(null)
+
+  // Закрываем эмодзи-пикер при клике вне его
+  useEffect(() => {
+    if (!emojiOpen) return
+    function handler(ev: MouseEvent) {
+      if (!emojiAnchorRef.current) return
+      if (!emojiAnchorRef.current.contains(ev.target as Node)) setEmojiOpen(false)
+    }
+    // Небольшой задерж, чтобы клик который открыл пикер не закрыл его же
+    const t = setTimeout(() => document.addEventListener('mousedown', handler), 0)
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', handler) }
+  }, [emojiOpen])
 
   const editor = useEditor({
     extensions: [
@@ -211,6 +228,34 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
         <button type="button" onClick={setLink}
           title="Ссылка"
           className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('link') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>🔗</button>
+
+        {/* Эмодзи-пикер — стандартные Unicode эмодзи, системные шрифты */}
+        <div ref={emojiAnchorRef} className="relative">
+          <button type="button"
+            onClick={() => setEmojiOpen(v => !v)}
+            title="Эмодзи"
+            className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${emojiOpen ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] text-gray-700'}`}>
+            😀
+          </button>
+          {emojiOpen && (
+            <div className="absolute z-50 top-full mt-1 left-0">
+              <Suspense fallback={<div className="bg-white border border-gray-200 rounded-lg shadow-lg p-4 text-xs text-gray-400">Загрузка эмодзи…</div>}>
+                <EmojiPicker
+                  onEmojiClick={(emojiData) => {
+                    editor.chain().focus().insertContent(emojiData.emoji).run()
+                    // Не закрываем — даёт быстро вставить несколько
+                  }}
+                  searchPlaceholder="Поиск эмодзи"
+                  width={320}
+                  height={380}
+                  skinTonesDisabled
+                  previewConfig={{ showPreview: false }}
+                  lazyLoadEmojis
+                />
+              </Suspense>
+            </div>
+          )}
+        </div>
       </div>
 
       <div
