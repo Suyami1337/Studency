@@ -51,7 +51,7 @@ type ScenarioBlock = {
 }
 
 type SegmentType = 'all' | 'funnel_stage' | 'tag' | 'source' | 'scenario_message_in' | 'scenario_message_not_in'
-type TabKey = 'all' | 'draft' | 'scheduled' | 'sent'
+type TabKey = 'calendar' | 'all' | 'draft' | 'scheduled' | 'sent'
 type ScheduleMode = 'now' | 'later' | 'draft'
 
 function toLocalDateTimeInput(date: Date): string {
@@ -82,7 +82,7 @@ export default function BroadcastsPage() {
   const editorOpen = editorId !== null
   const isEditing = editorOpen && editorId !== 'new'
   const [selectedBroadcast, setSelectedBroadcast] = useState<Broadcast | null>(null)
-  const [activeTab, setActiveTab] = useState<TabKey>('all')
+  const [activeTab, setActiveTab] = useState<TabKey>('calendar')
 
   // Получатели рассылки (для detail-модалки)
   type Delivery = {
@@ -195,6 +195,7 @@ export default function BroadcastsPage() {
   }, [broadcasts, activeTab])
 
   const counts = useMemo(() => ({
+    calendar: broadcasts.filter(b => !!(b.scheduled_at || b.sent_at)).length,
     all: broadcasts.length,
     draft: broadcasts.filter(b => b.status === 'draft').length,
     scheduled: broadcasts.filter(b => b.status === 'scheduled').length,
@@ -405,6 +406,26 @@ export default function BroadcastsPage() {
   }
 
   /**
+   * Открыть пустой редактор с предустановленной датой отправки.
+   * Используется из календаря: клик по дню → новая запланированная рассылка.
+   */
+  function handleOpenNewAt(date: Date) {
+    resetForm()
+    const target = new Date(date)
+    // Если кликнули на прошедший день — ставим сегодня+15 мин как в обычном режиме
+    const now = new Date()
+    if (target.getTime() < now.getTime()) {
+      target.setTime(now.getTime() + 15 * 60 * 1000)
+    } else {
+      // По умолчанию 10:00 выбранного дня
+      target.setHours(10, 0, 0, 0)
+    }
+    setScheduleMode('later')
+    setScheduledAt(toLocalDateTimeInput(target))
+    setEditorId('new')
+  }
+
+  /**
    * Открыть редактор для существующей рассылки: prefill полей и setEditorId(id).
    * Работает для draft и scheduled — sent/sending/failed не редактируются.
    */
@@ -572,6 +593,7 @@ export default function BroadcastsPage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 mb-4 border-b border-gray-100">
         {([
+          { id: 'calendar' as const, label: '📅 Календарь' },
           { id: 'all' as const, label: 'Все' },
           { id: 'draft' as const, label: 'Черновики' },
           { id: 'scheduled' as const, label: 'Запланированные' },
@@ -591,6 +613,16 @@ export default function BroadcastsPage() {
 
       {loading ? (
         <div className="text-center py-12 text-sm text-gray-400">Загрузка…</div>
+      ) : activeTab === 'calendar' ? (
+        <BroadcastCalendar
+          broadcasts={broadcasts}
+          onDayClick={handleOpenNewAt}
+          onBroadcastClick={b => {
+            if (b.status === 'draft' || b.status === 'scheduled') handleEdit(b)
+            else setSelectedBroadcast(b)
+          }}
+          statusLabel={statusLabel}
+        />
       ) : filteredBroadcasts.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-2">📢</div>
@@ -1133,6 +1165,191 @@ export default function BroadcastsPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// =============================================
+// CALENDAR VIEW — месячная сетка рассылок
+// =============================================
+// Показывает запланированные и отправленные рассылки на календарной сетке.
+// Клик по дню → создание новой рассылки на этот день (10:00 по умолчанию).
+// Клик по карточке рассылки → редактор (draft/scheduled) или detail (sent).
+// Неделя начинается с понедельника (ru локаль).
+
+function dateKey(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function BroadcastCalendar({ broadcasts, onDayClick, onBroadcastClick, statusLabel }: {
+  broadcasts: Broadcast[]
+  onDayClick: (date: Date) => void
+  onBroadcastClick: (b: Broadcast) => void
+  statusLabel: (s: string) => { label: string; color: string }
+}) {
+  // Текущий месяц (первое число, 00:00 локально)
+  const [viewMonth, setViewMonth] = useState(() => {
+    const d = new Date()
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    return d
+  })
+
+  const today = useMemo(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    return d
+  }, [])
+
+  // Группируем рассылки по YYYY-MM-DD: приоритет scheduled_at, иначе sent_at.
+  const broadcastsByDate = useMemo(() => {
+    const map = new Map<string, Broadcast[]>()
+    for (const b of broadcasts) {
+      const iso = b.scheduled_at || b.sent_at
+      if (!iso) continue
+      const key = dateKey(new Date(iso))
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(b)
+    }
+    // Сортируем внутри дня по времени
+    for (const arr of map.values()) {
+      arr.sort((a, b) => {
+        const ai = new Date(a.scheduled_at || a.sent_at || 0).getTime()
+        const bi = new Date(b.scheduled_at || b.sent_at || 0).getTime()
+        return ai - bi
+      })
+    }
+    return map
+  }, [broadcasts])
+
+  // Сетка 6 недель × 7 дней, стартует с понедельника предыдущего/текущего месяца
+  const cells = useMemo(() => {
+    const first = new Date(viewMonth)
+    // JS: 0=Sun..6=Sat, нам надо 0=Mon..6=Sun
+    const firstDow = (first.getDay() + 6) % 7
+    const start = new Date(first)
+    start.setDate(start.getDate() - firstDow)
+    const result: Date[] = []
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start)
+      d.setDate(d.getDate() + i)
+      result.push(d)
+    }
+    return result
+  }, [viewMonth])
+
+  const monthTitle = viewMonth.toLocaleString('ru', { month: 'long', year: 'numeric' })
+
+  function prevMonth() {
+    const d = new Date(viewMonth)
+    d.setMonth(d.getMonth() - 1)
+    setViewMonth(d)
+  }
+  function nextMonth() {
+    const d = new Date(viewMonth)
+    d.setMonth(d.getMonth() + 1)
+    setViewMonth(d)
+  }
+  function goToday() {
+    const d = new Date()
+    d.setDate(1)
+    d.setHours(0, 0, 0, 0)
+    setViewMonth(d)
+  }
+
+  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <button onClick={prevMonth}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100">◀</button>
+          <button onClick={nextMonth}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100">▶</button>
+          <h3 className="text-base font-semibold text-gray-900 capitalize ml-2">{monthTitle}</h3>
+        </div>
+        <button onClick={goToday}
+          className="text-xs font-medium text-[#6A55F8] hover:underline">Сегодня</button>
+      </div>
+
+      {/* Day names */}
+      <div className="grid grid-cols-7 border-b border-gray-100">
+        {dayNames.map((n, i) => (
+          <div key={n} className={`px-2 py-2 text-[10px] font-medium uppercase tracking-wider text-center ${i >= 5 ? 'text-red-400' : 'text-gray-400'}`}>
+            {n}
+          </div>
+        ))}
+      </div>
+
+      {/* Cells */}
+      <div className="grid grid-cols-7 auto-rows-fr">
+        {cells.map((d, idx) => {
+          const inMonth = d.getMonth() === viewMonth.getMonth()
+          const isToday = d.getTime() === today.getTime()
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6
+          const isPast = d.getTime() < today.getTime()
+          const items = broadcastsByDate.get(dateKey(d)) ?? []
+          return (
+            <button
+              key={idx}
+              onClick={() => onDayClick(new Date(d))}
+              className={`group relative min-h-[104px] text-left p-2 border-r border-b border-gray-100 last:border-r-0 transition-colors ${
+                inMonth ? 'bg-white hover:bg-[#F8F7FF]' : 'bg-gray-50/60 hover:bg-[#F0EDFF]'
+              } ${isToday ? 'ring-1 ring-inset ring-[#6A55F8]' : ''}`}
+              title={isPast ? 'Прошедший день — рассылку можно посмотреть' : 'Кликни чтобы запланировать рассылку на этот день'}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-semibold ${
+                  isToday ? 'text-[#6A55F8]'
+                    : !inMonth ? 'text-gray-300'
+                    : isWeekend ? 'text-red-400'
+                    : 'text-gray-700'
+                }`}>{d.getDate()}</span>
+                {inMonth && !isPast && (
+                  <span className="opacity-0 group-hover:opacity-100 text-[10px] text-[#6A55F8] transition-opacity">+</span>
+                )}
+              </div>
+
+              <div className="space-y-0.5">
+                {items.slice(0, 3).map(b => {
+                  const sl = statusLabel(b.status)
+                  const time = (b.scheduled_at || b.sent_at)
+                    ? new Date(b.scheduled_at || b.sent_at || '').toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })
+                    : ''
+                  return (
+                    <div key={b.id}
+                      onClick={ev => { ev.stopPropagation(); onBroadcastClick(b) }}
+                      className={`text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer hover:brightness-95 ${sl.color}`}
+                      title={`${b.name}${time ? ' — ' + time : ''}`}>
+                      <span className="font-mono mr-1 opacity-70">{time}</span>
+                      {b.name}
+                    </div>
+                  )
+                })}
+                {items.length > 3 && (
+                  <div className="text-[10px] text-gray-400 pl-1.5">+{items.length - 3} ещё</div>
+                )}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="p-3 border-t border-gray-100 flex items-center gap-3 text-[10px] text-gray-400 flex-wrap">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-indigo-400"></span> запланирована
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-green-400"></span> отправлено
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-red-400"></span> ошибка
+        </span>
+        <span className="ml-auto">Клик по дню — создать рассылку на этот день</span>
+      </div>
     </div>
   )
 }
