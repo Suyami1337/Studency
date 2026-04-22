@@ -25,6 +25,7 @@ type Customer = {
   bot_blocked?: boolean | null
   bot_subscribed_at?: string | null
   bot_blocked_at?: string | null
+  bot_blocked_source?: 'webhook' | 'sync' | 'broadcast' | null
   channel_subscribed?: boolean | null
 }
 
@@ -339,17 +340,34 @@ function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: 
                 🤖 Подписан на бота
               </span>
             )}
-            {current.bot_blocked && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
-                title={current.bot_blocked_at ? `С ${new Date(current.bot_blocked_at).toLocaleString('ru')}` : ''}>
-                🚫 Заблокировал бота
-              </span>
-            )}
-            {current.bot_subscribed === false && !current.bot_blocked && current.telegram_id && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
-                ⚪ Отписан от бота
-              </span>
-            )}
+            {current.bot_blocked && (() => {
+              const when = current.bot_blocked_at ? new Date(current.bot_blocked_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : null
+              const exact = current.bot_blocked_source === 'webhook'
+              const label = when
+                ? exact ? `🚫 Заблокировал бота ${when}` : `🚫 Заблокировал бота (обнаружено ${when})`
+                : '🚫 Заблокировал бота'
+              const tooltip = exact
+                ? 'Точное время — Telegram уведомил нас в момент блокировки'
+                : 'Приблизительное время — клиент мог заблокировать раньше, это момент когда мы обнаружили'
+              return (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
+                  title={tooltip}>
+                  {label}
+                </span>
+              )
+            })()}
+            {current.bot_subscribed === false && !current.bot_blocked && current.telegram_id && (() => {
+              const when = current.bot_blocked_at ? new Date(current.bot_blocked_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : null
+              const exact = current.bot_blocked_source === 'webhook'
+              const label = when
+                ? exact ? `⚪ Отписан от бота ${when}` : `⚪ Отписан от бота (обнаружено ${when})`
+                : '⚪ Отписан от бота'
+              return (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                  {label}
+                </span>
+              )
+            })()}
             {current.channel_subscribed === true && (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
                 📣 Подписан на канал

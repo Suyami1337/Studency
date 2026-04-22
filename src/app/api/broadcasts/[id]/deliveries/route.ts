@@ -25,7 +25,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('broadcast_deliveries')
-    .select('id, status, error, sent_at, created_at, customer_id, customers(full_name, telegram_username, telegram_id, email)')
+    .select('id, status, error, sent_at, created_at, customer_id, customers(full_name, telegram_username, telegram_id, email, bot_blocked_at, bot_blocked_source)')
     .eq('broadcast_id', id)
     .order('created_at', { ascending: false })
     .limit(1000)

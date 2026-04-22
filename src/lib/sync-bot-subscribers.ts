@@ -82,6 +82,7 @@ export async function syncBotSubscribers(
               bot_subscribed: false,
               bot_blocked: isForbidden,
               bot_blocked_at: new Date().toISOString(),
+              bot_blocked_source: 'sync',
             }).eq('id', conv.customer_id)
           }
           result.blocked++

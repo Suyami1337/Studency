@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
               await supabase.from('customers').update({
                 bot_subscribed: false, bot_blocked: newStatus === 'kicked',
                 bot_blocked_at: new Date().toISOString(),
+                bot_blocked_source: 'webhook',
               }).eq('id', customer.id)
               await supabase.from('customer_actions').insert({
                 customer_id: customer.id, project_id: bot.project_id,

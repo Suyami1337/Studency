@@ -92,7 +92,14 @@ export default function BroadcastsPage() {
     sent_at: string | null
     created_at: string
     customer_id: string | null
-    customers: { full_name: string | null; telegram_username: string | null; telegram_id: string | null; email: string | null } | null
+    customers: {
+      full_name: string | null
+      telegram_username: string | null
+      telegram_id: string | null
+      email: string | null
+      bot_blocked_at?: string | null
+      bot_blocked_source?: string | null
+    } | null
   }
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [deliveriesLoading, setDeliveriesLoading] = useState(false)
@@ -121,10 +128,11 @@ export default function BroadcastsPage() {
   const [saving, setSaving] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
 
-  // Preview count
+  // Preview count — под капотом сначала синхронизирует список подписчиков
+  // бота через sendChatAction, потом пересчитывает. Юзер видит одну кнопку.
   const [previewCount, setPreviewCount] = useState<number | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
+  const [previewStage, setPreviewStage] = useState<'sync' | 'count' | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -214,6 +222,12 @@ export default function BroadcastsPage() {
   // Сброс превью если меняются параметры сегмента/канала/бота
   useEffect(() => { setPreviewCount(null) }, [channel, botId, segmentType, segmentValue])
 
+  /**
+   * Две стадии под одной кнопкой:
+   *  1) sync — ping через Telegram API, помечаем заблокировавших
+   *  2) count — запрашиваем preview-count с актуальными данными
+   * Для email-only канала sync пропускаем.
+   */
   async function handlePreviewCount() {
     if ((channel === 'telegram' || channel === 'both') && !botId) {
       alert('Для Telegram-канала выбери бота')
@@ -221,6 +235,22 @@ export default function BroadcastsPage() {
     }
     setPreviewLoading(true)
     try {
+      // 1. Сначала — проверка актуальности подписчиков (только для telegram-канала)
+      if ((channel === 'telegram' || channel === 'both') && botId) {
+        setPreviewStage('sync')
+        try {
+          await fetch('/api/broadcasts/sync-subscribers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ telegram_bot_id: botId }),
+          })
+        } catch (err) {
+          console.warn('[preview] sync failed, счёт всё равно покажу:', err)
+        }
+      }
+
+      // 2. Подсчёт получателей
+      setPreviewStage('count')
       const res = await fetch('/api/broadcasts/preview-count', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -237,40 +267,7 @@ export default function BroadcastsPage() {
       else setPreviewCount(json.count ?? 0)
     } finally {
       setPreviewLoading(false)
-    }
-  }
-
-  /**
-   * Проверить всех подписчиков бота через Telegram API (sendChatAction).
-   * Обновляет chat_blocked для тех кто заблокировал/удалил бота → следующий
-   * «Подсчитать» даст более точное число.
-   */
-  async function handleSyncSubscribers() {
-    if (!botId) {
-      alert('Выбери бота сначала')
-      return
-    }
-    setSyncing(true)
-    try {
-      const res = await fetch('/api/broadcasts/sync-subscribers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ telegram_bot_id: botId }),
-      })
-      const json = await res.json()
-      if (json.error) {
-        alert('Ошибка: ' + json.error)
-        return
-      }
-      const msg = `Проверено ${json.checked} из ${json.total}.`
-        + (json.blocked ? ` Новых отписавшихся: ${json.blocked}.` : '')
-        + (json.unblocked ? ` Разблокировавших: ${json.unblocked}.` : '')
-        + (!json.blocked && !json.unblocked ? ' Изменений нет.' : '')
-      alert(msg)
-      // Автоматически обновляем счётчик после синка
-      await handlePreviewCount()
-    } finally {
-      setSyncing(false)
+      setPreviewStage(null)
     }
   }
 
@@ -885,23 +882,19 @@ export default function BroadcastsPage() {
                 </div>
               )}
 
-              {/* Preview count + sync subscribers */}
+              {/* Preview count (включает проверку актуальности подписчиков) */}
               <div className="flex items-center gap-3 pt-1 flex-wrap">
-                <button type="button" onClick={handlePreviewCount} disabled={previewLoading || syncing}
+                <button type="button" onClick={handlePreviewCount} disabled={previewLoading}
+                  title="Проверяем через Telegram кто реально доступен боту, потом считаем получателей"
                   className="text-xs text-[#6A55F8] font-medium hover:underline disabled:opacity-50">
-                  {previewLoading ? 'Считаю…' : '🔢 Подсчитать получателей'}
+                  {previewStage === 'sync' ? 'Проверяю подписчиков…'
+                    : previewStage === 'count' ? 'Считаю…'
+                    : '🔢 Подсчитать получателей'}
                 </button>
-                {previewCount !== null && (
+                {previewCount !== null && !previewLoading && (
                   <span className="text-xs text-gray-700">
                     → <b>{previewCount}</b> {previewCount === 1 ? 'клиент' : previewCount < 5 ? 'клиента' : 'клиентов'}
                   </span>
-                )}
-                {(channel === 'telegram' || channel === 'both') && botId && (
-                  <button type="button" onClick={handleSyncSubscribers} disabled={syncing || previewLoading}
-                    title="Проверить через Telegram кто реально доступен боту. Может занять до минуты для большой базы."
-                    className="text-xs text-gray-500 hover:text-[#6A55F8] hover:underline disabled:opacity-50">
-                    {syncing ? 'Синхронизирую…' : '🔄 Обновить подписчиков'}
-                  </button>
                 )}
               </div>
 
@@ -1087,6 +1080,18 @@ export default function BroadcastsPage() {
                           const name = d.customers?.full_name || d.customers?.telegram_username || 'Без имени'
                           const uname = d.customers?.telegram_username
                           const href = d.customer_id ? `/project/${projectId}/users?open=${d.customer_id}` : null
+                          // Формируем человекочитаемую ошибку для Telegram-отказов
+                          const errLow = (d.error ?? '').toLowerCase()
+                          const isBlocked = errLow.includes('forbidden') || errLow.includes("can't initiate conversation") || errLow.includes('bot was blocked')
+                          const isGone = errLow.includes('chat not found') || errLow.includes('user is deactivated')
+                          const blockedAt = d.customers?.bot_blocked_at
+                            ? new Date(d.customers.bot_blocked_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                            : null
+                          const exact = d.customers?.bot_blocked_source === 'webhook'
+                          const prettyError = isBlocked
+                            ? (blockedAt ? (exact ? `Заблокировал бота ${blockedAt}` : `Заблокировал бота (обнаружено ${blockedAt})`) : 'Заблокировал бота')
+                            : isGone ? 'Удалил чат с ботом'
+                            : (d.error ? d.error.slice(0, 60) : 'Ошибка')
                           return (
                             <tr key={d.id} className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors">
                               <td className="px-3 py-2 text-gray-900 truncate max-w-[120px]">
@@ -1113,7 +1118,7 @@ export default function BroadcastsPage() {
                                 {d.status === 'sent' ? (
                                   <span className="text-green-600">✓ Отправлено</span>
                                 ) : (
-                                  <span className="text-red-500" title={d.error ?? ''}>✗ {d.error ? d.error.slice(0, 40) : 'Ошибка'}</span>
+                                  <span className="text-red-500" title={d.error ?? ''}>✗ {prettyError}</span>
                                 )}
                               </td>
                             </tr>

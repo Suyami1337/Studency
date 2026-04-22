@@ -131,6 +131,13 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
               await supabase.from('chatbot_conversations')
                 .update({ chat_blocked: true })
                 .eq('id', r.conversation_id)
+              const isForbidden = res.error.toLowerCase().includes('forbidden')
+              await supabase.from('customers').update({
+                bot_subscribed: false,
+                bot_blocked: isForbidden,
+                bot_blocked_at: new Date().toISOString(),
+                bot_blocked_source: 'broadcast',
+              }).eq('id', r.id)
             }
           }
         } catch (err) {
