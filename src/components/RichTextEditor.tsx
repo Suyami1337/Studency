@@ -59,18 +59,40 @@ function toTelegramHtml(html: string): string {
 
 /**
  * Telegram HTML → HTML пригодный для TipTap.
- * Каждую строку (\n-разделитель) превращаем в отдельный <p> — так blockquote
- * и другие block-команды работают построчно, а не на весь текст сразу.
- * Если бы мы использовали <br>, все строки сливались бы в один параграф
- * и цитата охватывала бы весь текст.
+ * Каждую строку (\n-разделитель) превращаем в отдельный <p>.
+ * Но <blockquote>...</blockquote> защищаем от split — внутри цитаты \n тоже
+ * превращаем в параграфы, но НЕ разбиваем саму цитату.
  */
 function fromTelegramHtml(html: string): string {
-  const out = html || ''
-  if (!out) return ''
-  // Не трогаем <blockquote>...</blockquote> целиком (там уже блочная структура)
-  // Остальные \n превращаем в границу параграфа
-  const lines = out.split('\n')
-  return lines.map(line => line === '' ? '<p></p>' : `<p>${line}</p>`).join('')
+  if (!html) return ''
+
+  // 1. Вытаскиваем blockquote'ы, заменяем на placeholder'ы
+  const blockquotes: string[] = []
+  const masked = html.replace(/<blockquote>([\s\S]*?)<\/blockquote>/gi, (_, inner: string) => {
+    // Внутри blockquote каждую строку оборачиваем в <p>
+    const innerHtml = inner
+      .split('\n')
+      .map(l => l === '' ? '<p></p>' : `<p>${l}</p>`)
+      .join('')
+    const idx = blockquotes.length
+    blockquotes.push(`<blockquote>${innerHtml}</blockquote>`)
+    return `\x00BQ${idx}\x00`
+  })
+
+  // 2. Обычные \n за пределами blockquote → разделитель параграфов
+  const lines = masked.split('\n')
+  let out = lines.map(line => {
+    // Если строка — это только placeholder blockquote, не оборачиваем в <p>
+    if (/^\x00BQ\d+\x00$/.test(line)) return line
+    return line === '' ? '<p></p>' : `<p>${line}</p>`
+  }).join('')
+
+  // 3. Восстанавливаем blockquote'ы
+  blockquotes.forEach((bq, i) => {
+    out = out.replace(new RegExp(`\x00BQ${i}\x00`, 'g'), bq)
+  })
+
+  return out
 }
 
 export default function RichTextEditor({ value, onChange, placeholder, rows = 4 }: Props) {
