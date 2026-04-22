@@ -81,33 +81,42 @@ export async function sendFollowupContent(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buttons?: any[]
 ) {
-  const caption = f.text || undefined
+  const text = f.text || ''
   const kb = buttons && buttons.length > 0 ? buttons : undefined
+  // Telegram caption limit = 1024. При длинном тексте отправляем медиа без
+  // подписи + текст отдельным сообщением с кнопками (sendMessage limit 4096).
+  const CAPTION_MAX = 1024
+  const captionTooLong = !!(f.media_type && f.media_url) && text.length > CAPTION_MAX
+  const caption = captionTooLong ? undefined : (text || undefined)
+  const mediaButtons = captionTooLong ? undefined : kb
+
   if (f.media_type && f.media_url) {
     switch (f.media_type) {
       case 'photo':
-        await sendTelegramPhoto(botToken, chatId, f.media_url, caption, kb)
-        return
+        await sendTelegramPhoto(botToken, chatId, f.media_url, caption, mediaButtons)
+        break
       case 'video':
-        await sendTelegramVideo(botToken, chatId, f.media_url, caption, kb)
-        return
+        await sendTelegramVideo(botToken, chatId, f.media_url, caption, mediaButtons)
+        break
       case 'animation':
-        await sendTelegramAnimation(botToken, chatId, f.media_url, caption, kb)
-        return
+        await sendTelegramAnimation(botToken, chatId, f.media_url, caption, mediaButtons)
+        break
       case 'video_note':
         await sendTelegramVideoNote(botToken, chatId, f.media_url)
-        if (f.text) await sendTelegramMessage(botToken, chatId, f.text, kb)
+        if (text) await sendTelegramMessage(botToken, chatId, text, kb)
         return
       case 'audio':
-        await sendTelegramAudio(botToken, chatId, f.media_url, caption, kb)
-        return
+        await sendTelegramAudio(botToken, chatId, f.media_url, caption, mediaButtons)
+        break
       case 'document':
       default:
-        await sendTelegramDocument(botToken, chatId, f.media_url, caption, kb)
-        return
+        await sendTelegramDocument(botToken, chatId, f.media_url, caption, mediaButtons)
+        break
     }
+    if (captionTooLong && text) await sendTelegramMessage(botToken, chatId, text, kb)
+    return
   }
-  if (f.text) await sendTelegramMessage(botToken, chatId, f.text, kb)
+  if (text) await sendTelegramMessage(botToken, chatId, text, kb)
 }
 
 // Сборка inline-кнопок для followup — те же типы что у сообщения (url/trigger/goto_message),
@@ -348,42 +357,54 @@ export async function sendScenarioMessage(
 
   const hasButtons = telegramButtons.length > 0
   const buttonsArg = hasButtons ? telegramButtons : undefined
-  const caption = msg.text || undefined
 
-  // Отправляем в зависимости от типа медиа.
-  // Проверяем результат Telegram API — если сообщение не ушло, не создаём
-  // фантомные followups и не идём дальше по цепочке.
+  // Telegram ограничивает caption у медиа до 1024 символов. Если текст длиннее,
+  // отправляем медиа БЕЗ подписи, а полный текст — отдельным сообщением с кнопками
+  // (у sendMessage лимит 4096). Иначе Telegram вернёт MEDIA_CAPTION_TOO_LONG
+  // и сообщение вообще не уйдёт.
+  const CAPTION_MAX = 1024
+  const text = msg.text || ''
+  const hasMedia = !!(msg.media_type && msg.media_url)
+  const captionTooLong = hasMedia && text.length > CAPTION_MAX
+  const caption = captionTooLong ? undefined : (text || undefined)
+  const mediaButtons = captionTooLong ? undefined : buttonsArg
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sendResult: any = null
-  if (msg.media_type && msg.media_url) {
+  if (hasMedia) {
     switch (msg.media_type) {
       case 'photo':
-        sendResult = await sendTelegramPhoto(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramPhoto(botToken, chatId, msg.media_url, caption, mediaButtons)
         break
       case 'video':
-        sendResult = await sendTelegramVideo(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramVideo(botToken, chatId, msg.media_url, caption, mediaButtons)
         break
       case 'animation':
-        sendResult = await sendTelegramAnimation(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramAnimation(botToken, chatId, msg.media_url, caption, mediaButtons)
         break
       case 'video_note':
         // video_note не поддерживает caption/buttons — отправляем отдельно текст если есть
         sendResult = await sendTelegramVideoNote(botToken, chatId, msg.media_url)
-        if (msg.text && sendResult?.ok) {
-          sendResult = await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+        if (text && sendResult?.ok) {
+          sendResult = await sendTelegramMessage(botToken, chatId, text, buttonsArg)
         }
         break
       case 'audio':
-        sendResult = await sendTelegramAudio(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramAudio(botToken, chatId, msg.media_url, caption, mediaButtons)
         break
       case 'document':
       default:
-        sendResult = await sendTelegramDocument(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramDocument(botToken, chatId, msg.media_url, caption, mediaButtons)
         break
+    }
+
+    // Длинный текст — отправляем вторым сообщением с кнопками
+    if (captionTooLong && text && sendResult?.ok) {
+      sendResult = await sendTelegramMessage(botToken, chatId, text, buttonsArg)
     }
   } else {
     // Обычное текстовое сообщение
-    sendResult = await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+    sendResult = await sendTelegramMessage(botToken, chatId, text, buttonsArg)
   }
 
   if (!sendResult?.ok) {
