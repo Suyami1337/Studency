@@ -297,32 +297,40 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
         )}
       </div>
 
-      {/* Превью — как клиент увидит сообщение в Telegram */}
+      {/* Живой превью — как клиент увидит сообщение в Telegram */}
       {!isEmpty && (
-        <details className="group">
-          <summary className="text-[11px] text-gray-500 hover:text-[#6A55F8] cursor-pointer select-none flex items-center gap-1 mt-2">
-            <span className="group-open:rotate-90 transition-transform inline-block">▸</span>
-            Предпросмотр (как в Telegram)
-          </summary>
+        <div className="mt-2">
+          <div className="text-[11px] text-gray-500 mb-1 flex items-center gap-1.5">
+            <span>👁</span> Предпросмотр (как увидит клиент в Telegram):
+          </div>
           <div
-            className="mt-1.5 px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-editor whitespace-pre-wrap break-words"
+            className="px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-editor-preview whitespace-pre-wrap break-words"
             dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
-        </details>
+        </div>
       )}
       <style jsx global>{`
-        .rich-editor { line-height: 1.45; }
-        .rich-editor a { color: #6A55F8; text-decoration: underline; }
-        .rich-editor code {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        /* Форсированные стили — чтобы Tailwind preflight не гасил форматирование */
+        .rich-editor, .rich-editor-preview { line-height: 1.45; }
+        .rich-editor b, .rich-editor strong,
+        .rich-editor-preview b, .rich-editor-preview strong { font-weight: 700 !important; }
+        .rich-editor i, .rich-editor em,
+        .rich-editor-preview i, .rich-editor-preview em { font-style: italic !important; }
+        .rich-editor u, .rich-editor ins,
+        .rich-editor-preview u, .rich-editor-preview ins { text-decoration: underline !important; }
+        .rich-editor s, .rich-editor strike, .rich-editor del,
+        .rich-editor-preview s, .rich-editor-preview strike, .rich-editor-preview del { text-decoration: line-through !important; }
+        .rich-editor a, .rich-editor-preview a { color: #6A55F8 !important; text-decoration: underline !important; }
+        .rich-editor code, .rich-editor-preview code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
           background: #F3F4F6; padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
         }
-        .rich-editor pre {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        .rich-editor pre, .rich-editor-preview pre {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
           background: #F3F4F6; padding: 6px 8px; border-radius: 4px;
           white-space: pre-wrap;
         }
-        .rich-editor blockquote {
+        .rich-editor blockquote, .rich-editor-preview blockquote {
           border-left: 3px solid #6A55F8;
           padding: 2px 10px;
           margin: 4px 0;
@@ -330,7 +338,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           background: #F9FAFB;
           border-radius: 0 4px 4px 0;
         }
-        .rich-editor .tg-spoiler {
+        .rich-editor .tg-spoiler, .rich-editor-preview .tg-spoiler {
           background: #D1D5DB;
           color: transparent;
           text-shadow: 0 0 8px rgba(0,0,0,0.5);
@@ -338,7 +346,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           padding: 0 2px;
           cursor: pointer;
         }
-        .rich-editor .tg-spoiler:hover {
+        .rich-editor .tg-spoiler:hover, .rich-editor-preview .tg-spoiler:hover {
           color: inherit;
           text-shadow: none;
           background: transparent;
