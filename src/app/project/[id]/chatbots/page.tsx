@@ -1834,8 +1834,17 @@ type BotConversation = {
   telegram_first_name: string | null
   telegram_username: string | null
   telegram_user_id: number | null
+  telegram_chat_id?: number | null
   updated_at: string
-  customers: { id: string; full_name: string | null; source_name: string | null } | null
+  chat_blocked?: boolean
+  customers: {
+    id: string
+    full_name: string | null
+    source_name: string | null
+    source_slug?: string | null
+    bot_blocked_at?: string | null
+    bot_blocked_source?: string | null
+  } | null
 }
 
 function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenario: Scenario; onBack: () => void; onDeleted?: (id: string) => void; onDuplicated?: (s: Scenario) => void }) {
@@ -2465,8 +2474,16 @@ export default function ChatbotsPage() {
   const [newName, setNewName] = useState('')
   const [newBotId, setNewBotId] = useState('')
   const [activePageTab, setActivePageTab] = useState<'scenarios' | 'users'>('scenarios')
-  const [botAllUsers, setBotAllUsers] = useState<(BotConversation & { scenarioNames: string[] })[]>([])
+  const [botAllUsers, setBotAllUsers] = useState<(BotConversation & { scenarioNames: string[]; scenarioIds: string[] })[]>([])
   const [loadingBotUsers, setLoadingBotUsers] = useState(false)
+
+  // Фильтры списка пользователей внутри бота
+  const [userSubStatus, setUserSubStatus] = useState<'active' | 'unsubscribed'>('active')
+  const [userSearch, setUserSearch] = useState('')
+  const [userSources, setUserSources] = useState<Set<string>>(new Set())
+  const [userScenarios, setUserScenarios] = useState<Set<string>>(new Set())
+  const [userDateRange, setUserDateRange] = useState<'all' | 'today' | '7d' | '30d'>('all')
+  const [userSort, setUserSort] = useState<'recent' | 'name_asc' | 'name_desc'>('recent')
 
   // URL: ?bot=<id> — выбран конкретный бот (второй уровень навигации)
   //       ?open=<id> — выбран сценарий (третий уровень)
@@ -2540,7 +2557,21 @@ export default function ChatbotsPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (activePageTab === 'users') loadBotUsers()
+    if (activePageTab !== 'users') return
+    // Мгновенно показываем что есть, одновременно синхронизируем актуальные статусы
+    // через Telegram (sendChatAction) и ещё раз перезагружаем. Так отписавшиеся
+    // сразу попадают во вкладку «Отписавшиеся».
+    loadBotUsers()
+    if (urlBotId) {
+      fetch('/api/broadcasts/sync-subscribers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_bot_id: urlBotId }),
+      })
+        .then(r => r.json())
+        .then(() => loadBotUsers())
+        .catch(() => { /* фон — ок если упало */ })
+    }
   }, [activePageTab, scenarios, urlBotId])
 
   async function loadBotUsers() {
@@ -2554,10 +2585,11 @@ export default function ChatbotsPage() {
     // Все разговоры по этим ботам
     const { data: convs } = await supabase
       .from('chatbot_conversations')
-      .select('id, telegram_bot_id, telegram_first_name, telegram_username, telegram_user_id, updated_at, customers(id, full_name, source_name)')
+      .select('id, telegram_bot_id, telegram_first_name, telegram_username, telegram_user_id, telegram_chat_id, updated_at, chat_blocked, customers(id, full_name, source_name, source_slug, bot_blocked_at, bot_blocked_source)')
       .in('telegram_bot_id', botIds)
+      .gt('telegram_chat_id', 0)
       .order('updated_at', { ascending: false })
-      .limit(200)
+      .limit(1000)
     if (!convs || convs.length === 0) { setBotAllUsers([]); setLoadingBotUsers(false); return }
 
     // Участие в сценариях: chatbot_messages.scenario_id per conversation
@@ -2580,10 +2612,14 @@ export default function ChatbotsPage() {
     const scenarioMap: Record<string, string> = {}
     for (const s of scenarios) scenarioMap[s.id] = s.name
 
-    const result = (convs as unknown as BotConversation[]).map(conv => ({
-      ...conv,
-      scenarioNames: [...(convScenarioMap[conv.id] ?? [])].map(sid => scenarioMap[sid]).filter(Boolean) as string[],
-    }))
+    const result = (convs as unknown as BotConversation[]).map(conv => {
+      const ids = [...(convScenarioMap[conv.id] ?? [])]
+      return {
+        ...conv,
+        scenarioIds: ids,
+        scenarioNames: ids.map(sid => scenarioMap[sid]).filter(Boolean) as string[],
+      }
+    })
     setBotAllUsers(result)
     setLoadingBotUsers(false)
   }
@@ -2676,74 +2712,257 @@ export default function ChatbotsPage() {
         ))}
       </div>
 
-      {activePageTab === 'users' && (
-        <div className="space-y-3">
-          <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-          {loadingBotUsers ? (
-            <div className="p-8 text-center text-sm text-gray-400">Загружаю...</div>
-          ) : (() => {
-            const filtered = displayUsers
-            return filtered.length === 0 ? (
-              <div className="p-12 text-center">
-                <div className="text-3xl mb-3">👥</div>
-                <p className="text-sm text-gray-500">Пока никто не писал боту</p>
+      {activePageTab === 'users' && (() => {
+        // ─── Уникальные источники и сценарии для фильтр-чипов ───
+        const allSources = Array.from(new Set(
+          displayUsers.map(u => u.customers?.source_name).filter((x): x is string => !!x)
+        )).sort()
+        const botScenarios = displayScenarios // сценарии этого бота
+
+        // ─── Пре-счёт: активных / отписавшихся в текущей выборке ───
+        const activeCount = displayUsers.filter(u => !u.chat_blocked).length
+        const unsubscribedCount = displayUsers.filter(u => !!u.chat_blocked).length
+
+        // ─── Основная фильтрация ───
+        const now = Date.now()
+        const dateThreshold = userDateRange === 'today' ? now - 24 * 3600 * 1000
+          : userDateRange === '7d' ? now - 7 * 24 * 3600 * 1000
+          : userDateRange === '30d' ? now - 30 * 24 * 3600 * 1000
+          : null
+        const q = userSearch.trim().toLowerCase()
+
+        const filtered = displayUsers
+          .filter(u => userSubStatus === 'active' ? !u.chat_blocked : !!u.chat_blocked)
+          .filter(u => {
+            if (!q) return true
+            const name = (u.customers?.full_name || u.telegram_first_name || '').toLowerCase()
+            const uname = (u.telegram_username || '').toLowerCase()
+            return name.includes(q) || uname.includes(q)
+          })
+          .filter(u => userSources.size === 0 || (u.customers?.source_name && userSources.has(u.customers.source_name)))
+          .filter(u => userScenarios.size === 0 || u.scenarioIds.some(id => userScenarios.has(id)))
+          .filter(u => {
+            if (dateThreshold === null) return true
+            return new Date(u.updated_at).getTime() >= dateThreshold
+          })
+          .sort((a, b) => {
+            if (userSort === 'recent') {
+              return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+            }
+            const nameA = (a.customers?.full_name || a.telegram_first_name || '').toLowerCase()
+            const nameB = (b.customers?.full_name || b.telegram_first_name || '').toLowerCase()
+            return userSort === 'name_asc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA)
+          })
+
+        function toggleSet<T>(set: Set<T>, value: T): Set<T> {
+          const next = new Set(set)
+          if (next.has(value)) next.delete(value)
+          else next.add(value)
+          return next
+        }
+
+        const hasAnyFilter = userSearch || userSources.size || userScenarios.size || userDateRange !== 'all'
+
+        return (
+          <div className="space-y-3">
+            {/* Sub-tabs: Активные / Отписавшиеся */}
+            <div className="flex gap-1 border-b border-gray-100">
+              {([
+                { id: 'active' as const, label: '✓ Активные', count: activeCount },
+                { id: 'unsubscribed' as const, label: '✗ Отписавшиеся', count: unsubscribedCount },
+              ]).map(t => (
+                <button key={t.id} onClick={() => setUserSubStatus(t.id)}
+                  className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                    userSubStatus === t.id
+                      ? 'border-[#6A55F8] text-[#6A55F8]'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}>
+                  {t.label} <span className="ml-1 text-[10px] text-gray-400">{t.count}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Search + sort */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative flex-1 min-w-[200px]">
+                <input type="text" value={userSearch}
+                  onChange={e => setUserSearch(e.target.value)}
+                  placeholder="🔍 Поиск по имени или @username"
+                  className="w-full pl-3 pr-8 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                {userSearch && (
+                  <button onClick={() => setUserSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+                )}
               </div>
-            ) : (
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Пользователь</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Username</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Участвовал в сценариях</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Источник</th>
-                  <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Активность</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map(conv => {
-                  const name = conv.customers?.full_name || conv.telegram_first_name || 'Без имени'
-                  const source = conv.customers?.source_name
+              <select value={userSort} onChange={e => setUserSort(e.target.value as typeof userSort)}
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-[#6A55F8]">
+                <option value="recent">Сначала новые</option>
+                <option value="name_asc">По имени: А → Я</option>
+                <option value="name_desc">По имени: Я → А</option>
+              </select>
+              {hasAnyFilter && (
+                <button onClick={() => {
+                  setUserSearch('')
+                  setUserSources(new Set())
+                  setUserScenarios(new Set())
+                  setUserDateRange('all')
+                }} className="text-xs text-gray-500 hover:text-[#6A55F8] hover:underline">
+                  Сбросить фильтры
+                </button>
+              )}
+            </div>
+
+            {/* Date range chips */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-gray-400 mr-1">Активность:</span>
+              {([
+                { id: 'all' as const, label: 'Всё время' },
+                { id: 'today' as const, label: 'Сегодня' },
+                { id: '7d' as const, label: '7 дней' },
+                { id: '30d' as const, label: '30 дней' },
+              ]).map(r => (
+                <button key={r.id} onClick={() => setUserDateRange(r.id)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                    userDateRange === r.id
+                      ? 'bg-[#6A55F8] text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-[#F0EDFF]'
+                  }`}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Scenario chips */}
+            {botScenarios.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-gray-400 mr-1">Сценарий:</span>
+                {botScenarios.map(s => {
+                  const active = userScenarios.has(s.id)
                   return (
-                    <tr key={conv.id} className="hover:bg-gray-50/50">
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0">
-                            {name.charAt(0).toUpperCase()}
-                          </div>
-                          <span className="font-medium text-gray-800 text-sm">{name}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 text-sm">
-                        {conv.telegram_username ? `@${conv.telegram_username}` : conv.telegram_user_id ? `ID: ${conv.telegram_user_id}` : '—'}
-                      </td>
-                      <td className="px-5 py-3">
-                        {conv.scenarioNames.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {conv.scenarioNames.map(n => (
-                              <span key={n} className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">{n}</span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        {source ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">📍 {source}</span>
-                        ) : <span className="text-gray-400 text-xs">—</span>}
-                      </td>
-                      <td className="px-5 py-3 text-gray-500 text-xs">
-                        {new Date(conv.updated_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                    </tr>
+                    <button key={s.id} onClick={() => setUserScenarios(prev => toggleSet(prev, s.id))}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        active ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 text-gray-600 hover:bg-[#F0EDFF]'
+                      }`}>
+                      {active && '✓ '}{s.name}
+                    </button>
                   )
                 })}
-              </tbody>
-            </table>
-          )})()}
-        </div>
-        </div>
-      )}
+              </div>
+            )}
+
+            {/* Source chips */}
+            {allSources.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-gray-400 mr-1">Источник:</span>
+                {allSources.map(src => {
+                  const active = userSources.has(src)
+                  return (
+                    <button key={src} onClick={() => setUserSources(prev => toggleSet(prev, src))}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        active ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 text-gray-600 hover:bg-[#F0EDFF]'
+                      }`}>
+                      {active && '✓ '}📍 {src}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Table */}
+            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+              {loadingBotUsers ? (
+                <div className="p-8 text-center text-sm text-gray-400">Загружаю...</div>
+              ) : filtered.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="text-3xl mb-3">👥</div>
+                  <p className="text-sm text-gray-500">
+                    {displayUsers.length === 0
+                      ? 'Пока никто не писал боту'
+                      : hasAnyFilter
+                        ? 'Никто не подходит под фильтры'
+                        : userSubStatus === 'active' ? 'Нет активных подписчиков' : 'Нет отписавшихся'}
+                  </p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Пользователь</th>
+                      <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Username</th>
+                      <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Сценарии</th>
+                      <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">Источник</th>
+                      <th className="px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider text-left">
+                        {userSubStatus === 'active' ? 'Активность' : 'Отписался'}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {filtered.map(conv => {
+                      const name = conv.customers?.full_name || conv.telegram_first_name || 'Без имени'
+                      const source = conv.customers?.source_name
+                      const isBlocked = !!conv.chat_blocked
+                      const blockedAt = conv.customers?.bot_blocked_at
+                      const blockedExact = conv.customers?.bot_blocked_source === 'webhook'
+                      const href = conv.customers?.id ? `/project/${projectId}/users?open=${conv.customers.id}` : null
+                      return (
+                        <tr key={conv.id} className="hover:bg-gray-50/50">
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0">
+                                {name.charAt(0).toUpperCase()}
+                              </div>
+                              {href ? (
+                                <a href={href} className="font-medium text-[#6A55F8] text-sm hover:underline">{name}</a>
+                              ) : (
+                                <span className="font-medium text-gray-800 text-sm">{name}</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-gray-500 text-sm">
+                            {conv.telegram_username ? (
+                              <a href={`https://t.me/${conv.telegram_username}`} target="_blank" rel="noreferrer"
+                                className="text-[#6A55F8] hover:underline">@{conv.telegram_username}</a>
+                            ) : conv.telegram_user_id ? `ID: ${conv.telegram_user_id}` : '—'}
+                          </td>
+                          <td className="px-5 py-3">
+                            {conv.scenarioNames.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {conv.scenarioNames.map(n => (
+                                  <span key={n} className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">{n}</span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 text-xs">—</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3">
+                            {source ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">📍 {source}</span>
+                            ) : <span className="text-gray-400 text-xs">—</span>}
+                          </td>
+                          <td className="px-5 py-3 text-xs">
+                            {isBlocked ? (
+                              blockedAt ? (
+                                <span className="text-red-500" title={blockedExact ? 'Точное время — Telegram уведомил в момент блокировки' : 'Момент обнаружения — мог заблокировать раньше'}>
+                                  {blockedExact ? '' : '~'}{new Date(blockedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              ) : <span className="text-red-500">Заблокировал</span>
+                            ) : (
+                              <span className="text-gray-500">
+                                {new Date(conv.updated_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       {activePageTab === 'scenarios' && creating && (
         <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
