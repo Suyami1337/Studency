@@ -682,6 +682,11 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
   )
 })
 
+// Убирает HTML-теги из текста для компактного превью в списке/заголовке
+function stripHtml(s: string): string {
+  return s.replace(/<\/?[a-z][^>]*>/gi, '').replace(/\s+/g, ' ').trim()
+}
+
 // =============================================
 // MESSAGE EDITOR (карточка сообщения)
 // =============================================
@@ -811,7 +816,7 @@ function MessageCard({
             {e.delay_minutes > 0 && <span className="text-xs text-gray-400">⏱ {e.delay_minutes} {e.delay_unit === 'sec' ? 'сек' : e.delay_unit === 'hour' ? 'ч' : e.delay_unit === 'day' ? 'дн' : 'мин'}</span>}
             {isDirty && <span className="text-xs text-amber-600 font-medium">● Не сохранено</span>}
           </div>
-          <p className="text-sm text-gray-700 truncate">{e.text || 'Пустое сообщение'}</p>
+          <p className="text-sm text-gray-700 truncate">{e.text ? stripHtml(e.text) : 'Пустое сообщение'}</p>
         </div>
         <div className="flex items-center gap-2">
           {buttons.length > 0 && <span className="text-xs text-gray-400">{buttons.length} кнопок</span>}
