@@ -386,6 +386,14 @@ function FollowupCard({ projectId, followup, index, onEdit, onDelete, allMessage
               className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
             <span className="text-xs text-gray-600">Отменить, если пользователь ответит</span>
           </label>
+          {!followup.cancel_on_reply && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-md bg-amber-50 border border-amber-200">
+              <span className="text-amber-600 text-xs leading-tight">⚠️</span>
+              <span className="text-[11px] text-amber-800 leading-tight">
+                Дожим отправится даже если клиент уже ответил, нажал кнопку или перешёл дальше по сценарию
+              </span>
+            </div>
+          )}
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={followup.duplicate_to_email ?? false}
               onChange={ev => onEdit(followup.id, { duplicate_to_email: ev.target.checked })}
