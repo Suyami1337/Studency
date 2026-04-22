@@ -476,7 +476,8 @@ async function executeTool(
       case 'create_message': {
         let pos = input.order_position
         if (pos === undefined) {
-          const { data } = await supabase.from('scenario_messages').select('order_position').eq('scenario_id', scenarioId).order('order_position', { ascending: false }).limit(1)
+          // Берём max только из основного пула (не из trigger messages)
+          const { data } = await supabase.from('scenario_messages').select('order_position').eq('scenario_id', scenarioId).is('parent_trigger_group_id', null).order('order_position', { ascending: false }).limit(1)
           pos = data && data[0] ? data[0].order_position + 1 : 0
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -496,7 +497,8 @@ async function executeTool(
 
         const { data, error } = await supabase.from('scenario_messages').insert(row).select().single()
         if (error) throw error
-        return { content: JSON.stringify({ id: data.id }), summary: `создал сообщение #${pos}${input.is_subscription_gate ? ' (gate)' : ''}`, ok: true, wrote: true }
+        await supabase.rpc('normalize_scenario_message_positions', { p_scenario_id: scenarioId })
+        return { content: JSON.stringify({ id: data.id }), summary: `создал сообщение${input.is_subscription_gate ? ' (gate)' : ''}`, ok: true, wrote: true }
       }
 
       case 'update_message': {
@@ -507,12 +509,17 @@ async function executeTool(
         }
         const { error } = await supabase.from('scenario_messages').update(updates).eq('id', input.message_id).eq('scenario_id', scenarioId)
         if (error) throw error
+        // Если меняли order_position — пересчитываем всё
+        if (input.order_position !== undefined) {
+          await supabase.rpc('normalize_scenario_message_positions', { p_scenario_id: scenarioId })
+        }
         return { content: JSON.stringify({ ok: true }), summary: `обновил сообщение`, ok: true, wrote: true }
       }
 
       case 'delete_message': {
         const { error } = await supabase.from('scenario_messages').delete().eq('id', input.message_id).eq('scenario_id', scenarioId)
         if (error) throw error
+        await supabase.rpc('normalize_scenario_message_positions', { p_scenario_id: scenarioId })
         return { content: JSON.stringify({ ok: true }), summary: `удалил сообщение`, ok: true, wrote: true }
       }
 
@@ -652,6 +659,7 @@ async function executeTool(
           .from('scenario_messages')
           .select('order_position')
           .eq('scenario_id', scenarioId)
+          .is('parent_trigger_group_id', null)
           .order('order_position', { ascending: false })
           .limit(1)
         let pos = lastRows && lastRows[0] ? lastRows[0].order_position + 1 : 0
@@ -808,6 +816,9 @@ async function executeTool(
           }
           triggersCreated++
         }
+
+        // Финальная нормализация order_position — убирает любые дыры
+        await supabase.rpc('normalize_scenario_message_positions', { p_scenario_id: scenarioId })
 
         return {
           content: JSON.stringify({ local_to_real: localToReal, messages_created: plan.length + triggerMsgsCount, buttons_created: btnCount, followups_created: followupCount, triggers_created: triggersCreated }),
