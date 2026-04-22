@@ -34,17 +34,25 @@ type Props = {
  * Нормализуем TipTap-output в Telegram-совместимый HTML:
  * - `<p>xxx</p>` → `xxx\n` (Telegram не понимает <p>)
  * - `<strong>` → `<b>`, `<em>` → `<i>` (каноничные теги)
+ * - blockquote: убираем лишние переносы до/после/внутри, чтобы в Telegram
+ *   не было пустых строк вокруг цитаты
  */
 function toTelegramHtml(html: string): string {
   let out = html || ''
-  // <p>...</p> → ...\n (каждый параграф = новая строка)
+  // Внутри <blockquote>: <p>...</p> → ...\n а потом уберём trailing \n
+  // Делаем это последовательно — сначала преобразуем <p>
   out = out.replace(/<p(?:\s[^>]*)?>/gi, '').replace(/<\/p>/gi, '\n')
-  // <strong>→<b>, <em>→<i>
+  // Преобразуем <strong>→<b>, <em>→<i>
   out = out.replace(/<strong(?:\s[^>]*)?>/gi, '<b>').replace(/<\/strong>/gi, '</b>')
   out = out.replace(/<em(?:\s[^>]*)?>/gi, '<i>').replace(/<\/em>/gi, '</i>')
   // <br> → \n
   out = out.replace(/<br\s*\/?>/gi, '\n')
-  // Убираем trailing \n и пустые параграфы
+  // Схлопываем пустые строки внутри blockquote/до/после
+  out = out.replace(/\n+(<blockquote[^>]*>)/gi, '\n$1')
+  out = out.replace(/(<blockquote[^>]*>)\n+/gi, '$1')
+  out = out.replace(/\n+<\/blockquote>/gi, '</blockquote>')
+  out = out.replace(/<\/blockquote>\n+/gi, '</blockquote>\n')
+  // Убираем trailing \n в конце всего текста
   out = out.replace(/\n+$/g, '')
   return out
 }
@@ -128,45 +136,12 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
     editor.chain().focus().toggleMark('spoiler').run()
   }
 
-  // Цитата: blockquote — блочный элемент (и в HTML, и в Telegram), охватывает
-  // целый абзац. Если юзер выделил только часть абзаца — разбиваем абзац
-  // так, чтобы только выделенное оказалось в blockquote.
-  function toggleBlockquoteSmart() {
+  // Цитата — обычный toggleBlockquote. blockquote блочный и в HTML, и в Telegram:
+  // охватывает строку/параграф где стоит курсор. Чтобы процитировать одну фразу —
+  // вынесите её в отдельную строку (Enter).
+  function toggleBlockquoteStandard() {
     if (!editor) return
-    const { from, to } = editor.state.selection
-    if (from === to) {
-      editor.chain().focus().toggleBlockquote().run()
-      return
-    }
-    // Уже в blockquote — снимаем
-    if (editor.isActive('blockquote')) {
-      editor.chain().focus().toggleBlockquote().run()
-      return
-    }
-    // Проверяем: выделение покрывает весь текущий параграф или только часть
-    const $from = editor.state.doc.resolve(from)
-    const paragraphStart = $from.start($from.depth)
-    const paragraphEnd = $from.end($from.depth)
-    if (from <= paragraphStart && to >= paragraphEnd) {
-      // Весь параграф — просто toggle
-      editor.chain().focus().toggleBlockquote().run()
-      return
-    }
-    // Часть параграфа — разбиваем: до, blockquote, после
-    editor.chain()
-      .focus()
-      .command(({ tr, dispatch }) => {
-        if (dispatch) {
-          // Сначала разбиваем в конце выделения
-          tr.split(to)
-          // Потом в начале (индексы сдвинулись)
-          tr.split(from)
-        }
-        return true
-      })
-      .setTextSelection({ from: from + 1, to: to + 1 })
-      .toggleBlockquote()
-      .run()
+    editor.chain().focus().toggleBlockquote().run()
   }
 
   if (!editor) {
@@ -195,8 +170,8 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
         <button type="button" onClick={() => editor.chain().focus().toggleCode().run()}
           title="Моноширинный"
           className={`min-w-7 h-7 px-1.5 rounded text-[10px] font-mono transition-colors flex items-center justify-center ${editor.isActive('code') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>{'</>'}</button>
-        <button type="button" onClick={toggleBlockquoteSmart}
-          title="Цитата (блочная — охватывает строку)"
+        <button type="button" onClick={toggleBlockquoteStandard}
+          title="Цитата (охватывает строку где курсор)"
           className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('blockquote') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>❝</button>
         <button type="button" onClick={toggleSpoiler}
           title="Спойлер"
@@ -225,7 +200,10 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           word-break: break-word;
         }
         .rich-editor-tiptap p { margin: 0; }
-        .rich-editor-tiptap p + p { margin-top: 0.3em; }
+        .rich-editor-tiptap p + p { margin-top: 0; }
+        .rich-editor-tiptap blockquote p { margin: 0; }
+        .rich-editor-tiptap blockquote + p,
+        .rich-editor-tiptap p + blockquote { margin-top: 2px; }
         .rich-editor-tiptap strong, .rich-editor-tiptap b { font-weight: 700 !important; }
         .rich-editor-tiptap em, .rich-editor-tiptap i { font-style: italic !important; }
         .rich-editor-tiptap u { text-decoration: underline !important; }
@@ -246,11 +224,11 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
         }
         .rich-editor-tiptap blockquote {
           border-left: 3px solid #6A55F8;
-          padding: 2px 10px;
-          margin: 4px 0;
+          padding: 0 10px;
+          margin: 0;
           color: #4B5563;
           background: #F9FAFB;
-          border-radius: 0 4px 4px 0;
+          border-radius: 0 2px 2px 0;
         }
         .rich-editor-tiptap tg-spoiler {
           background: #D1D5DB;
