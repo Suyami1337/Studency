@@ -1,6 +1,10 @@
 'use client'
 
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Underline from '@tiptap/extension-underline'
+import Link from '@tiptap/extension-link'
 
 type Props = {
   value: string
@@ -10,142 +14,182 @@ type Props = {
 }
 
 /**
- * Telegram HTML → HTML пригодный для dangerouslySetInnerHTML в превью.
- * \n → <br>, <tg-spoiler> → <span class="tg-spoiler"> для стилизации.
+ * Нормализуем TipTap-output в Telegram-совместимый HTML:
+ * - `<p>xxx</p>` → `xxx\n` (Telegram не понимает <p>)
+ * - `<strong>` → `<b>`, `<em>` → `<i>` (каноничные теги)
  */
-function toPreviewHtml(text: string): string {
-  let out = text || ''
-  out = out.replace(/\r\n/g, '\n')
-  out = out.split('\n').join('<br>')
-  out = out.replace(/<tg-spoiler>/gi, '<span class="tg-spoiler">')
-  out = out.replace(/<\/tg-spoiler>/gi, '</span>')
+function toTelegramHtml(html: string): string {
+  let out = html || ''
+  // <p>...</p> → ...\n (каждый параграф = новая строка)
+  out = out.replace(/<p(?:\s[^>]*)?>/gi, '').replace(/<\/p>/gi, '\n')
+  // <strong>→<b>, <em>→<i>
+  out = out.replace(/<strong(?:\s[^>]*)?>/gi, '<b>').replace(/<\/strong>/gi, '</b>')
+  out = out.replace(/<em(?:\s[^>]*)?>/gi, '<i>').replace(/<\/em>/gi, '</i>')
+  // <br> → \n
+  out = out.replace(/<br\s*\/?>/gi, '\n')
+  // Убираем trailing \n и пустые параграфы
+  out = out.replace(/\n+$/g, '')
   return out
 }
 
-type FormatTag = 'b' | 'i' | 'u' | 's' | 'code' | 'blockquote' | 'tg-spoiler'
+/**
+ * Telegram HTML → HTML пригодный для TipTap.
+ * Заменяем \n на <br>, <b>→<strong>, <i>→<em> (TipTap использует их внутри).
+ */
+function fromTelegramHtml(html: string): string {
+  let out = html || ''
+  out = out.split('\n').join('<br>')
+  return out
+}
 
 export default function RichTextEditor({ value, onChange, placeholder, rows = 4 }: Props) {
-  const ref = useRef<HTMLTextAreaElement>(null)
+  const lastEmitted = useRef<string>('')
 
-  function wrap(tag: FormatTag) {
-    const ta = ref.current
-    if (!ta) return
-    const start = ta.selectionStart
-    const end = ta.selectionEnd
-    const selected = value.substring(start, end)
-    const before = `<${tag}>`
-    const after = `</${tag}>`
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        horizontalRule: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        codeBlock: false,
+      }),
+      Underline,
+      Link.configure({
+        openOnClick: false,
+        autolink: true,
+        HTMLAttributes: {
+          rel: 'noopener noreferrer',
+        },
+      }),
+    ],
+    content: fromTelegramHtml(value),
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: 'rich-editor-tiptap px-3 py-2 min-h-[100px] focus:outline-none',
+      },
+    },
+    onUpdate: ({ editor }) => {
+      const rawHtml = editor.getHTML()
+      const normalized = toTelegramHtml(rawHtml)
+      lastEmitted.current = normalized
+      onChange(normalized)
+    },
+  })
 
-    const insertText = selected
-      ? `${before}${selected}${after}`
-      : `${before}${after}`
-
-    const newValue = value.substring(0, start) + insertText + value.substring(end)
-    onChange(newValue)
-
-    setTimeout(() => {
-      if (!ref.current) return
-      const cursorPos = selected
-        ? start + insertText.length
-        : start + before.length
-      ref.current.focus()
-      ref.current.setSelectionRange(cursorPos, cursorPos)
-    }, 0)
-  }
-
-  function insertLink() {
-    const ta = ref.current
-    if (!ta) return
-    const url = prompt('URL ссылки (https://...):', 'https://')
-    if (!url || url === 'https://') return
-    const start = ta.selectionStart
-    const end = ta.selectionEnd
-    const selected = value.substring(start, end) || 'текст ссылки'
-    const insertText = `<a href="${url}">${selected}</a>`
-    const newValue = value.substring(0, start) + insertText + value.substring(end)
-    onChange(newValue)
-
-    setTimeout(() => {
-      if (!ref.current) return
-      const cursorPos = start + insertText.length
-      ref.current.focus()
-      ref.current.setSelectionRange(cursorPos, cursorPos)
-    }, 0)
-  }
-
-  function handleKeyDown(ev: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey) {
-      if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); wrap('b') }
-      else if (ev.key === 'i' || ev.key === 'I') { ev.preventDefault(); wrap('i') }
-      else if (ev.key === 'u' || ev.key === 'U') { ev.preventDefault(); wrap('u') }
+  useEffect(() => {
+    if (!editor) return
+    if (value === lastEmitted.current) return
+    const editable = fromTelegramHtml(value)
+    // Сравниваем с текущим — чтобы не сбрасывать курсор при равных значениях
+    if (editor.getHTML() !== editable) {
+      editor.commands.setContent(editable, { emitUpdate: false })
+      lastEmitted.current = value || ''
     }
+  }, [value, editor])
+
+  const minHeight = Math.max(rows * 24, 96)
+
+  function setLink() {
+    if (!editor) return
+    const prev = editor.getAttributes('link').href
+    const url = prompt('URL ссылки (https://...):', prev || 'https://')
+    if (url === null) return
+    if (!url || url === 'https://') {
+      editor.chain().focus().unsetLink().run()
+      return
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
   }
 
-  const previewHtml = toPreviewHtml(value)
-  const hasText = !!(value && value.trim())
+  // Спойлер: оборачиваем выделение в span с атрибутом, который переживёт
+  // TipTap-сериализацию (inline HTML marks у StarterKit нет — используем raw insert)
+  function toggleSpoiler() {
+    if (!editor) return
+    const { from, to } = editor.state.selection
+    if (from === to) return
+    const text = editor.state.doc.textBetween(from, to, ' ')
+    editor.chain().focus().insertContent(`<tg-spoiler>${text}</tg-spoiler>`).run()
+  }
+
+  if (!editor) {
+    return (
+      <div className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-400" style={{ minHeight: `${minHeight}px` }}>
+        Загрузка редактора…
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-1 px-0.5">
-        <button type="button" onClick={() => wrap('b')} title="Жирный (Ctrl+B)"
-          className="min-w-7 h-7 px-1.5 rounded text-xs font-bold bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">B</button>
-        <button type="button" onClick={() => wrap('i')} title="Курсив (Ctrl+I)"
-          className="min-w-7 h-7 px-1.5 rounded text-xs italic bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">I</button>
-        <button type="button" onClick={() => wrap('u')} title="Подчёркнутый (Ctrl+U)"
-          className="min-w-7 h-7 px-1.5 rounded text-xs underline bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">U</button>
-        <button type="button" onClick={() => wrap('s')} title="Зачёркнутый"
-          className="min-w-7 h-7 px-1.5 rounded text-xs line-through bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">S</button>
-        <button type="button" onClick={() => wrap('code')} title="Моноширинный"
-          className="min-w-7 h-7 px-1.5 rounded text-[10px] font-mono bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">{'</>'}</button>
-        <button type="button" onClick={() => wrap('blockquote')} title="Цитата"
-          className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">❝</button>
-        <button type="button" onClick={() => wrap('tg-spoiler')} title="Спойлер"
-          className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">⊘</button>
-        <button type="button" onClick={insertLink} title="Ссылка"
-          className="min-w-7 h-7 px-1.5 rounded text-xs bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700 flex items-center justify-center transition-colors">🔗</button>
-        <span className="text-[10px] text-gray-400 ml-2">Выдели текст → жми кнопку</span>
+        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()}
+          title="Жирный (Ctrl+B)"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs font-bold transition-colors flex items-center justify-center ${editor.isActive('bold') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>B</button>
+        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()}
+          title="Курсив (Ctrl+I)"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs italic transition-colors flex items-center justify-center ${editor.isActive('italic') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>I</button>
+        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()}
+          title="Подчёркнутый (Ctrl+U)"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs underline transition-colors flex items-center justify-center ${editor.isActive('underline') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>U</button>
+        <button type="button" onClick={() => editor.chain().focus().toggleStrike().run()}
+          title="Зачёркнутый"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs line-through transition-colors flex items-center justify-center ${editor.isActive('strike') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>S</button>
+        <button type="button" onClick={() => editor.chain().focus().toggleCode().run()}
+          title="Моноширинный"
+          className={`min-w-7 h-7 px-1.5 rounded text-[10px] font-mono transition-colors flex items-center justify-center ${editor.isActive('code') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>{'</>'}</button>
+        <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()}
+          title="Цитата"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('blockquote') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>❝</button>
+        <button type="button" onClick={toggleSpoiler}
+          title="Спойлер"
+          className="min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700">⊘</button>
+        <button type="button" onClick={setLink}
+          title="Ссылка"
+          className={`min-w-7 h-7 px-1.5 rounded text-xs transition-colors flex items-center justify-center ${editor.isActive('link') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>🔗</button>
       </div>
 
-      <textarea
-        ref={ref}
-        value={value}
-        onChange={ev => onChange(ev.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        rows={rows}
-        className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8]/20 resize-y font-mono text-[13px]"
-      />
-
-      {/* Живой предпросмотр — как клиент увидит в Telegram */}
-      {hasText && (
-        <div className="mt-2">
-          <div className="text-[11px] text-gray-500 mb-1 flex items-center gap-1.5">
-            <span>👁</span> Предпросмотр (как увидит клиент в Telegram):
+      <div
+        className="rounded-lg border border-gray-200 text-sm focus-within:border-[#6A55F8] focus-within:ring-1 focus-within:ring-[#6A55F8]/20 relative"
+        style={{ minHeight: `${minHeight}px` }}
+      >
+        <EditorContent editor={editor} />
+        {editor.isEmpty && placeholder && (
+          <div className="absolute top-2 left-3 text-sm text-gray-400 pointer-events-none select-none">
+            {placeholder}
           </div>
-          <div
-            className="px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-preview whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: previewHtml }}
-          />
-        </div>
-      )}
+        )}
+      </div>
 
       <style jsx global>{`
-        .rich-preview { line-height: 1.45; }
-        .rich-preview b, .rich-preview strong { font-weight: 700 !important; }
-        .rich-preview i, .rich-preview em { font-style: italic !important; }
-        .rich-preview u, .rich-preview ins { text-decoration: underline !important; }
-        .rich-preview s, .rich-preview strike, .rich-preview del { text-decoration: line-through !important; }
-        .rich-preview a { color: #6A55F8 !important; text-decoration: underline !important; }
-        .rich-preview code {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
-          background: #F3F4F6; padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
+        .rich-editor-tiptap {
+          outline: none;
+          line-height: 1.45;
+          word-break: break-word;
         }
-        .rich-preview pre {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
-          background: #F3F4F6; padding: 6px 8px; border-radius: 4px;
-          white-space: pre-wrap;
+        .rich-editor-tiptap p { margin: 0; }
+        .rich-editor-tiptap p + p { margin-top: 0.3em; }
+        .rich-editor-tiptap strong, .rich-editor-tiptap b { font-weight: 700 !important; }
+        .rich-editor-tiptap em, .rich-editor-tiptap i { font-style: italic !important; }
+        .rich-editor-tiptap u { text-decoration: underline !important; }
+        .rich-editor-tiptap s, .rich-editor-tiptap strike, .rich-editor-tiptap del {
+          text-decoration: line-through !important;
         }
-        .rich-preview blockquote {
+        .rich-editor-tiptap a {
+          color: #6A55F8 !important;
+          text-decoration: underline !important;
+          cursor: pointer;
+        }
+        .rich-editor-tiptap code {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+          background: #F3F4F6;
+          padding: 1px 4px;
+          border-radius: 3px;
+          font-size: 0.9em;
+        }
+        .rich-editor-tiptap blockquote {
           border-left: 3px solid #6A55F8;
           padding: 2px 10px;
           margin: 4px 0;
@@ -153,7 +197,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           background: #F9FAFB;
           border-radius: 0 4px 4px 0;
         }
-        .rich-preview .tg-spoiler {
+        .rich-editor-tiptap tg-spoiler {
           background: #D1D5DB;
           color: transparent;
           text-shadow: 0 0 8px rgba(0,0,0,0.5);
@@ -161,7 +205,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           padding: 0 2px;
           cursor: pointer;
         }
-        .rich-preview .tg-spoiler:hover {
+        .rich-editor-tiptap tg-spoiler:hover {
           color: inherit;
           text-shadow: none;
           background: transparent;
