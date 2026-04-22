@@ -219,12 +219,13 @@ export async function loadRecipients(supabase: SupabaseClient, broadcast: any, o
       .eq('telegram_bot_id', broadcast.telegram_bot_id)
       .eq('chat_blocked', false)
       .not('customer_id', 'is', null)
+      .gt('telegram_chat_id', 0)  // негативные chat_id = группы/каналы, не юзеры
 
     for (const c of (convs ?? []) as Array<{ id: string; customer_id: string; telegram_chat_id: number | string }>) {
       const chatId = typeof c.telegram_chat_id === 'string'
         ? parseInt(c.telegram_chat_id, 10)
         : c.telegram_chat_id
-      if (!chatId) continue
+      if (!chatId || chatId <= 0) continue
       // Если у одного клиента несколько conversations (переподписка) — берём любую.
       if (!telegramConvMap.has(c.customer_id)) {
         telegramConvMap.set(c.customer_id, { conversation_id: c.id, chat_id: chatId })

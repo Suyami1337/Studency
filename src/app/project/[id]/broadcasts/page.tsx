@@ -70,6 +70,20 @@ export default function BroadcastsPage() {
   const [selectedBroadcast, setSelectedBroadcast] = useState<Broadcast | null>(null)
   const [activeTab, setActiveTab] = useState<TabKey>('all')
 
+  // Получатели рассылки (для detail-модалки)
+  type Delivery = {
+    id: string
+    status: string
+    error: string | null
+    sent_at: string | null
+    created_at: string
+    customer_id: string | null
+    customers: { full_name: string | null; telegram_username: string | null; telegram_id: string | null; email: string | null } | null
+  }
+  const [deliveries, setDeliveries] = useState<Delivery[]>([])
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false)
+  const [deliveriesFilter, setDeliveriesFilter] = useState<'all' | 'sent' | 'failed'>('all')
+
   // Form state
   const [name, setName] = useState('')
   const [botId, setBotId] = useState('')
@@ -129,6 +143,25 @@ export default function BroadcastsPage() {
   }, [projectId])
 
   useEffect(() => { load() }, [load])
+
+  // При открытии detail-модалки — подгружаем получателей
+  useEffect(() => {
+    if (!selectedBroadcast) { setDeliveries([]); return }
+    setDeliveriesLoading(true)
+    setDeliveriesFilter('all')
+    fetch(`/api/broadcasts/${selectedBroadcast.id}/deliveries`)
+      .then(r => r.json())
+      .then(json => {
+        setDeliveries(json.deliveries ?? [])
+        setDeliveriesLoading(false)
+      })
+      .catch(() => setDeliveriesLoading(false))
+  }, [selectedBroadcast])
+
+  const filteredDeliveries = useMemo(() => {
+    if (deliveriesFilter === 'all') return deliveries
+    return deliveries.filter(d => d.status === deliveriesFilter)
+  }, [deliveries, deliveriesFilter])
 
   const filteredBroadcasts = useMemo(() => {
     if (activeTab === 'all') return broadcasts
@@ -772,6 +805,70 @@ export default function BroadcastsPage() {
                   Отправлено: {new Date(selectedBroadcast.sent_at).toLocaleString('ru')}
                 </p>
               )}
+
+              {/* Список получателей */}
+              <div className="pt-3 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-medium text-gray-700">Получатели ({deliveries.length})</p>
+                  {deliveries.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      {([
+                        { id: 'all' as const, label: 'Все' },
+                        { id: 'sent' as const, label: '✓ Отправлено' },
+                        { id: 'failed' as const, label: '✗ Ошибки' },
+                      ]).map(f => (
+                        <button key={f.id} type="button" onClick={() => setDeliveriesFilter(f.id)}
+                          className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                            deliveriesFilter === f.id
+                              ? 'bg-[#6A55F8] text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}>
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {deliveriesLoading ? (
+                  <p className="text-xs text-gray-400 py-3">Загрузка…</p>
+                ) : deliveries.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-3">Рассылка ещё не запускалась</p>
+                ) : filteredDeliveries.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-3">Нет записей с таким статусом</p>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-100">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-500">Клиент</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-500">Контакт</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-500">Статус</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredDeliveries.map(d => {
+                          const name = d.customers?.full_name || d.customers?.telegram_username || 'Без имени'
+                          const tg = d.customers?.telegram_username ? '@' + d.customers.telegram_username : d.customers?.telegram_id
+                          const contact = tg || d.customers?.email || '—'
+                          return (
+                            <tr key={d.id} className="border-b border-gray-50 last:border-b-0">
+                              <td className="px-3 py-2 text-gray-900 truncate max-w-[120px]">{name}</td>
+                              <td className="px-3 py-2 text-gray-500 truncate max-w-[140px]">{contact}</td>
+                              <td className="px-3 py-2">
+                                {d.status === 'sent' ? (
+                                  <span className="text-green-600">✓ Отправлено</span>
+                                ) : (
+                                  <span className="text-red-500" title={d.error ?? ''}>✗ {d.error ? d.error.slice(0, 40) : 'Ошибка'}</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

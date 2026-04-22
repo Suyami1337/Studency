@@ -301,6 +301,19 @@ export async function POST(request: NextRequest) {
     const text = isCallback ? '' : (message.text || '')
     const callbackData = isCallback ? body.callback_query.data : null
 
+    // Защита от «фэйковых подписчиков»: Telegram шлёт события в бот не только от
+    // реальных юзеров. Отрицательный chat_id = группа/канал (например
+    // @Channel_Bot=136817688 когда кто-то постит в канал от имени самого канала).
+    // Бот не может им писать — «bot can't initiate conversation» — поэтому
+    // не создаём conversations для них, иначе они попадут в рассылки.
+    if (typeof chatId !== 'number' || chatId <= 0) {
+      return NextResponse.json({ ok: true })
+    }
+    // Telegram Channel_Bot — системный аккаунт id 136817688
+    if (userId === 136817688) {
+      return NextResponse.json({ ok: true })
+    }
+
     // Find bot
     const { data: bot } = await supabase
       .from('telegram_bots')
