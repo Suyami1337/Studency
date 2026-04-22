@@ -759,12 +759,26 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
   const client = new Anthropic({ apiKey })
 
   // Reconstruct conversation: prior history + new user turn
-  // Если history длиннее MAX_HISTORY_TURNS — оставляем первый user turn (оригинальная задача)
-  // и последние (MAX_HISTORY_TURNS - 1) turns. Это режет input tokens в разы.
+  // Обрезаем осторожно: ищем безопасную точку среза — обычное user-сообщение (не tool_result).
+  // Это гарантирует что ни одна пара tool_use/tool_result не разорвётся.
   const rawHistory = ctx.history.map(h => ({ role: h.role, content: h.content }) as ChatMessage)
-  const trimmedHistory = rawHistory.length > MAX_HISTORY_TURNS
-    ? [rawHistory[0], ...rawHistory.slice(-MAX_HISTORY_TURNS + 1)]
-    : rawHistory
+  let trimmedHistory = rawHistory
+  if (rawHistory.length > MAX_HISTORY_TURNS) {
+    const wantFrom = rawHistory.length - MAX_HISTORY_TURNS
+    let safeStart = -1
+    for (let i = wantFrom; i < rawHistory.length; i++) {
+      const m = rawHistory[i]
+      if (m.role === 'user' && typeof m.content === 'string') {
+        safeStart = i
+        break
+      }
+    }
+    if (safeStart >= 0) {
+      trimmedHistory = rawHistory.slice(safeStart)
+    }
+    // Если безопасной точки нет — оставляем историю целиком, пусть лучше context будет
+    // больше, чем случится invalid_request_error от Anthropic
+  }
   const conversation: ChatMessage[] = [
     ...trimmedHistory,
     { role: 'user', content: ctx.userMessage },
