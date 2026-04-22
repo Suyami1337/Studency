@@ -44,6 +44,16 @@ export async function GET(_request: NextRequest) {
         await supabase.from('followup_queue').update({ status: 'sent', sent_at: now }).eq('id', item.id)
         continue
       }
+      // Атомарный claim: pending → sending одним UPDATE. Если 0 строк —
+      // waitUntil из scenario-sender.ts уже захватил запись, пропускаем.
+      const { data: claimed } = await supabase
+        .from('followup_queue')
+        .update({ status: 'sending' })
+        .eq('id', item.id)
+        .eq('status', 'pending')
+        .select('id')
+        .maybeSingle()
+      if (!claimed) continue
       try {
         const channel = followup.channel ?? 'telegram'
         if (channel === 'telegram' || channel === 'both') {

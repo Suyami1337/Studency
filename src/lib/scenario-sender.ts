@@ -457,13 +457,17 @@ export async function sendScenarioMessage(
           const remaining = Math.max(0, delayMs - elapsed)
           await new Promise(res => setTimeout(res, remaining))
           try {
-            // Перепроверяем статус в очереди — webhook мог отменить
-            const { data: current } = await supabase
+            // Атомарный claim: переводим из pending в sending одним UPDATE.
+            // Если вернулось 0 строк — кто-то (cron или другой waitUntil) уже
+            // захватил запись или webhook её отменил. Мы выходим без отправки.
+            const { data: claimed } = await supabase
               .from('followup_queue')
-              .select('status')
+              .update({ status: 'sending' })
               .eq('id', queueId)
+              .eq('status', 'pending')
+              .select('id')
               .maybeSingle()
-            if (!current || current.status !== 'pending') return
+            if (!claimed) return
 
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {

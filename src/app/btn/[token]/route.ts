@@ -137,6 +137,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                     .from('followup_queue')
                     .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
                     .in('id', queueIds)
+                    .eq('status', 'pending')
                 }
               }
             }

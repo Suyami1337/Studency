@@ -375,6 +375,7 @@ export async function POST(request: NextRequest) {
               .from('followup_queue')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .in('id', queueIdsToCancel)
+              .eq('status', 'pending')
           }
         }
       }
