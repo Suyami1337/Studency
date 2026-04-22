@@ -350,34 +350,47 @@ export async function sendScenarioMessage(
   const buttonsArg = hasButtons ? telegramButtons : undefined
   const caption = msg.text || undefined
 
-  // Отправляем в зависимости от типа медиа
+  // Отправляем в зависимости от типа медиа.
+  // Проверяем результат Telegram API — если сообщение не ушло, не создаём
+  // фантомные followups и не идём дальше по цепочке.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let sendResult: any = null
   if (msg.media_type && msg.media_url) {
     switch (msg.media_type) {
       case 'photo':
-        await sendTelegramPhoto(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramPhoto(botToken, chatId, msg.media_url, caption, buttonsArg)
         break
       case 'video':
-        await sendTelegramVideo(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramVideo(botToken, chatId, msg.media_url, caption, buttonsArg)
         break
       case 'animation':
-        await sendTelegramAnimation(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramAnimation(botToken, chatId, msg.media_url, caption, buttonsArg)
         break
       case 'video_note':
         // video_note не поддерживает caption/buttons — отправляем отдельно текст если есть
-        await sendTelegramVideoNote(botToken, chatId, msg.media_url)
-        if (msg.text) await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+        sendResult = await sendTelegramVideoNote(botToken, chatId, msg.media_url)
+        if (msg.text && sendResult?.ok) {
+          sendResult = await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+        }
         break
       case 'audio':
-        await sendTelegramAudio(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramAudio(botToken, chatId, msg.media_url, caption, buttonsArg)
         break
       case 'document':
       default:
-        await sendTelegramDocument(botToken, chatId, msg.media_url, caption, buttonsArg)
+        sendResult = await sendTelegramDocument(botToken, chatId, msg.media_url, caption, buttonsArg)
         break
     }
   } else {
     // Обычное текстовое сообщение
-    await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+    sendResult = await sendTelegramMessage(botToken, chatId, msg.text, buttonsArg)
+  }
+
+  if (!sendResult?.ok) {
+    console.error(`[send] Telegram rejected msg=${msg.id}:`, sendResult?.description || sendResult)
+    // Не пишем outgoing, не создаём followups, не идём дальше — чтобы в БД
+    // не было записей о сообщениях которые клиент на самом деле не видел.
+    return
   }
 
   // Save outgoing
