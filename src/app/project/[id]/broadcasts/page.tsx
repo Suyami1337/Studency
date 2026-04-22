@@ -4,19 +4,25 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import RichTextEditor from '@/components/RichTextEditor'
+import { MediaUpload } from '@/components/MediaUpload'
+
+type BroadcastButton = { text: string; url: string }
 
 type Broadcast = {
   id: string
   name: string
   status: string
   text: string | null
+  media_id: string | null
   media_url: string | null
   media_type: string | null
+  media_file_name?: string | null
   telegram_bot_id: string | null
   channel: string
   email_subject: string | null
   segment_type: string
   segment_value: string | null
+  buttons: BroadcastButton[] | null
   total_recipients: number
   sent_count: number
   failed_count: number
@@ -38,8 +44,8 @@ type ScenarioBlock = {
 
 type SegmentType = 'all' | 'funnel_stage' | 'tag' | 'source' | 'scenario_message_in' | 'scenario_message_not_in'
 type TabKey = 'all' | 'draft' | 'scheduled' | 'sent'
+type ScheduleMode = 'now' | 'later' | 'draft'
 
-// Формат для datetime-local с учётом локальной таймзоны (без смещения в UTC).
 function toLocalDateTimeInput(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -70,9 +76,14 @@ export default function BroadcastsPage() {
   const [channel, setChannel] = useState<'telegram' | 'email' | 'both'>('telegram')
   const [emailSubject, setEmailSubject] = useState('')
   const [text, setText] = useState('')
+  const [mediaId, setMediaId] = useState<string | null>(null)
+  const [mediaType, setMediaType] = useState<string | null>(null)
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [mediaFileName, setMediaFileName] = useState<string | null>(null)
+  const [buttons, setButtons] = useState<BroadcastButton[]>([])
   const [segmentType, setSegmentType] = useState<SegmentType>('all')
   const [segmentValue, setSegmentValue] = useState('')
-  const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now')
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('now')
   const [scheduledAt, setScheduledAt] = useState(() => {
     const d = new Date()
     d.setMinutes(d.getMinutes() + 15)
@@ -82,6 +93,10 @@ export default function BroadcastsPage() {
   const [saving, setSaving] = useState(false)
   const [sendingId, setSendingId] = useState<string | null>(null)
 
+  // Preview count
+  const [previewCount, setPreviewCount] = useState<number | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     const [brRes, botsRes, stagesRes, blocksRes] = await Promise.all([
@@ -89,8 +104,6 @@ export default function BroadcastsPage() {
       supabase.from('telegram_bots').select('id, name').eq('project_id', projectId),
       supabase.from('funnel_stages').select('id, name, funnels!inner(name, project_id)')
         .eq('funnels.project_id', projectId),
-      // Блоки сценария для сегментации «был/не был в блоке». Ограничиваемся
-      // проектом через join на chatbot_scenarios.
       supabase.from('scenario_messages')
         .select('id, text, order_position, scenario_id, chatbot_scenarios!inner(name, project_id, telegram_bots(name))')
         .eq('chatbot_scenarios.project_id', projectId)
@@ -138,34 +151,93 @@ export default function BroadcastsPage() {
     setBotId('')
     setChannel('telegram')
     setEmailSubject('')
+    setMediaId(null); setMediaType(null); setMediaUrl(null); setMediaFileName(null)
+    setButtons([])
     setSegmentType('all')
     setSegmentValue('')
     setScheduleMode('now')
+    setPreviewCount(null)
     const d = new Date()
     d.setMinutes(d.getMinutes() + 15)
     d.setSeconds(0, 0)
     setScheduledAt(toLocalDateTimeInput(d))
   }
 
-  async function handleCreate() {
-    if (!name.trim() || !text.trim()) {
-      alert('Заполни название и текст')
-      return
-    }
+  // Сброс превью если меняются параметры сегмента/канала/бота
+  useEffect(() => { setPreviewCount(null) }, [channel, botId, segmentType, segmentValue])
+
+  async function handlePreviewCount() {
     if ((channel === 'telegram' || channel === 'both') && !botId) {
       alert('Для Telegram-канала выбери бота')
       return
     }
-    if ((channel === 'email' || channel === 'both') && !emailSubject.trim()) {
+    setPreviewLoading(true)
+    try {
+      const res = await fetch('/api/broadcasts/preview-count', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: projectId,
+          telegram_bot_id: botId || null,
+          channel,
+          segment_type: segmentType,
+          segment_value: segmentValue || null,
+        }),
+      })
+      const json = await res.json()
+      if (json.error) alert('Ошибка: ' + json.error)
+      else setPreviewCount(json.count ?? 0)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  function addButton() {
+    setButtons(prev => [...prev, { text: '', url: '' }])
+  }
+  function updateButton(i: number, patch: Partial<BroadcastButton>) {
+    setButtons(prev => prev.map((b, idx) => idx === i ? { ...b, ...patch } : b))
+  }
+  function removeButton(i: number) {
+    setButtons(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  async function handleCreate() {
+    if (!name.trim()) {
+      alert('Заполни название')
+      return
+    }
+    // Для черновика — менее строгая валидация, разрешаем пустой текст
+    const isDraft = scheduleMode === 'draft'
+    if (!isDraft && !text.trim() && !mediaUrl) {
+      alert('Добавь текст или медиа')
+      return
+    }
+    if (!isDraft && (channel === 'telegram' || channel === 'both') && !botId) {
+      alert('Для Telegram-канала выбери бота')
+      return
+    }
+    if (!isDraft && (channel === 'email' || channel === 'both') && !emailSubject.trim()) {
       alert('Для email-канала заполни тему письма')
       return
     }
-    if ((segmentType === 'scenario_message_in' || segmentType === 'scenario_message_not_in') && !segmentValue) {
+    if (!isDraft && (segmentType === 'scenario_message_in' || segmentType === 'scenario_message_not_in') && !segmentValue) {
       alert('Выбери блок сценария')
       return
     }
+    // Валидация кнопок — если текст есть, URL должен быть и начинаться с http
+    for (const b of buttons) {
+      if (!b.text.trim() && !b.url.trim()) continue
+      if (!isDraft && (!b.text.trim() || !b.url.trim())) {
+        alert('У кнопок должен быть и текст, и ссылка')
+        return
+      }
+      if (!isDraft && b.url && !/^https?:\/\//i.test(b.url.trim())) {
+        alert('Ссылка кнопки должна начинаться с http:// или https://')
+        return
+      }
+    }
 
-    // Если запланировано — время должно быть в будущем
     let scheduledIso: string | null = null
     if (scheduleMode === 'later') {
       const d = new Date(scheduledAt)
@@ -181,6 +253,7 @@ export default function BroadcastsPage() {
     }
 
     setSaving(true)
+    const cleanButtons = buttons.filter(b => b.text.trim() && b.url.trim())
     const res = await fetch('/api/broadcasts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,8 +263,10 @@ export default function BroadcastsPage() {
         name, text,
         channel,
         email_subject: emailSubject || null,
+        media_id: mediaId, media_type: mediaType, media_url: mediaUrl,
         segment_type: segmentType,
         segment_value: segmentValue || null,
+        buttons: cleanButtons,
         scheduled_at: scheduledIso,
       }),
     })
@@ -207,15 +282,13 @@ export default function BroadcastsPage() {
     resetForm()
     await load()
 
-    // Если выбрано "Отправить сейчас" — сразу запускаем
     if (scheduleMode === 'now' && json.broadcast?.id) {
-      if (confirm('Запустить рассылку сейчас?')) {
-        await handleSend(json.broadcast.id)
-      } else {
-        setActiveTab('draft')
-      }
-    } else {
+      // Сразу запускаем — без лишнего confirm, юзер уже выбрал «Сейчас»
+      await handleSend(json.broadcast.id)
+    } else if (scheduleMode === 'later') {
       setActiveTab('scheduled')
+    } else {
+      setActiveTab('draft')
     }
   }
 
@@ -272,6 +345,12 @@ export default function BroadcastsPage() {
     }
     return b.segment_type
   }
+
+  const primaryButtonLabel = saving
+    ? 'Сохраняю…'
+    : scheduleMode === 'later' ? 'Запланировать'
+    : scheduleMode === 'draft' ? 'Сохранить черновик'
+    : 'Отправить'
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -402,7 +481,6 @@ export default function BroadcastsPage() {
                   className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
               </div>
 
-              {/* Channel selector */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Канал</label>
                 <div className="flex gap-2">
@@ -453,6 +531,47 @@ export default function BroadcastsPage() {
                 />
               </div>
 
+              {/* Media */}
+              <MediaUpload
+                projectId={projectId}
+                mediaId={mediaId} mediaType={mediaType} mediaUrl={mediaUrl} mediaFileName={mediaFileName ?? null}
+                onChange={(mid, mt, mu, mfn) => {
+                  setMediaId(mid); setMediaType(mt); setMediaUrl(mu); setMediaFileName(mfn)
+                }}
+              />
+
+              {/* Buttons */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-medium text-gray-700">Кнопки (необязательно)</label>
+                  <button type="button" onClick={addButton}
+                    className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить</button>
+                </div>
+                {buttons.length === 0 ? (
+                  <p className="text-[10px] text-gray-400">Добавь кнопки со ссылками — появятся под сообщением в Telegram</p>
+                ) : (
+                  <div className="space-y-2">
+                    {buttons.map((b, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <div className="flex-1 space-y-1">
+                          <input type="text" value={b.text}
+                            onChange={e => updateButton(i, { text: e.target.value })}
+                            placeholder="Текст кнопки"
+                            className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                          <input type="url" value={b.url}
+                            onChange={e => updateButton(i, { url: e.target.value })}
+                            placeholder="https://…"
+                            className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                        </div>
+                        <button type="button" onClick={() => removeButton(i)}
+                          className="text-gray-400 hover:text-red-500 text-sm px-1 pt-1">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Segment */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Сегмент</label>
                 <select value={segmentType}
@@ -517,13 +636,27 @@ export default function BroadcastsPage() {
                 </div>
               )}
 
+              {/* Preview count */}
+              <div className="flex items-center gap-2 pt-1">
+                <button type="button" onClick={handlePreviewCount} disabled={previewLoading}
+                  className="text-xs text-[#6A55F8] font-medium hover:underline disabled:opacity-50">
+                  {previewLoading ? 'Считаю…' : '🔢 Подсчитать получателей'}
+                </button>
+                {previewCount !== null && (
+                  <span className="text-xs text-gray-700">
+                    → <b>{previewCount}</b> {previewCount === 1 ? 'клиент' : previewCount < 5 ? 'клиента' : 'клиентов'}
+                  </span>
+                )}
+              </div>
+
               {/* Schedule */}
               <div className="pt-2 border-t border-gray-100">
                 <label className="block text-xs font-medium text-gray-700 mb-1">Когда отправить</label>
-                <div className="flex gap-2 mb-2">
+                <div className="flex gap-2">
                   {([
                     { id: 'now' as const, label: '⚡ Сейчас' },
                     { id: 'later' as const, label: '📅 Запланировать' },
+                    { id: 'draft' as const, label: '📝 Черновик' },
                   ]).map(m => (
                     <button key={m.id} type="button" onClick={() => setScheduleMode(m.id)}
                       className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
@@ -538,7 +671,10 @@ export default function BroadcastsPage() {
                 {scheduleMode === 'later' && (
                   <input type="datetime-local" value={scheduledAt}
                     onChange={e => setScheduledAt(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                    className="mt-2 w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                )}
+                {scheduleMode === 'draft' && (
+                  <p className="text-[10px] text-gray-400 mt-1">Сохранится как черновик. Отправить сможешь позже из вкладки «Черновики».</p>
                 )}
               </div>
             </div>
@@ -549,9 +685,7 @@ export default function BroadcastsPage() {
               </button>
               <button onClick={handleCreate} disabled={saving}
                 className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
-                {saving
-                  ? 'Сохраняю…'
-                  : scheduleMode === 'later' ? 'Запланировать' : 'Создать'}
+                {primaryButtonLabel}
               </button>
             </div>
           </div>
@@ -571,6 +705,33 @@ export default function BroadcastsPage() {
                 <p className="text-xs text-gray-500 mb-1">Текст</p>
                 <div className="text-gray-900 prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: selectedBroadcast.text ?? '' }} />
               </div>
+              {selectedBroadcast.media_url && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Вложение</p>
+                  {selectedBroadcast.media_type === 'photo' || selectedBroadcast.media_type === 'animation' ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={selectedBroadcast.media_url} alt="" className="max-h-40 rounded border border-gray-200" />
+                  ) : selectedBroadcast.media_type === 'video' || selectedBroadcast.media_type === 'video_note' ? (
+                    <video src={selectedBroadcast.media_url} controls className="max-h-40 rounded border border-gray-200" />
+                  ) : (
+                    <a href={selectedBroadcast.media_url} target="_blank" rel="noreferrer" className="text-xs text-[#6A55F8] hover:underline">
+                      {selectedBroadcast.media_type}
+                    </a>
+                  )}
+                </div>
+              )}
+              {selectedBroadcast.buttons && selectedBroadcast.buttons.length > 0 && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Кнопки</p>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedBroadcast.buttons.map((btn, i) => (
+                      <span key={i} className="text-xs bg-[#F8F7FF] text-[#6A55F8] px-2 py-1 rounded border border-[#6A55F8]/20">
+                        {btn.text} → {btn.url}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Канал</p>

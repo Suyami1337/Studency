@@ -107,11 +107,19 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
       // Без /start от юзера Telegram возвращает 403 «can't initiate conversation».
       if (useTelegram && bot && r.conversation_id && r.conversation_chat_id) {
         try {
+          // Кнопки рассылки — массив { text, url }. Пробрасываем в формат
+          // inline_keyboard который ждёт sendTelegramMessage.
+          const buttons = Array.isArray(broadcast.buttons)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ? (broadcast.buttons as any[])
+                .filter(b => b && b.text && b.url)
+                .map(b => ({ text: String(b.text), url: String(b.url) }))
+            : undefined
           const res = await sendFollowupContent(bot.token, r.conversation_chat_id, {
             text: broadcast.text,
             media_type: broadcast.media_type,
             media_url: broadcast.media_url,
-          })
+          }, buttons && buttons.length > 0 ? buttons : undefined)
           if (res.ok) {
             await supabase.from('chatbot_messages').insert({
               conversation_id: r.conversation_id,
@@ -195,9 +203,10 @@ export async function runBroadcast(id: string): Promise<BroadcastResult> {
  * - Для «both» — клиент попадает если доступен хотя бы один канал.
  *
  * Сегменты (funnel_stage/tag/source/scenario_message_*) применяются поверх.
+ * Экспортируется чтобы preview-count endpoint мог переиспользовать без отправки.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { useTelegram: boolean; useEmail: boolean }): Promise<Recipient[]> {
+export async function loadRecipients(supabase: SupabaseClient, broadcast: any, opts: { useTelegram: boolean; useEmail: boolean }): Promise<Recipient[]> {
   const { useTelegram, useEmail } = opts
 
   // ─── Карта customer_id → conversation для Telegram ───

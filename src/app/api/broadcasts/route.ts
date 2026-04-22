@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
     media_url: body.media_url ?? null,
     segment_type: body.segment_type ?? 'all',
     segment_value: body.segment_value ?? null,
+    buttons: Array.isArray(body.buttons) ? body.buttons : [],
     scheduled_at: isScheduled ? scheduledAt!.toISOString() : null,
   }).select().single()
 
