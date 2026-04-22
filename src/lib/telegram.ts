@@ -96,6 +96,18 @@ export async function setTelegramWebhook(token: string, webhookUrl: string) {
   })
 }
 
+/**
+ * Ответ на callback_query. Нужно вызвать в течение ~10 секунд после клика,
+ * иначе Telegram показывает клиенту бесконечный спиннер у кнопки.
+ * Вызываем fire-and-forget в самом начале обработки callback.
+ */
+export async function answerCallbackQuery(token: string, callbackQueryId: string, text?: string) {
+  return telegramRequest(token, 'answerCallbackQuery', {
+    callback_query_id: callbackQueryId,
+    text,
+  })
+}
+
 export async function deleteTelegramWebhook(token: string) {
   const res = await fetch(`${TELEGRAM_API}${token}/deleteWebhook`, { method: 'POST' })
   return res.json()

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendScenarioMessage } from '@/lib/scenario-sender'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
+import { answerCallbackQuery } from '@/lib/telegram'
 
 function getSupabase() {
   return createClient(
@@ -292,6 +293,14 @@ export async function POST(request: NextRequest) {
     const isCallback = !!body.callback_query
     const message = isCallback ? body.callback_query.message : body.message
     if (!message) return NextResponse.json({ ok: true })
+
+    // Сразу отвечаем Telegram на callback_query чтобы убрать spinner у кнопки.
+    // Fire-and-forget — не ждём ответа, обработку продолжаем дальше.
+    if (isCallback && body.callback_query?.id) {
+      void answerCallbackQuery(botToken, body.callback_query.id).catch(err =>
+        console.error('answerCallbackQuery error:', err)
+      )
+    }
 
     const chatId = message.chat.id
     const userId = isCallback ? body.callback_query.from?.id : message.from?.id
