@@ -134,6 +134,14 @@ export default function BroadcastsPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewStage, setPreviewStage] = useState<'sync' | 'count' | null>(null)
 
+  // Тестовая отправка одному получателю
+  type TestRecipient = { id: string; full_name: string | null; telegram_username: string | null; telegram_id: string | null }
+  const [testPickerOpen, setTestPickerOpen] = useState(false)
+  const [testRecipients, setTestRecipients] = useState<TestRecipient[]>([])
+  const [testLoading, setTestLoading] = useState(false)
+  const [testSearch, setTestSearch] = useState('')
+  const [testSending, setTestSending] = useState<string | null>(null)
+
   const load = useCallback(async () => {
     setLoading(true)
     const [brRes, botsRes, stagesRes, blocksRes] = await Promise.all([
@@ -229,6 +237,88 @@ export default function BroadcastsPage() {
    *  2) count — запрашиваем preview-count с актуальными данными
    * Для email-only канала sync пропускаем.
    */
+  /**
+   * Тестовая отправка: открываем список подписчиков бота чтобы юзер выбрал
+   * одного и отправил ему рассылку как превью. Никаких записей в broadcasts.
+   */
+  async function openTestPicker() {
+    if (!botId) {
+      alert('Для тестовой отправки выбери бота')
+      return
+    }
+    if (!text.trim() && !mediaUrl) {
+      alert('Добавь текст или медиа перед тестовой отправкой')
+      return
+    }
+    setTestPickerOpen(true)
+    setTestSearch('')
+    setTestLoading(true)
+    try {
+      // Активные подписчики бота с customer_id — только по ним можем адресовать
+      const { data } = await supabase
+        .from('chatbot_conversations')
+        .select('customer_id, customers(id, full_name, telegram_username, telegram_id)')
+        .eq('telegram_bot_id', botId)
+        .eq('chat_blocked', false)
+        .gt('telegram_chat_id', 0)
+        .not('customer_id', 'is', null)
+        .order('updated_at', { ascending: false })
+        .limit(500)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recips: TestRecipient[] = ((data ?? []) as any[])
+        .map(r => r.customers)
+        .filter((c): c is TestRecipient => !!c && !!c.id)
+      // Дедуп по id (у одного customer может быть несколько conv)
+      const seen = new Set<string>()
+      const unique = recips.filter(c => {
+        if (seen.has(c.id)) return false
+        seen.add(c.id)
+        return true
+      })
+      setTestRecipients(unique)
+    } finally {
+      setTestLoading(false)
+    }
+  }
+
+  async function handleSendTest(customerId: string) {
+    setTestSending(customerId)
+    const cleanButtons = buttons
+      .filter(b => b.text.trim() && (
+        (b.action_type === 'url' && b.url?.trim()) ||
+        (b.action_type === 'trigger' && b.action_trigger_word?.trim()) ||
+        (b.action_type === 'goto_message' && b.action_goto_message_id)
+      ))
+      .map(b => ({
+        text: b.text.trim(),
+        action_type: b.action_type,
+        ...(b.action_type === 'url' ? { url: b.url?.trim() } : {}),
+        ...(b.action_type === 'trigger' ? { action_trigger_word: b.action_trigger_word?.trim() } : {}),
+        ...(b.action_type === 'goto_message' ? { action_goto_message_id: b.action_goto_message_id } : {}),
+      }))
+    try {
+      const res = await fetch('/api/broadcasts/send-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegram_bot_id: botId,
+          to_customer_id: customerId,
+          text, media_type: mediaType, media_url: mediaUrl,
+          buttons: cleanButtons,
+        }),
+      })
+      const json = await res.json()
+      if (json.error) {
+        alert('Ошибка: ' + json.error)
+      } else {
+        alert('✓ Тестовая отправка прошла' + (json.note ? `\n\n${json.note}` : ''))
+        setTestPickerOpen(false)
+      }
+    } finally {
+      setTestSending(null)
+    }
+  }
+
   async function handlePreviewCount() {
     if ((channel === 'telegram' || channel === 'both') && !botId) {
       alert('Для Telegram-канала выбери бота')
@@ -964,6 +1054,13 @@ export default function BroadcastsPage() {
                 className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
                 Отмена
               </button>
+              {(channel === 'telegram' || channel === 'both') && botId && (
+                <button onClick={openTestPicker} disabled={saving}
+                  title="Отправить одному контакту для проверки"
+                  className="px-3 py-2 text-sm font-medium rounded-lg border border-[#6A55F8]/30 text-[#6A55F8] hover:bg-[#F8F7FF] disabled:opacity-50">
+                  📨 Тест
+                </button>
+              )}
               <button onClick={handleCreate} disabled={saving}
                 className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
                 {primaryButtonLabel}
@@ -974,6 +1071,80 @@ export default function BroadcastsPage() {
       )}
 
       {/* Detail modal */}
+      {/* Test picker — выбор получателя для тестовой отправки */}
+      {testPickerOpen && (() => {
+        const q = testSearch.trim().toLowerCase()
+        const filteredRecips = q
+          ? testRecipients.filter(r => {
+              const name = (r.full_name || '').toLowerCase()
+              const uname = (r.telegram_username || '').toLowerCase()
+              return name.includes(q) || uname.includes(q)
+            })
+          : testRecipients
+        return (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={() => setTestPickerOpen(false)}>
+            <div className="bg-white rounded-xl max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="text-base font-semibold text-gray-900">Тестовая отправка</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Выбери получателя — рассылка уйдёт только ему. Статистика не изменится.</p>
+              </div>
+              <div className="p-3 border-b border-gray-100">
+                <input type="text" value={testSearch} onChange={e => setTestSearch(e.target.value)}
+                  placeholder="🔍 Поиск по имени или @username"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {testLoading ? (
+                  <div className="p-8 text-center text-sm text-gray-400">Загружаю…</div>
+                ) : filteredRecips.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <p className="text-sm text-gray-500">
+                      {testRecipients.length === 0
+                        ? 'Нет активных подписчиков бота — некому отправить тест'
+                        : 'Никто не подходит под поиск'}
+                    </p>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-gray-50">
+                    {filteredRecips.map(r => {
+                      const name = r.full_name || r.telegram_username || 'Без имени'
+                      const busy = testSending === r.id
+                      return (
+                        <li key={r.id}>
+                          <button onClick={() => handleSendTest(r.id)} disabled={!!testSending}
+                            className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 text-left disabled:opacity-50">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-[#F0EDFF] flex items-center justify-center text-xs font-bold text-[#6A55F8] flex-shrink-0">
+                                {name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900 truncate">{name}</p>
+                                {r.telegram_username && (
+                                  <p className="text-xs text-gray-500 truncate">@{r.telegram_username}</p>
+                                )}
+                              </div>
+                            </div>
+                            <span className="text-xs text-[#6A55F8] font-medium flex-shrink-0">
+                              {busy ? 'Отправляю…' : 'Отправить →'}
+                            </span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+              <div className="p-3 border-t border-gray-100 flex justify-end">
+                <button onClick={() => setTestPickerOpen(false)}
+                  className="px-3 py-1.5 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+                  Закрыть
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {selectedBroadcast && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedBroadcast(null)}>
           <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>

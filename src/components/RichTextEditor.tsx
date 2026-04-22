@@ -203,7 +203,16 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
 
   return (
     <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-1 px-0.5">
+      {/* Toolbar прилипает к верху прокручиваемого контейнера (модалки) —
+          пока юзер листает текст сообщения вниз, форматирование всегда под рукой */}
+      <div
+        className="sticky top-0 z-20 flex flex-wrap items-center gap-1 px-0.5 py-1 bg-white/95 backdrop-blur-sm rounded-t-lg"
+        onMouseDown={(e) => {
+          // Чтобы клик по кнопкам toolbar не забирал фокус у редактора и
+          // выделение текста не слетало при форматировании
+          e.preventDefault()
+        }}
+      >
         <button type="button" onClick={() => editor.chain().focus().toggleBold().run()}
           title="Жирный (Ctrl+B)"
           className={`min-w-7 h-7 px-1.5 rounded text-xs font-bold transition-colors flex items-center justify-center ${editor.isActive('bold') ? 'bg-[#6A55F8] text-white' : 'bg-gray-100 hover:bg-[#F0EDFF] hover:text-[#6A55F8] text-gray-700'}`}>B</button>
