@@ -9,6 +9,56 @@ type ChatEntry =
   | { kind: 'ai'; text: string; tools?: ToolCallInfo[] }
   | { kind: 'system'; text: string }
 
+type PreviewButton = { text: string; type?: 'url' | 'goto' | 'trigger' | 'gate' | 'subscribe'; hint?: string }
+type MessagePreview = { text: string; buttons?: PreviewButton[]; label?: string; note?: string; gate?: string }
+
+// Парсит JSON из tg-preview блока. Возвращает null если не валиден.
+function tryParsePreview(raw: string): MessagePreview | null {
+  try {
+    const obj = JSON.parse(raw)
+    if (obj && typeof obj === 'object' && typeof obj.text === 'string') return obj as MessagePreview
+  } catch { /* ignore */ }
+  return null
+}
+
+function TelegramPreview({ preview }: { preview: MessagePreview }) {
+  return (
+    <div className="my-2 max-w-md">
+      {preview.label && (
+        <div className="text-[10px] font-semibold text-[#6A55F8] uppercase tracking-wide mb-1.5">
+          {preview.label}
+          {preview.gate && <span className="ml-2 text-purple-600">🚪 gate: {preview.gate}</span>}
+        </div>
+      )}
+      {/* Telegram-style bubble */}
+      <div className="bg-white rounded-2xl rounded-bl-md border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 text-[14px] leading-relaxed text-gray-900 whitespace-pre-wrap">
+          {preview.text}
+        </div>
+        {preview.buttons && preview.buttons.length > 0 && (
+          <div className="border-t border-gray-100 p-1.5 flex flex-col gap-1 bg-gray-50">
+            {preview.buttons.map((btn, i) => (
+              <div key={i} className={`rounded-lg px-3 py-2 text-[13px] font-medium flex items-center justify-between gap-2 ${
+                btn.type === 'subscribe' ? 'bg-purple-100 text-purple-800'
+                : btn.type === 'url' ? 'bg-blue-50 text-blue-700'
+                : btn.type === 'goto' ? 'bg-green-50 text-green-700'
+                : btn.type === 'trigger' ? 'bg-amber-50 text-amber-700'
+                : 'bg-white text-gray-700 border border-gray-200'
+              }`}>
+                <span>{btn.text}</span>
+                {btn.hint && <span className="text-[10px] opacity-70 truncate max-w-[50%]">{btn.hint}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {preview.note && (
+        <div className="text-[11px] text-gray-500 mt-1 italic">{preview.note}</div>
+      )}
+    </div>
+  )
+}
+
 export type AgentConfig = {
   endpoint: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -227,8 +277,23 @@ export function AiAssistantOverlay({
                           li: ({ children }) => <li>{children}</li>,
                           strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
                           em: ({ children }) => <em className="italic">{children}</em>,
-                          code: ({ children }) => <code className="bg-gray-200 text-[#6A55F8] px-1 py-0.5 rounded text-[13px] font-mono">{children}</code>,
-                          pre: ({ children }) => <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-[13px] mb-2">{children}</pre>,
+                          code: ({ className, children }) => {
+                            // tg-preview code block — render as Telegram message preview
+                            if (className === 'language-tg-preview' || className === 'language-tg') {
+                              const preview = tryParsePreview(String(children ?? ''))
+                              if (preview) return <TelegramPreview preview={preview} />
+                            }
+                            return <code className="bg-gray-200 text-[#6A55F8] px-1 py-0.5 rounded text-[13px] font-mono">{children}</code>
+                          },
+                          pre: ({ children }) => {
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const child = (children as any)?.props
+                            if (child?.className === 'language-tg-preview' || child?.className === 'language-tg') {
+                              const preview = tryParsePreview(String(child.children ?? ''))
+                              if (preview) return <TelegramPreview preview={preview} />
+                            }
+                            return <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg overflow-x-auto text-[13px] mb-2">{children}</pre>
+                          },
                           hr: () => <hr className="my-2 border-gray-300" />,
                           blockquote: ({ children }) => <blockquote className="border-l-2 border-[#6A55F8] pl-3 text-gray-600 italic mb-2">{children}</blockquote>,
                           a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#6A55F8] underline">{children}</a>,
