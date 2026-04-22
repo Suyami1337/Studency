@@ -58,6 +58,9 @@ export async function POST(request: NextRequest) {
 }
 
 // PATCH /api/broadcasts?id=... — обновление
+// Если в body есть scheduled_at — пересчитываем статус (draft ↔ scheduled)
+// по тому же правилу что POST: будущее время = scheduled, прошлое/null = draft.
+// Это позволяет одной формой править и черновики и запланированные.
 export async function PATCH(request: NextRequest) {
   const id = request.nextUrl.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
@@ -65,8 +68,30 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json()
   const supabase = getSupabase()
 
-  const { data, error } = await supabase.from('broadcasts').update(body).eq('id', id).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Нельзя править отправленную/отправляемую
+  const { data: current } = await supabase.from('broadcasts').select('status').eq('id', id).single()
+  if (current && (current.status === 'sent' || current.status === 'sending')) {
+    return NextResponse.json({ error: 'Нельзя редактировать отправленную рассылку' }, { status: 400 })
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const update: any = { ...body }
+
+  if ('scheduled_at' in body) {
+    const scheduledAt = body.scheduled_at ? new Date(body.scheduled_at) : null
+    const isScheduled = scheduledAt && scheduledAt.getTime() > Date.now()
+    update.scheduled_at = isScheduled ? scheduledAt!.toISOString() : null
+    // Если в body явно передан status — уважаем его; иначе выводим из scheduled_at
+    if (!('status' in body)) {
+      update.status = isScheduled ? 'scheduled' : 'draft'
+    }
+  }
+
+  const { data, error } = await supabase.from('broadcasts').update(update).eq('id', id).select().single()
+  if (error) {
+    console.error('[broadcasts PATCH] update failed:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
   return NextResponse.json({ broadcast: data })
 }
 

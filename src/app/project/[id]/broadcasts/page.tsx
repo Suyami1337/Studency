@@ -73,7 +73,13 @@ export default function BroadcastsPage() {
   const [stages, setStages] = useState<FunnelStage[]>([])
   const [blocks, setBlocks] = useState<ScenarioBlock[]>([])
   const [loading, setLoading] = useState(true)
-  const [showCreate, setShowCreate] = useState(false)
+  // Редактор рассылки:
+  // - 'new' — создание (POST)
+  // - uuid — редактирование существующей (PATCH)
+  // - null — закрыто
+  const [editorId, setEditorId] = useState<string | null>(null)
+  const editorOpen = editorId !== null
+  const isEditing = editorOpen && editorId !== 'new'
   const [selectedBroadcast, setSelectedBroadcast] = useState<Broadcast | null>(null)
   const [activeTab, setActiveTab] = useState<TabKey>('all')
 
@@ -318,22 +324,30 @@ export default function BroadcastsPage() {
         ...(b.action_type === 'trigger' ? { action_trigger_word: b.action_trigger_word?.trim() } : {}),
         ...(b.action_type === 'goto_message' ? { action_goto_message_id: b.action_goto_message_id } : {}),
       }))
-    const res = await fetch('/api/broadcasts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_id: projectId,
-        telegram_bot_id: botId || null,
-        name, text,
-        channel,
-        email_subject: emailSubject || null,
-        media_id: mediaId, media_type: mediaType, media_url: mediaUrl,
-        segment_type: segmentType,
-        segment_value: segmentValue || null,
-        buttons: cleanButtons,
-        scheduled_at: scheduledIso,
-      }),
-    })
+    const payload = {
+      project_id: projectId,
+      telegram_bot_id: botId || null,
+      name, text,
+      channel,
+      email_subject: emailSubject || null,
+      media_id: mediaId, media_type: mediaType, media_url: mediaUrl,
+      segment_type: segmentType,
+      segment_value: segmentValue || null,
+      buttons: cleanButtons,
+      scheduled_at: scheduledIso,
+    }
+
+    const res = isEditing
+      ? await fetch(`/api/broadcasts?id=${editorId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+      : await fetch('/api/broadcasts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
     const json = await res.json()
     setSaving(false)
 
@@ -342,18 +356,111 @@ export default function BroadcastsPage() {
       return
     }
 
-    setShowCreate(false)
+    const broadcastId = json.broadcast?.id ?? (isEditing ? editorId : null)
+    setEditorId(null)
     resetForm()
     await load()
 
-    if (scheduleMode === 'now' && json.broadcast?.id) {
+    if (scheduleMode === 'now' && broadcastId) {
       // Сразу запускаем — без лишнего confirm, юзер уже выбрал «Сейчас»
-      await handleSend(json.broadcast.id)
+      await handleSend(broadcastId)
     } else if (scheduleMode === 'later') {
       setActiveTab('scheduled')
     } else {
       setActiveTab('draft')
     }
+  }
+
+  /**
+   * Открыть редактор для существующей рассылки: prefill полей и setEditorId(id).
+   * Работает для draft и scheduled — sent/sending/failed не редактируются.
+   */
+  function handleEdit(b: Broadcast) {
+    setName(b.name || '')
+    setText(b.text || '')
+    setBotId(b.telegram_bot_id || '')
+    setChannel((b.channel as 'telegram' | 'email' | 'both') || 'telegram')
+    setEmailSubject(b.email_subject || '')
+    setMediaId(b.media_id || null)
+    setMediaType(b.media_type || null)
+    setMediaUrl(b.media_url || null)
+    setMediaFileName(b.media_file_name || null)
+    // Нормализуем кнопки из БД (бэкенд может вернуть legacy формат { text, url })
+    const normalized: BroadcastButton[] = Array.isArray(b.buttons)
+      ? b.buttons.map(raw => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const r = raw as any
+          const action_type = r.action_type || (r.url ? 'url' : 'url')
+          return {
+            text: r.text || '',
+            action_type: action_type as BroadcastButton['action_type'],
+            url: r.url,
+            action_trigger_word: r.action_trigger_word,
+            action_goto_message_id: r.action_goto_message_id,
+          }
+        })
+      : []
+    setButtons(normalized)
+    setSegmentType((b.segment_type as SegmentType) || 'all')
+    setSegmentValue(b.segment_value || '')
+    setPreviewCount(null)
+    if (b.scheduled_at) {
+      setScheduleMode('later')
+      setScheduledAt(toLocalDateTimeInput(new Date(b.scheduled_at)))
+    } else {
+      setScheduleMode(b.status === 'draft' ? 'draft' : 'now')
+      const d = new Date()
+      d.setMinutes(d.getMinutes() + 15)
+      d.setSeconds(0, 0)
+      setScheduledAt(toLocalDateTimeInput(d))
+    }
+    setEditorId(b.id)
+  }
+
+  /**
+   * Создать копию: POST новой рассылки с теми же полями, статус = draft
+   * (scheduled_at сбрасываем). Сразу открываем её в редакторе.
+   */
+  async function handleDuplicate(b: Broadcast) {
+    const cleanButtons = Array.isArray(b.buttons)
+      ? b.buttons.map(raw => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const r = raw as any
+          const action_type = r.action_type || (r.url ? 'url' : 'url')
+          return {
+            text: r.text || '',
+            action_type,
+            ...(action_type === 'url' ? { url: r.url } : {}),
+            ...(action_type === 'trigger' ? { action_trigger_word: r.action_trigger_word } : {}),
+            ...(action_type === 'goto_message' ? { action_goto_message_id: r.action_goto_message_id } : {}),
+          }
+        })
+      : []
+    const res = await fetch('/api/broadcasts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        telegram_bot_id: b.telegram_bot_id,
+        name: (b.name || 'Рассылка') + ' (копия)',
+        channel: b.channel,
+        email_subject: b.email_subject,
+        text: b.text,
+        media_id: b.media_id,
+        media_type: b.media_type,
+        media_url: b.media_url,
+        segment_type: b.segment_type,
+        segment_value: b.segment_value,
+        buttons: cleanButtons,
+        scheduled_at: null,
+      }),
+    })
+    const json = await res.json()
+    if (json.error) { alert('Ошибка: ' + json.error); return }
+    setSelectedBroadcast(null)
+    await load()
+    // Открываем копию в редакторе — prefill через только что созданный объект
+    if (json.broadcast) handleEdit(json.broadcast)
   }
 
   async function handleSend(id: string) {
@@ -423,7 +530,7 @@ export default function BroadcastsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Рассылки</h1>
           <p className="text-sm text-gray-500 mt-0.5">Массовая отправка сообщений по сегменту клиентов</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
+        <button onClick={() => { resetForm(); setEditorId('new') }}
           className="px-4 py-2 bg-[#6A55F8] text-white text-sm font-medium rounded-lg hover:bg-[#5845e0]">
           + Новая рассылка
         </button>
@@ -467,7 +574,12 @@ export default function BroadcastsPage() {
             const sl = statusLabel(b.status)
             return (
               <div key={b.id}
-                onClick={() => setSelectedBroadcast(b)}
+                onClick={() => {
+                  // Черновик / запланированная — открываем редактор
+                  if (b.status === 'draft' || b.status === 'scheduled') handleEdit(b)
+                  // Отправленная / отправляемая / ошибка — открываем детали
+                  else setSelectedBroadcast(b)
+                }}
                 className="bg-white rounded-xl border border-gray-100 p-4 hover:border-[#6A55F8]/40 cursor-pointer transition-colors">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -529,13 +641,15 @@ export default function BroadcastsPage() {
         </div>
       )}
 
-      {/* Create Modal */}
-      {showCreate && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
+      {/* Create / Edit Modal */}
+      {editorOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setEditorId(null)}>
           <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-gray-900">Новая рассылка</h3>
-              <button onClick={() => setShowCreate(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              <h3 className="text-base font-semibold text-gray-900">
+                {isEditing ? 'Редактирование рассылки' : 'Новая рассылка'}
+              </h3>
+              <button onClick={() => setEditorId(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -778,7 +892,7 @@ export default function BroadcastsPage() {
               </div>
             </div>
             <div className="p-5 border-t border-gray-100 flex items-center justify-end gap-2">
-              <button onClick={() => setShowCreate(false)}
+              <button onClick={() => setEditorId(null)}
                 className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
                 Отмена
               </button>
@@ -795,8 +909,12 @@ export default function BroadcastsPage() {
       {selectedBroadcast && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedBroadcast(null)}>
           <div className="bg-white rounded-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-gray-900">{selectedBroadcast.name}</h3>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-3">
+              <h3 className="text-base font-semibold text-gray-900 flex-1 truncate">{selectedBroadcast.name}</h3>
+              <button onClick={() => handleDuplicate(selectedBroadcast)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[#6A55F8]/30 text-[#6A55F8] hover:bg-[#F8F7FF]">
+                📋 Создать копию
+              </button>
               <button onClick={() => setSelectedBroadcast(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="p-5 space-y-3 text-sm">
