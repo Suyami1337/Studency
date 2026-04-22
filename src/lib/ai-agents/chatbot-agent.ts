@@ -51,6 +51,7 @@ const SYSTEM_PROMPT = `Ты AI-агент Studency. Ты работаешь ТО
 
 ## Регламент
 
+0. **Если в сценарии уже есть сообщения** (ты это увидишь из начального сообщения платформы или можешь проверить через \`read_scenario_state\`) — не предлагай создавать всё заново. Читай состояние и предлагай **дополнить/изменить** существующее. Пользователь не хочет терять прежнюю работу.
 1. **Сначала собери контекст**: ниша, продукт, ЦА/боли, цель воронки, оффер. По 1-2 вопроса за раз.
 2. **Покажи черновик** (тексты + структура) в чате. Дождись правок.
 3. **Ни одного write-tool до явного «да / делай / применяй / сохраняй / погнали».** Даже если пользователь сразу сказал «просто сделай N» — один цикл уточнения.
@@ -812,6 +813,17 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[chatbot-agent] anthropic api error at iter=${iter}:`, msg)
+      // Автосамовосстановление: если прошлая история содержит висящий tool_use
+      // (от обрезанного таймаутом запроса), чистим историю и пробуем только с
+      // текущим user message. Пользователю не надо руками жать «Новый диалог».
+      const isBrokenHistory = /tool_use.*tool_result|invalid_request_error/i.test(msg)
+      if (isBrokenHistory && iter === 0 && conversation.length > 1) {
+        console.warn('[chatbot-agent] rebuilding conversation from scratch to recover from broken history')
+        conversation.length = 0
+        conversation.push({ role: 'user', content: ctx.userMessage })
+        iter-- // повторяем эту итерацию с чистой историей
+        continue
+      }
       assistantText += (assistantText ? '\n\n' : '') + `⚠️ Anthropic API вернул ошибку: ${msg}. Попробуй ещё раз или переформулируй.`
       break
     }
