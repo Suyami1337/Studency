@@ -9,7 +9,7 @@ import RichTextEditor from '@/components/RichTextEditor'
 import { MediaUpload } from '@/components/MediaUpload'
 
 type Scenario = { id: string; name: string; status: string; telegram_bot_id: string | null; created_at: string }
-type TelegramBot = { id: string; name: string; bot_username: string }
+type TelegramBot = { id: string; name: string; bot_username: string; is_active?: boolean }
 type Message = {
   id: string; scenario_id: string; order_position: number; text: string | null
   is_start: boolean; trigger_word: string | null; is_followup: boolean
@@ -2459,6 +2459,7 @@ export default function ChatbotsPage() {
 
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [bots, setBots] = useState<TelegramBot[]>([])
+  const [botStats, setBotStats] = useState<Map<string, { scenarios: number; subscribers: number }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -2466,11 +2467,27 @@ export default function ChatbotsPage() {
   const [activePageTab, setActivePageTab] = useState<'scenarios' | 'users'>('scenarios')
   const [botAllUsers, setBotAllUsers] = useState<(BotConversation & { scenarioNames: string[] })[]>([])
   const [loadingBotUsers, setLoadingBotUsers] = useState(false)
-  const [selectedBotFilter, setSelectedBotFilter] = useState<string | null>(null)
 
+  // URL: ?bot=<id> — выбран конкретный бот (второй уровень навигации)
+  //       ?open=<id> — выбран сценарий (третий уровень)
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const urlSelectedId = searchParams.get('open') || null
   const selectedScenarioId = localSelectedId ?? urlSelectedId
+  const urlBotId = searchParams.get('bot') || null
+
+  function selectBot(id: string) {
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('bot', id)
+    p.delete('open')
+    router.replace(`?${p.toString()}`, { scroll: false })
+  }
+  function clearBot() {
+    setLocalSelectedId(null)
+    const p = new URLSearchParams(searchParams.toString())
+    p.delete('bot')
+    p.delete('open')
+    router.replace(`?${p.toString()}`, { scroll: false })
+  }
 
   function selectScenario(id: string) {
     setLocalSelectedId(id)
@@ -2488,10 +2505,33 @@ export default function ChatbotsPage() {
   async function load() {
     const [scenariosRes, botsRes] = await Promise.all([
       supabase.from('chatbot_scenarios').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
-      supabase.from('telegram_bots').select('id, name, bot_username').eq('project_id', projectId),
+      supabase.from('telegram_bots').select('id, name, bot_username, is_active').eq('project_id', projectId),
     ])
-    setScenarios(scenariosRes.data ?? [])
-    setBots(botsRes.data ?? [])
+    const sc = scenariosRes.data ?? []
+    const bs = botsRes.data ?? []
+    setScenarios(sc)
+    setBots(bs)
+
+    // Статистика по каждому боту: сколько сценариев и активных подписчиков
+    const stats = new Map<string, { scenarios: number; subscribers: number }>()
+    for (const b of bs) {
+      const scenariosCount = sc.filter(s => s.telegram_bot_id === b.id).length
+      stats.set(b.id, { scenarios: scenariosCount, subscribers: 0 })
+    }
+    if (bs.length > 0) {
+      const { data: subs } = await supabase
+        .from('chatbot_conversations')
+        .select('telegram_bot_id')
+        .in('telegram_bot_id', bs.map(b => b.id))
+        .eq('chat_blocked', false)
+        .not('customer_id', 'is', null)
+        .gt('telegram_chat_id', 0)
+      for (const row of (subs ?? []) as Array<{ telegram_bot_id: string }>) {
+        const cur = stats.get(row.telegram_bot_id)
+        if (cur) cur.subscribers++
+      }
+    }
+    setBotStats(stats)
     setLoading(false)
   }
 
@@ -2500,20 +2540,15 @@ export default function ChatbotsPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (activePageTab === 'users') {
-      loadBotUsers()
-      // Выбираем первый бот по умолчанию, если фильтр ещё не установлен
-      if (!selectedBotFilter) {
-        const firstBotId = bots[0]?.id ?? null
-        setSelectedBotFilter(firstBotId)
-      }
-    }
-  }, [activePageTab, scenarios])
+    if (activePageTab === 'users') loadBotUsers()
+  }, [activePageTab, scenarios, urlBotId])
 
   async function loadBotUsers() {
     setLoadingBotUsers(true)
-    // Берём все боты из сценариев этого проекта
-    const botIds = [...new Set(scenarios.filter(s => s.telegram_bot_id).map(s => s.telegram_bot_id as string))]
+    // В режиме внутри бота — грузим только этого бота. В общем режиме — все боты проекта.
+    const botIds = urlBotId
+      ? [urlBotId]
+      : [...new Set(scenarios.filter(s => s.telegram_bot_id).map(s => s.telegram_bot_id as string))]
     if (botIds.length === 0) { setBotAllUsers([]); setLoadingBotUsers(false); return }
 
     // Все разговоры по этим ботам
@@ -2555,11 +2590,13 @@ export default function ChatbotsPage() {
 
   async function createScenario() {
     if (!newName.trim()) return
+    // В режиме внутри бота — привязываем к нему автоматически
+    const botIdForScenario = urlBotId ?? (newBotId || null)
     const tempScenario: Scenario = {
       id: 'temp-' + Date.now(),
       name: newName.trim(),
       status: 'draft',
-      telegram_bot_id: newBotId || null,
+      telegram_bot_id: botIdForScenario,
       created_at: new Date().toISOString(),
     }
     setScenarios(prev => [tempScenario, ...prev])
@@ -2585,18 +2622,48 @@ export default function ChatbotsPage() {
     />
   }
 
+  // Уровень 1 — список ботов (когда в URL нет ?bot=...)
+  if (!urlBotId) {
+    return (
+      <BotsListView
+        bots={bots}
+        stats={botStats}
+        loading={loading}
+        onSelect={selectBot}
+      />
+    )
+  }
+
+  // Уровень 2 — внутри конкретного бота
+  const currentBot = bots.find(b => b.id === urlBotId) ?? null
+  const displayScenarios = scenarios.filter(s => s.telegram_bot_id === urlBotId)
+  const displayUsers = botAllUsers.filter(c => c.telegram_bot_id === urlBotId)
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Чат-боты</h1>
-          <p className="text-sm text-gray-500">Сценарии и автоматизация Telegram-ботов</p>
+      {/* Back + bot title */}
+      <div>
+        <button onClick={clearBot} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-3 transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+          Все боты
+        </button>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">🤖</div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">{currentBot?.name ?? 'Бот'}</h1>
+              {currentBot?.bot_username && (
+                <a href={`https://t.me/${currentBot.bot_username}`} target="_blank" rel="noreferrer"
+                  className="text-sm text-[#6A55F8] hover:underline">@{currentBot.bot_username}</a>
+              )}
+            </div>
+          </div>
+          {activePageTab === 'scenarios' && (
+            <button onClick={() => setCreating(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+              + Создать сценарий
+            </button>
+          )}
         </div>
-        {activePageTab === 'scenarios' && (
-          <button onClick={() => setCreating(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            + Создать сценарий
-          </button>
-        )}
       </div>
 
       {/* Вкладки страницы */}
@@ -2604,35 +2671,18 @@ export default function ChatbotsPage() {
         {(['scenarios', 'users'] as const).map(tab => (
           <button key={tab} onClick={() => setActivePageTab(tab)}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${activePageTab === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-            {tab === 'scenarios' ? '🤖 Сценарии' : '👥 Все пользователи'}
+            {tab === 'scenarios' ? '🤖 Сценарии' : '👥 Пользователи'}
           </button>
         ))}
       </div>
 
       {activePageTab === 'users' && (
         <div className="space-y-3">
-          {/* Фильтр по боту */}
-          {bots.length > 1 && (
-            <div className="flex gap-2 flex-wrap">
-              {bots.map(b => (
-                <button key={b.id} onClick={() => setSelectedBotFilter(b.id)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                    selectedBotFilter === b.id
-                      ? 'bg-[#6A55F8] text-white border-[#6A55F8]'
-                      : 'bg-white text-gray-600 border-gray-200 hover:border-[#6A55F8]/40'
-                  }`}>
-                  @{b.bot_username}
-                </button>
-              ))}
-            </div>
-          )}
           <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           {loadingBotUsers ? (
             <div className="p-8 text-center text-sm text-gray-400">Загружаю...</div>
           ) : (() => {
-            const filtered = selectedBotFilter
-              ? botAllUsers.filter(c => c.telegram_bot_id === selectedBotFilter)
-              : botAllUsers
+            const filtered = displayUsers
             return filtered.length === 0 ? (
               <div className="p-12 text-center">
                 <div className="text-3xl mb-3">👥</div>
@@ -2700,29 +2750,19 @@ export default function ChatbotsPage() {
           <h3 className="text-sm font-semibold text-gray-900">Новый сценарий</h3>
           <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Название сценария"
             className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-          {bots.length > 0 && (
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Привязать к боту</label>
-              <select value={newBotId} onChange={e => setNewBotId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                <option value="">Не привязывать</option>
-                {bots.map(b => <option key={b.id} value={b.id}>@{b.bot_username} — {b.name}</option>)}
-              </select>
-            </div>
-          )}
-          {bots.length === 0 && (
-            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">Сначала подключите Telegram-бота в Настройки → Интеграции</p>
-          )}
+          {/* Селектор бота скрыт — в контексте конкретного бота всегда привязываем к нему */}
           <div className="flex gap-2 items-center">
             <button onClick={createScenario} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать пустой</button>
             <button
               onClick={async () => {
-                if (!newBotId) { alert('Сначала выбери бота'); return }
+                const targetBotId = urlBotId || newBotId
+                if (!targetBotId) { alert('Сначала выбери бота'); return }
                 const description = prompt('Опиши бота — какой он, для чего, как должен общаться с клиентом:')
                 if (!description) return
                 const res = await fetch('/api/ai/generate-scenario', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ description, telegram_bot_id: newBotId }),
+                  body: JSON.stringify({ description, telegram_bot_id: targetBotId }),
                 })
                 const json = await res.json()
                 if (json.error) {
@@ -2743,19 +2783,19 @@ export default function ChatbotsPage() {
 
       {activePageTab === 'scenarios' && (loading ? (
         <SkeletonList count={3} />
-      ) : scenarios.length === 0 && !creating ? (
+      ) : displayScenarios.length === 0 && !creating ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-4">💬</div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Нет сценариев</h3>
-          <p className="text-sm text-gray-500 mb-6">Создайте сценарий для Telegram-бота</p>
+          <p className="text-sm text-gray-500 mb-6">Создай первый сценарий для этого бота</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {scenarios.map(s => (
+          {displayScenarios.map(s => (
             <button key={s.id} onClick={() => selectScenario(s.id)}
               className="w-full bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/30 hover:shadow-sm transition-all text-left">
               <div className="flex items-center gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">🤖</div>
+                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">💬</div>
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="font-semibold text-gray-900">{s.name}</h3>
@@ -2763,7 +2803,6 @@ export default function ChatbotsPage() {
                       s.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
                     }`}>{s.status === 'active' ? 'Активен' : 'Черновик'}</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">{s.telegram_bot_id ? 'Привязан к боту' : 'Без бота'}</p>
                 </div>
               </div>
               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
@@ -2771,6 +2810,79 @@ export default function ChatbotsPage() {
           ))}
         </div>
       ))}
+    </div>
+  )
+}
+
+// =============================================
+// BOTS LIST VIEW — уровень 1: список ботов проекта
+// =============================================
+function BotsListView({ bots, stats, loading, onSelect }: {
+  bots: TelegramBot[]
+  stats: Map<string, { scenarios: number; subscribers: number }>
+  loading: boolean
+  onSelect: (id: string) => void
+}) {
+  const router = useRouter()
+  const params = useParams()
+  const projectId = params.id as string
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Чат-боты</h1>
+          <p className="text-sm text-gray-500">Выбери бота чтобы управлять его сценариями и подписчиками</p>
+        </div>
+        <button
+          onClick={() => router.push(`/project/${projectId}/settings?focus=telegram-bot`)}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          + Добавить бота
+        </button>
+      </div>
+
+      {loading ? (
+        <SkeletonList count={2} />
+      ) : bots.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+          <div className="text-4xl mb-4">🤖</div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Нет подключённых ботов</h3>
+          <p className="text-sm text-gray-500 mb-6">Подключи Telegram-бота в настройках проекта</p>
+          <button
+            onClick={() => router.push(`/project/${projectId}/settings?focus=telegram-bot`)}
+            className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+            Открыть настройки
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {bots.map(b => {
+            const s = stats.get(b.id) ?? { scenarios: 0, subscribers: 0 }
+            return (
+              <button key={b.id} onClick={() => onSelect(b.id)}
+                className="bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/40 hover:shadow-sm transition-all text-left">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-12 h-12 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-2xl flex-shrink-0">🤖</div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <h3 className="font-semibold text-gray-900 truncate">{b.name}</h3>
+                      {b.is_active === false && (
+                        <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-500">Отключён</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 truncate">@{b.bot_username}</p>
+                    <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-400">
+                      <span>💬 {s.scenarios} {s.scenarios === 1 ? 'сценарий' : s.scenarios < 5 ? 'сценария' : 'сценариев'}</span>
+                      <span>👥 {s.subscribers} {s.subscribers === 1 ? 'подписчик' : s.subscribers < 5 ? 'подписчика' : 'подписчиков'}</span>
+                    </div>
+                  </div>
+                </div>
+                <svg className="w-5 h-5 text-gray-300 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
