@@ -294,14 +294,6 @@ export async function POST(request: NextRequest) {
     const message = isCallback ? body.callback_query.message : body.message
     if (!message) return NextResponse.json({ ok: true })
 
-    // Сразу отвечаем Telegram на callback_query чтобы убрать spinner у кнопки.
-    // Fire-and-forget — не ждём ответа, обработку продолжаем дальше.
-    if (isCallback && body.callback_query?.id) {
-      void answerCallbackQuery(botToken, body.callback_query.id).catch(err =>
-        console.error('answerCallbackQuery error:', err)
-      )
-    }
-
     const chatId = message.chat.id
     const userId = isCallback ? body.callback_query.from?.id : message.from?.id
     const username = isCallback ? body.callback_query.from?.username : message.from?.username
@@ -526,6 +518,15 @@ export async function POST(request: NextRequest) {
             await sendScenarioMessage(supabase, botToken, chatId, triggerMsgs[0].id, conversation.id, userId, triggerMsgs[0].scenario_id)
           }
         }
+      }
+
+      // Отвечаем Telegram на callback_query ПОСЛЕ отправки следующего сообщения.
+      // Телеграм держит spinner на кнопке пока мы не ответим — убираем его
+      // одновременно с приходом ответа, чтобы пользователь видел отклик.
+      if (body.callback_query?.id) {
+        void answerCallbackQuery(botToken, body.callback_query.id).catch(err =>
+          console.error('answerCallbackQuery error:', err)
+        )
       }
 
       return NextResponse.json({ ok: true })
