@@ -96,6 +96,7 @@ export async function GET(_request: NextRequest) {
           conversation_id: item.conversation_id,
           direction: 'outgoing',
           content: followup.text || `[${followup.media_type}]`,
+          scenario_message_id: followup.scenario_message_id ?? null,
         })
         await supabase.from('followup_queue').update({ status: 'sent', sent_at: now }).eq('id', item.id)
         sent++

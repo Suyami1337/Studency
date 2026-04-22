@@ -80,7 +80,7 @@ export async function sendFollowupContent(
   f: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buttons?: any[]
-) {
+): Promise<{ ok: boolean; error?: string }> {
   const text = f.text || ''
   const kb = buttons && buttons.length > 0 ? buttons : undefined
   // Telegram caption limit = 1024. При длинном тексте отправляем медиа без
@@ -90,33 +90,48 @@ export async function sendFollowupContent(
   const caption = captionTooLong ? undefined : (text || undefined)
   const mediaButtons = captionTooLong ? undefined : kb
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let result: any = null
   if (f.media_type && f.media_url) {
     switch (f.media_type) {
       case 'photo':
-        await sendTelegramPhoto(botToken, chatId, f.media_url, caption, mediaButtons)
+        result = await sendTelegramPhoto(botToken, chatId, f.media_url, caption, mediaButtons)
         break
       case 'video':
-        await sendTelegramVideo(botToken, chatId, f.media_url, caption, mediaButtons)
+        result = await sendTelegramVideo(botToken, chatId, f.media_url, caption, mediaButtons)
         break
       case 'animation':
-        await sendTelegramAnimation(botToken, chatId, f.media_url, caption, mediaButtons)
+        result = await sendTelegramAnimation(botToken, chatId, f.media_url, caption, mediaButtons)
         break
       case 'video_note':
-        await sendTelegramVideoNote(botToken, chatId, f.media_url)
-        if (text) await sendTelegramMessage(botToken, chatId, text, kb)
-        return
+        result = await sendTelegramVideoNote(botToken, chatId, f.media_url)
+        if (!result?.ok) return { ok: false, error: result?.description || 'video_note failed' }
+        if (text) {
+          const r2 = await sendTelegramMessage(botToken, chatId, text, kb)
+          if (!r2?.ok) return { ok: false, error: r2?.description || 'text after video_note failed' }
+        }
+        return { ok: true }
       case 'audio':
-        await sendTelegramAudio(botToken, chatId, f.media_url, caption, mediaButtons)
+        result = await sendTelegramAudio(botToken, chatId, f.media_url, caption, mediaButtons)
         break
       case 'document':
       default:
-        await sendTelegramDocument(botToken, chatId, f.media_url, caption, mediaButtons)
+        result = await sendTelegramDocument(botToken, chatId, f.media_url, caption, mediaButtons)
         break
     }
-    if (captionTooLong && text) await sendTelegramMessage(botToken, chatId, text, kb)
-    return
+    if (!result?.ok) return { ok: false, error: result?.description || 'media send failed' }
+    if (captionTooLong && text) {
+      const r2 = await sendTelegramMessage(botToken, chatId, text, kb)
+      if (!r2?.ok) return { ok: false, error: r2?.description || 'caption-split text failed' }
+    }
+    return { ok: true }
   }
-  if (text) await sendTelegramMessage(botToken, chatId, text, kb)
+  if (text) {
+    result = await sendTelegramMessage(botToken, chatId, text, kb)
+    if (!result?.ok) return { ok: false, error: result?.description || 'text send failed' }
+    return { ok: true }
+  }
+  return { ok: false, error: 'empty message' }
 }
 
 // Сборка inline-кнопок для followup — те же типы что у сообщения (url/trigger/goto_message),
@@ -276,6 +291,7 @@ export async function sendScenarioMessage(
           direction: 'outgoing',
           content: gateText,
           scenario_id: resolvedScenarioId,
+          scenario_message_id: msg.id,
         })
         // Запоминаем что клиент завис на этом gate — продолжим при chat_member
         await supabase.from('pending_subscription_gates').insert({
@@ -420,6 +436,7 @@ export async function sendScenarioMessage(
     direction: 'outgoing',
     content: msg.text || `[${msg.media_type}]`,
     scenario_id: resolvedScenarioId,
+    scenario_message_id: msg.id,
   })
 
   // Schedule followups
@@ -515,6 +532,7 @@ export async function sendScenarioMessage(
               conversation_id: conversationId,
               direction: 'outgoing',
               content: f.text || `[${f.media_type}]`,
+              scenario_message_id: f.scenario_message_id ?? null,
             })
             await supabase
               .from('followup_queue')
