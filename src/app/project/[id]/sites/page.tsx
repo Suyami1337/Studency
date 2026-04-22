@@ -160,6 +160,15 @@ function LandingDetail({
   const [aiOpen, setAiOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  // Перечитать лендинг из БД и подтянуть в state (после того как агент что-то изменил)
+  async function refreshLanding() {
+    const { data } = await supabase.from('landings').select('*').eq('id', landing.id).maybeSingle()
+    if (data) {
+      setLanding(data as Landing)
+      setHtml(data.html_content ?? '')
+    }
+  }
+
   // Editor state
   const [html, setHtml] = useState(landing.html_content ?? '')
   const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
@@ -904,8 +913,13 @@ function LandingDetail({
         onClose={() => setAiOpen(false)}
         title={`AI-редактор · ${landing.name}`}
         placeholder="Что добавить или изменить на лендинге..."
-        context={`Ты помогаешь редактировать лендинг "${landing.name}" (slug: ${landing.slug}). Пользователь может попросить добавить секцию, переписать заголовок, изменить оффер, предложить структуру. Отвечай конкретными текстами и HTML-блоками когда уместно. Пользователь — маркетолог, не разработчик: давай готовые куски для копипаста, без сложных терминов.`}
-        initialMessages={[{ kind: 'ai' as const, text: `Привет! Я помогу с лендингом «${landing.name}». Могу написать заголовок, добавить секцию, переписать оффер или предложить структуру. Что делаем?` }]}
+        persistKey={`landing-${landing.id}`}
+        agent={{
+          endpoint: '/api/ai/agent/landing',
+          payload: { landingId: landing.id, projectId: landing.project_id },
+          onChangesApplied: () => { void refreshLanding() },
+        }}
+        initialMessages={[{ kind: 'ai' as const, text: `Привет! Я AI-редактор лендинга «${landing.name}». Могу **сам применять изменения** в код страницы: добавить блок, переписать заголовок, сменить CTA, обновить мета-теги, связать с воронкой.\n\nНичего не применяю без твоего явного «да» — сначала обсудим, потом сделаю.\n\nЧто нужно?` }]}
       />
 
       {showVideoPicker && (
