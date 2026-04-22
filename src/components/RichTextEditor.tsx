@@ -59,12 +59,18 @@ function toTelegramHtml(html: string): string {
 
 /**
  * Telegram HTML → HTML пригодный для TipTap.
- * Заменяем \n на <br>, <b>→<strong>, <i>→<em> (TipTap использует их внутри).
+ * Каждую строку (\n-разделитель) превращаем в отдельный <p> — так blockquote
+ * и другие block-команды работают построчно, а не на весь текст сразу.
+ * Если бы мы использовали <br>, все строки сливались бы в один параграф
+ * и цитата охватывала бы весь текст.
  */
 function fromTelegramHtml(html: string): string {
-  let out = html || ''
-  out = out.split('\n').join('<br>')
-  return out
+  const out = html || ''
+  if (!out) return ''
+  // Не трогаем <blockquote>...</blockquote> целиком (там уже блочная структура)
+  // Остальные \n превращаем в границу параграфа
+  const lines = out.split('\n')
+  return lines.map(line => line === '' ? '<p></p>' : `<p>${line}</p>`).join('')
 }
 
 export default function RichTextEditor({ value, onChange, placeholder, rows = 4 }: Props) {
