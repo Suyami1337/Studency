@@ -461,6 +461,17 @@ function MessageCard({
   displayNumber,
   onMoveUp, onMoveDown, canMoveUp = false, canMoveDown = false,
   isOrphan = false,
+  // Модальный режим — раскрытое состояние выносится в overlay-модалку.
+  // Используется из главного списка сценария (там же — пагинация prev/next).
+  useModal = false,
+  modalOpen,
+  onOpenModal,
+  onCloseModal,
+  onModalPrev,
+  onModalNext,
+  canModalPrev = false,
+  canModalNext = false,
+  modalPositionLabel,
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
@@ -477,15 +488,35 @@ function MessageCard({
   canMoveUp?: boolean
   canMoveDown?: boolean
   isOrphan?: boolean
+  useModal?: boolean
+  modalOpen?: boolean
+  onOpenModal?: () => void
+  onCloseModal?: () => void
+  onModalPrev?: () => void
+  onModalNext?: () => void
+  canModalPrev?: boolean
+  canModalNext?: boolean
+  modalPositionLabel?: string
 }) {
   const supabase = createClient()
-  const [expanded, setExpanded] = useState(initialExpanded)
+  const [localExpanded, setLocalExpanded] = useState(initialExpanded)
+  // В modal-режиме состояние открытия контролируется родителем
+  const expanded = useModal ? !!modalOpen : localExpanded
   const [draft, setDraft] = useState<Partial<Message>>({})
   const [followupsDirty, setFollowupsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const followupRef = React.useRef<FollowupSectionHandle>(null)
   const isDirty = Object.keys(draft).length > 0 || followupsDirty
   const e = { ...msg, ...draft } // effective values
+
+  function toggleExpanded() {
+    if (useModal) {
+      if (expanded) onCloseModal?.()
+      else onOpenModal?.()
+    } else {
+      setLocalExpanded(v => !v)
+    }
+  }
 
   function set(data: Partial<Message>) {
     setDraft(prev => ({ ...prev, ...data }))
@@ -530,13 +561,23 @@ function MessageCard({
     followupRef.current?.discard()
   }
 
+  async function handleSaveAndClose() {
+    await handleSave()
+    onCloseModal?.()
+  }
+
   const typeLabel = e.is_start ? '⭐ Стартовое' : '💬 Сообщение'
   const typeColor = e.is_start ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'
 
+  // В модальном режиме граница карточки подсвечивается открытым только если modalOpen
+  const borderClass = isOrphan ? 'border-red-300'
+    : (expanded && !useModal) ? 'border-[#6A55F8]/40 shadow-sm'
+    : isDirty ? 'border-amber-300' : 'border-gray-100'
+
   return (
-    <div className={`bg-white rounded-xl border ${isOrphan ? 'border-red-300' : expanded ? 'border-[#6A55F8]/40 shadow-sm' : isDirty ? 'border-amber-300' : 'border-gray-100'} transition-all`}>
+    <div className={`bg-white rounded-xl border ${borderClass} transition-all`}>
       {/* Header — always visible */}
-      <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+      <div className="flex items-center gap-3 px-5 py-4 cursor-pointer" onClick={toggleExpanded}>
         {(onMoveUp || onMoveDown) && (
           <div className="flex flex-col items-center -my-2" onClick={ev => ev.stopPropagation()}>
             <button
@@ -588,19 +629,166 @@ function MessageCard({
         </div>
       </div>
 
-      {/* Expanded editor */}
-      {expanded && (
-        <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
-          {/* Text */}
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
-            <RichTextEditor
-              value={e.text || ''}
-              onChange={(v) => set({ text: v })}
-              placeholder="Введите текст сообщения..."
-              rows={5}
-            />
+      {/* Expanded editor — inline ИЛИ модалка */}
+      {expanded && !useModal && (
+        <ExpandedEditor
+          projectId={projectId}
+          msg={msg}
+          e={e}
+          set={set}
+          buttons={buttons}
+          allMessages={allMessages}
+          onAddButton={onAddButton}
+          onDeleteButton={onDeleteButton}
+          onUpdateButton={onUpdateButton}
+          hideFollowups={hideFollowups}
+          followupRef={followupRef}
+          setFollowupsDirty={setFollowupsDirty}
+          isDirty={isDirty}
+          saving={saving}
+          onSave={handleSave}
+          onDiscard={handleDiscard}
+          onDelete={() => {
+            if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
+              onDelete(msg.id)
+            }
+          }}
+        />
+      )}
+      {expanded && useModal && (
+        <MessageEditorModal
+          title={`${typeLabel} #${displayNumber ?? msg.order_position + 1}`}
+          positionLabel={modalPositionLabel}
+          onClose={() => {
+            if (isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
+            handleDiscard()
+            onCloseModal?.()
+          }}
+          onPrev={onModalPrev}
+          onNext={onModalNext}
+          canPrev={canModalPrev}
+          canNext={canModalNext}
+          isDirty={isDirty}
+          saving={saving}
+          onSave={handleSaveAndClose}
+        >
+          <ExpandedEditor
+            projectId={projectId}
+            msg={msg}
+            e={e}
+            set={set}
+            buttons={buttons}
+            allMessages={allMessages}
+            onAddButton={onAddButton}
+            onDeleteButton={onDeleteButton}
+            onUpdateButton={onUpdateButton}
+            hideFollowups={hideFollowups}
+            followupRef={followupRef}
+            setFollowupsDirty={setFollowupsDirty}
+            isDirty={isDirty}
+            saving={saving}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            onDelete={() => {
+              if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
+                onDelete(msg.id)
+                onCloseModal?.()
+              }
+            }}
+            hideFooter
+          />
+        </MessageEditorModal>
+      )}
+    </div>
+  )
+}
+
+// =============================================
+// MESSAGE EDITOR MODAL — обёртка для раскрытого редактора сообщения
+// =============================================
+function MessageEditorModal({ title, positionLabel, onClose, onPrev, onNext, canPrev, canNext, isDirty, saving, onSave, children }: {
+  title: string
+  positionLabel?: string
+  onClose: () => void
+  onPrev?: () => void
+  onNext?: () => void
+  canPrev: boolean
+  canNext: boolean
+  isDirty: boolean
+  saving: boolean
+  onSave: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl max-w-2xl w-full max-h-[92vh] overflow-hidden flex flex-col" onClick={ev => ev.stopPropagation()}>
+        <div className="p-5 border-b border-gray-100 flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={onPrev} disabled={!canPrev}
+              title="Предыдущее сообщение"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent">◀</button>
+            <button type="button" onClick={onNext} disabled={!canNext}
+              title="Следующее сообщение"
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent">▶</button>
           </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-gray-900 truncate">{title}</h3>
+            {positionLabel && <p className="text-[11px] text-gray-400 mt-0.5">{positionLabel}</p>}
+          </div>
+          {isDirty && (
+            <button type="button" onClick={onSave} disabled={saving}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#6A55F8] text-white hover:bg-[#5A45E8] disabled:opacity-50">
+              {saving ? 'Сохраняю…' : 'Сохранить'}
+            </button>
+          )}
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================
+// EXPANDED EDITOR — вынесенный контент редактора (inline / modal)
+// =============================================
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ExpandedEditor({ projectId, msg, e, set, buttons, allMessages, onAddButton, onDeleteButton, onUpdateButton, hideFollowups, followupRef, setFollowupsDirty, isDirty, saving, onSave, onDiscard, onDelete, hideFooter = false }: {
+  projectId: string
+  msg: Message
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  e: any
+  set: (data: Partial<Message>) => void
+  buttons: Button[]
+  allMessages: Message[]
+  onAddButton: (messageId: string) => void
+  onDeleteButton: (id: string) => void
+  onUpdateButton: (id: string, data: Partial<Button>) => void
+  hideFollowups: boolean
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  followupRef: React.RefObject<any>
+  setFollowupsDirty: (v: boolean) => void
+  isDirty: boolean
+  saving: boolean
+  onSave: () => void
+  onDiscard: () => void
+  onDelete: () => void
+  hideFooter?: boolean
+}) {
+  return (
+    <div className={`${hideFooter ? '' : 'px-5 pb-5 border-t border-gray-100 pt-4'} space-y-4`}>
+      {/* Text */}
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
+        <RichTextEditor
+          value={e.text || ''}
+          onChange={(v) => set({ text: v })}
+          placeholder="Введите текст сообщения..."
+          rows={5}
+        />
+      </div>
 
           {/* Media attachment */}
           <MediaUpload
@@ -756,27 +944,29 @@ function MessageCard({
           )}
 
           {/* Save / Discard / Delete */}
-          <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
-            <button
-              onClick={() => {
-                if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
-                  onDelete(msg.id)
-                }
-              }}
-              className="text-xs text-red-400 hover:text-red-600 hover:underline"
-            >Удалить сообщение</button>
-            {isDirty && (
-              <div className="flex items-center gap-2">
-                <button onClick={handleDiscard} className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100">Отменить</button>
-                <button onClick={handleSave} disabled={saving}
-                  className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-[#6A55F8] text-white hover:bg-[#5A45E8] disabled:opacity-50">
-                  {saving ? 'Сохраняю...' : 'Сохранить'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+          {!hideFooter && (
+            <div className="pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
+              <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 hover:underline">
+                Удалить сообщение
+              </button>
+              {isDirty && (
+                <div className="flex items-center gap-2">
+                  <button onClick={onDiscard} className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:bg-gray-100">Отменить</button>
+                  <button onClick={onSave} disabled={saving}
+                    className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-[#6A55F8] text-white hover:bg-[#5A45E8] disabled:opacity-50">
+                    {saving ? 'Сохраняю...' : 'Сохранить'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {hideFooter && (
+            <div className="pt-3 border-t border-gray-100">
+              <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 hover:underline">
+                Удалить сообщение
+              </button>
+            </div>
+          )}
     </div>
   )
 }
@@ -1664,7 +1854,17 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     btnCounts: [string, number][]
   } | null>(null)
   const [loadingAnalytics, setLoadingAnalytics] = useState(false)
+  // ID сообщения открытого в модалке (в главном списке сценария). null = модалка закрыта.
+  const [modalMessageId, setModalMessageId] = useState<string | null>(null)
   const supabase = createClient()
+
+  // ESC закрывает модалку
+  useEffect(() => {
+    if (!modalMessageId) return
+    const handler = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setModalMessageId(null) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [modalMessageId])
 
   async function loadData() {
     const [msgsRes, btnsRes] = await Promise.all([
@@ -2018,6 +2218,21 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
                       canMoveUp={idx > 0}
                       canMoveDown={idx < messages.length - 1}
                       isOrphan={isOrphan}
+                      useModal
+                      modalOpen={modalMessageId === msg.id}
+                      onOpenModal={() => setModalMessageId(msg.id)}
+                      onCloseModal={() => setModalMessageId(null)}
+                      onModalPrev={() => {
+                        const prev = messages[idx - 1]
+                        if (prev) setModalMessageId(prev.id)
+                      }}
+                      onModalNext={() => {
+                        const next = messages[idx + 1]
+                        if (next) setModalMessageId(next.id)
+                      }}
+                      canModalPrev={idx > 0}
+                      canModalNext={idx < messages.length - 1}
+                      modalPositionLabel={`${idx + 1} из ${messages.length}`}
                     />
                   </div>
                 )
