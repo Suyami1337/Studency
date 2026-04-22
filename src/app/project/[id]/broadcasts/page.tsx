@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import RichTextEditor from '@/components/RichTextEditor'
 import { MediaUpload } from '@/components/MediaUpload'
@@ -1044,9 +1045,14 @@ export default function BroadcastsPage() {
                           const name = d.customers?.full_name || d.customers?.telegram_username || 'Без имени'
                           const tg = d.customers?.telegram_username ? '@' + d.customers.telegram_username : d.customers?.telegram_id
                           const contact = tg || d.customers?.email || '—'
+                          const href = d.customer_id ? `/project/${projectId}/users?open=${d.customer_id}` : null
                           return (
-                            <tr key={d.id} className="border-b border-gray-50 last:border-b-0">
-                              <td className="px-3 py-2 text-gray-900 truncate max-w-[120px]">{name}</td>
+                            <tr key={d.id} className="border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors">
+                              <td className="px-3 py-2 text-gray-900 truncate max-w-[120px]">
+                                {href ? (
+                                  <Link href={href} className="text-[#6A55F8] hover:underline">{name}</Link>
+                                ) : name}
+                              </td>
                               <td className="px-3 py-2 text-gray-500 truncate max-w-[140px]">{contact}</td>
                               <td className="px-3 py-2">
                                 {d.status === 'sent' ? (

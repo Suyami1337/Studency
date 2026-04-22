@@ -69,6 +69,11 @@ export async function POST(request: NextRequest) {
                 customer_id: customer.id, project_id: bot.project_id,
                 action: 'bot_subscribed', data: {},
               })
+              // Сразу снимаем chat_blocked в conversation — клиент нам доступен
+              await supabase.from('chatbot_conversations')
+                .update({ chat_blocked: false })
+                .eq('telegram_bot_id', bot.id)
+                .eq('customer_id', customer.id)
             } else if (newStatus === 'kicked' || newStatus === 'left') {
               await supabase.from('customers').update({
                 bot_subscribed: false, bot_blocked: newStatus === 'kicked',
@@ -78,6 +83,12 @@ export async function POST(request: NextRequest) {
                 customer_id: customer.id, project_id: bot.project_id,
                 action: newStatus === 'kicked' ? 'bot_blocked' : 'bot_unsubscribed', data: {},
               })
+              // Помечаем conversation заблокированной — чтобы клиент моментально
+              // выпал из следующих рассылок, не дожидаясь попытки отправки и 403.
+              await supabase.from('chatbot_conversations')
+                .update({ chat_blocked: true })
+                .eq('telegram_bot_id', bot.id)
+                .eq('customer_id', customer.id)
             }
           }
         }
