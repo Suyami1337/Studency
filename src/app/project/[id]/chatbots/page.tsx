@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import RichTextEditor from '@/components/RichTextEditor'
 
 type Scenario = { id: string; name: string; status: string; telegram_bot_id: string | null; created_at: string }
 type TelegramBot = { id: string; name: string; bot_username: string }
@@ -353,9 +354,12 @@ function FollowupCard({ projectId, followup, index, onEdit, onDelete, allMessage
               <option value="day">дней</option>
             </select>
           </div>
-          <textarea value={followup.text} onChange={ev => onEdit(followup.id, { text: ev.target.value })}
+          <RichTextEditor
+            value={followup.text}
+            onChange={(v) => onEdit(followup.id, { text: v })}
             placeholder={`Текст дожима ${index + 1}...`}
-            className="w-full px-3 py-2 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-16 resize-none" />
+            rows={3}
+          />
           {/* Медиа-вложение для дожима */}
           <MediaUpload
             projectId={projectId}
@@ -821,11 +825,11 @@ function MessageCard({
           {/* Text */}
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
-            <textarea
+            <RichTextEditor
               value={e.text || ''}
-              onChange={ev => set({ text: ev.target.value })}
+              onChange={(v) => set({ text: v })}
               placeholder="Введите текст сообщения..."
-              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] h-24 resize-none"
+              rows={5}
             />
           </div>
 

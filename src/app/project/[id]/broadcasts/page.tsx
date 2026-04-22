@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import RichTextEditor from '@/components/RichTextEditor'
 
 type Broadcast = {
   id: string
@@ -253,10 +254,12 @@ export default function BroadcastsPage() {
 
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Текст сообщения</label>
-                <textarea value={text} onChange={e => setText(e.target.value)}
-                  rows={5}
+                <RichTextEditor
+                  value={text}
+                  onChange={setText}
                   placeholder="Текст который отправится всем клиентам…"
-                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] resize-none" />
+                  rows={5}
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Сегмент</label>
