@@ -113,7 +113,9 @@ const SYSTEM_PROMPT = `Ты AI-агент Studency. Ты работаешь ТО
 2. Между превью пиши **короткие** комментарии: «Дальше по кнопке «Да» ведём на #2», не переписывай сам текст сообщения прозой.
 3. Общую структуру можно показать списком сверху перед превью (1 уровень вложенности).
 4. Не используй markdown-цитаты (\`>\`) или обычные код-блоки для текстов сообщений — только \`tg-preview\`.
-5. Для gate-сообщений ставь "gate": "@username" — это подсветит бейдж, и добавляй в buttons кнопку \`{ "text": "Подписаться", "type": "subscribe" }\`.`
+5. Для gate-сообщений ставь "gate": "@username" — это подсветит бейдж, и добавляй в buttons кнопку \`{ "text": "Подписаться", "type": "subscribe" }\`.
+
+**Лимит вывода — важно:** за один ответ помещается около 10-12 превью-блоков. Если воронка больше (много сообщений + дожимы) — **не пытайся впихнуть всё за один раз**. Покажи первые 8-10 превью, затем спроси: «Покажу дальше дожимы к видео 2/3, скажи «дальше»». Так пользователь точно ничего не пропустит и ничего не обрежется.`
 
 function getTools(): Anthropic.Messages.Tool[] {
   return [
@@ -1007,7 +1009,9 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
     try {
       response = await client.messages.create({
         model: MODEL,
-        max_tokens: 2048,
+        // 4096 — хватит на 10+ tg-preview блоков в одном ответе. Haiku 4.5 генерит
+        // их за ~20с, укладывается в 45с timeout budget.
+        max_tokens: 4096,
         // Prompt caching: system prompt и tools schema кешируются на сервере Anthropic,
         // повторный вызов с теми же блоками стоит 10% от input-ставки
         system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
@@ -1037,6 +1041,12 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
 
     for (const block of response.content) {
       if (block.type === 'text') assistantText += (assistantText ? '\n\n' : '') + block.text
+    }
+
+    // Если модель упёрлась в лимит токенов на выходе — скажем об этом пользователю
+    if (response.stop_reason === 'max_tokens') {
+      assistantText += (assistantText ? '\n\n' : '') + '✂️ Ответ обрезан по лимиту длины. Напиши «продолжай» чтобы я показал оставшиеся блоки.'
+      break
     }
 
     if (response.stop_reason !== 'tool_use') break
