@@ -208,7 +208,50 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
     document.execCommand('insertText', false, text)
   }
 
+  /**
+   * Когда юзер напечатал `<b>текст</b>` руками как обычный текст,
+   * при потере фокуса превращаем эти теги в реальные DOM-элементы
+   * (self-healing). Поддерживаем теги Telegram + <tg-spoiler>.
+   */
+  function onBlur() {
+    if (!ref.current) return
+    // Читаем чистый текст с кодировкой через innerHTML (там `<` уже как &lt;)
+    // и нормализуем: заменяем escaped-сущности тегов на реальные теги
+    const supportedTags = ['b', 'i', 'u', 's', 'code', 'pre', 'blockquote', 'tg-spoiler']
+    let html = ref.current.innerHTML
+    let changed = false
+    for (const tag of supportedTags) {
+      const open = new RegExp(`&lt;${tag}&gt;`, 'gi')
+      const close = new RegExp(`&lt;/${tag}&gt;`, 'gi')
+      if (open.test(html) || close.test(html)) {
+        html = html.replace(open, `<${tag}>`).replace(close, `</${tag}>`)
+        changed = true
+      }
+    }
+    // <a href="..."> с экранированием
+    const linkRe = /&lt;a\s+href=(?:"|&quot;)([^"&]*?)(?:"|&quot;)&gt;([\s\S]*?)&lt;\/a&gt;/gi
+    if (linkRe.test(html)) {
+      html = html.replace(linkRe, (_, url, text) => `<a href="${url}">${text}</a>`)
+      changed = true
+    }
+    if (changed) {
+      ref.current.innerHTML = html
+      // tg-spoiler в видимой зоне → span.tg-spoiler для стилизации
+      const spoilers = ref.current.querySelectorAll('tg-spoiler')
+      spoilers.forEach(s => {
+        const span = document.createElement('span')
+        span.className = 'tg-spoiler'
+        span.innerHTML = s.innerHTML
+        s.replaceWith(span)
+      })
+      emit()
+    }
+  }
+
   const minHeight = Math.max(rows * 24, 72)
+
+  // Рендер превью — тот же текст но с тегами как реальное форматирование
+  const previewHtml = telegramToEditable(value || '')
 
   return (
     <div className="space-y-1">
@@ -243,6 +286,7 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           onInput={emit}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          onBlur={onBlur}
           className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-1 focus:ring-[#6A55F8]/20 rich-editor whitespace-pre-wrap break-words"
           style={{ minHeight: `${minHeight}px` }}
         />
@@ -252,6 +296,20 @@ export default function RichTextEditor({ value, onChange, placeholder, rows = 4 
           </div>
         )}
       </div>
+
+      {/* Превью — как клиент увидит сообщение в Telegram */}
+      {!isEmpty && (
+        <details className="group">
+          <summary className="text-[11px] text-gray-500 hover:text-[#6A55F8] cursor-pointer select-none flex items-center gap-1 mt-2">
+            <span className="group-open:rotate-90 transition-transform inline-block">▸</span>
+            Предпросмотр (как в Telegram)
+          </summary>
+          <div
+            className="mt-1.5 px-3 py-2 rounded-lg bg-[#EFF6FF] border border-[#BFDBFE] text-sm text-gray-800 rich-editor whitespace-pre-wrap break-words"
+            dangerouslySetInnerHTML={{ __html: previewHtml }}
+          />
+        </details>
+      )}
       <style jsx global>{`
         .rich-editor { line-height: 1.45; }
         .rich-editor a { color: #6A55F8; text-decoration: underline; }
