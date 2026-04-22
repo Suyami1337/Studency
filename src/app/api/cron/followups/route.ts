@@ -47,7 +47,28 @@ export async function GET(_request: NextRequest) {
       try {
         const channel = followup.channel ?? 'telegram'
         if (channel === 'telegram' || channel === 'both') {
-          await sendFollowupContent(item.bot_token, item.chat_id, followup)
+          // Найдём customer для прокси-трекинга кликов по кнопкам
+          let customerIdForClicks: string | null = null
+          try {
+            const { data: conv } = await supabase
+              .from('chatbot_conversations')
+              .select('project_id, telegram_chat_id')
+              .eq('id', item.conversation_id)
+              .maybeSingle()
+            if (conv) {
+              const { data: customer } = await supabase
+                .from('customers')
+                .select('id')
+                .eq('telegram_id', String(conv.telegram_chat_id))
+                .eq('project_id', conv.project_id)
+                .maybeSingle()
+              if (customer) customerIdForClicks = customer.id
+            }
+          } catch { /* ignore */ }
+          const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+          const { loadFollowupButtons } = await import('@/lib/scenario-sender')
+          const fuButtons = await loadFollowupButtons(supabase, followup.id, customerIdForClicks, appUrl)
+          await sendFollowupContent(item.bot_token, item.chat_id, followup, fuButtons)
         }
         if (channel === 'email' || channel === 'both' || followup.duplicate_to_email) {
           await maybeDuplicateToEmail(supabase, item.conversation_id, followup)

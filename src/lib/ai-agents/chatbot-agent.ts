@@ -371,6 +371,21 @@ ID объектов всегда бери из list_project_targets. Имя (lab
                       text: { type: 'string' },
                       cancel_on_reply: { type: 'boolean', description: 'По умолчанию true' },
                       channel: { type: 'string', enum: ['telegram', 'email', 'both'] },
+                      buttons: {
+                        type: 'array',
+                        description: 'Кнопки под дожимом. Те же типы что у сообщения.',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            text: { type: 'string' },
+                            action_type: { type: 'string', enum: ['url', 'trigger', 'goto_message'] },
+                            action_url: { type: 'string' },
+                            action_trigger_word: { type: 'string' },
+                            action_goto_local_id: { type: 'string', description: 'local_id целевого сообщения' },
+                          },
+                          required: ['text', 'action_type'],
+                        },
+                      },
                     },
                     required: ['delay_value', 'delay_unit', 'text'],
                   },
@@ -716,13 +731,13 @@ async function executeTool(
           }
         }
 
-        // Шаг 3.5: дожимы сообщений (message_followups)
+        // Шаг 3.5: дожимы сообщений (message_followups) + их кнопки
         let followupCount = 0
         for (const p of plan) {
           if (!Array.isArray(p.followups)) continue
           let fuIdx = 0
           for (const f of p.followups) {
-            const { error } = await supabase.from('message_followups').insert({
+            const { data: fuRow, error } = await supabase.from('message_followups').insert({
               scenario_message_id: localToReal[p.local_id],
               order_index: fuIdx++,
               delay_value: f.delay_value,
@@ -732,9 +747,28 @@ async function executeTool(
               cancel_on_reply: f.cancel_on_reply ?? true,
               is_active: true,
               duplicate_to_email: false,
-            })
-            if (error) throw new Error(`create followup for "${p.local_id}": ${error.message}`)
+            }).select('id').single()
+            if (error || !fuRow) throw new Error(`create followup for "${p.local_id}": ${error?.message}`)
             followupCount++
+
+            // Кнопки дожима (если есть)
+            if (Array.isArray(f.buttons)) {
+              let bp = 0
+              for (const b of f.buttons) {
+                const { error: bErr } = await supabase.from('scenario_buttons').insert({
+                  followup_id: fuRow.id,
+                  message_id: null,
+                  text: b.text,
+                  action_type: b.action_type,
+                  action_url: b.action_url ?? null,
+                  action_trigger_word: b.action_trigger_word ?? null,
+                  action_goto_message_id: b.action_goto_local_id ? (localToReal[b.action_goto_local_id] ?? null) : null,
+                  order_position: bp++,
+                })
+                if (bErr) throw new Error(`create followup button "${b.text}": ${bErr.message}`)
+                btnCount++
+              }
+            }
           }
         }
 

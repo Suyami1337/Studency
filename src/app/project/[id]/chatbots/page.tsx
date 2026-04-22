@@ -276,14 +276,48 @@ function MediaUpload({ projectId, mediaId, mediaType, mediaUrl, mediaFileName, o
 // =============================================
 // FOLLOWUP CARD — чистый controlled-компонент, без своего черновика
 // =============================================
-function FollowupCard({ projectId, followup, index, onEdit, onDelete }: {
+function FollowupCard({ projectId, followup, index, onEdit, onDelete, allMessages }: {
   projectId: string
   followup: Followup; index: number
   onEdit: (id: string, data: Partial<Followup>) => void
   onDelete: (id: string) => void
+  allMessages: Message[]
 }) {
+  const supabase = createClient()
   const [cardExpanded, setCardExpanded] = useState(true)
+  const [buttons, setButtons] = useState<Button[]>([])
   const unitLabel = (u: string) => u === 'sec' ? 'сек' : u === 'min' ? 'мин' : u === 'hour' ? 'ч' : 'дн'
+
+  const isTemp = followup.id.startsWith('temp-')
+
+  useEffect(() => {
+    if (isTemp) { setButtons([]); return }
+    supabase.from('scenario_buttons').select('*').eq('followup_id', followup.id).order('order_position')
+      .then(({ data }) => setButtons((data ?? []) as Button[]))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followup.id])
+
+  async function addFollowupButton() {
+    if (isTemp) return
+    const { data } = await supabase.from('scenario_buttons').insert({
+      followup_id: followup.id,
+      message_id: null,
+      order_position: buttons.length,
+      text: 'Кнопка',
+      action_type: 'url',
+    }).select().single()
+    if (data) setButtons(prev => [...prev, data as Button])
+  }
+
+  async function updateFollowupButton(id: string, data: Partial<Button>) {
+    setButtons(prev => prev.map(b => b.id === id ? { ...b, ...data } : b))
+    await supabase.from('scenario_buttons').update(data).eq('id', id)
+  }
+
+  async function deleteFollowupButton(id: string) {
+    setButtons(prev => prev.filter(b => b.id !== id))
+    await supabase.from('scenario_buttons').delete().eq('id', id)
+  }
 
   return (
     <div className={`rounded-lg border transition-colors ${followup.is_active ? 'bg-[#F8F7FF] border-[#6A55F8]/15' : 'bg-gray-50 border-gray-200'}`}>
@@ -358,6 +392,59 @@ function FollowupCard({ projectId, followup, index, onEdit, onDelete }: {
               className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]" />
             <span className="text-xs text-gray-600">✉️ Дублировать на email клиента</span>
           </label>
+
+          {/* Кнопки дожима — immediate save, как у обычного сообщения */}
+          <div className="pt-2 border-t border-[#6A55F8]/10">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-medium text-gray-700">Кнопки</label>
+              {isTemp ? (
+                <span className="text-[10px] text-gray-400">Сохрани дожим чтобы добавить кнопки</span>
+              ) : (
+                <button onClick={addFollowupButton} className="text-xs text-[#6A55F8] font-medium hover:underline">+ Добавить кнопку</button>
+              )}
+            </div>
+            {!isTemp && buttons.length === 0 && (
+              <p className="text-[11px] text-gray-400 py-1">Нет кнопок</p>
+            )}
+            {buttons.length > 0 && (
+              <div className="space-y-2">
+                {buttons.map(btn => (
+                  <div key={btn.id} className="bg-white rounded-lg p-2.5 space-y-2 border border-gray-200">
+                    <div className="flex items-center gap-2">
+                      <input type="text" value={btn.text} onChange={ev => updateFollowupButton(btn.id, { text: ev.target.value })}
+                        placeholder="Текст кнопки" className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                      <button onClick={() => deleteFollowupButton(btn.id)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select value={btn.action_type} onChange={ev => updateFollowupButton(btn.id, { action_type: ev.target.value })}
+                        className="px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+                        <option value="url">Ссылка</option>
+                        <option value="trigger">Запустить кодовое слово</option>
+                        <option value="goto_message">Перейти к сообщению</option>
+                      </select>
+                      {btn.action_type === 'url' && (
+                        <input type="text" value={btn.action_url || ''} onChange={ev => updateFollowupButton(btn.id, { action_url: ev.target.value })}
+                          placeholder="https://..." className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+                      )}
+                      {btn.action_type === 'trigger' && (
+                        <input type="text" value={btn.action_trigger_word || ''} onChange={ev => updateFollowupButton(btn.id, { action_trigger_word: ev.target.value })}
+                          placeholder="Кодовое слово..." className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8]" />
+                      )}
+                      {btn.action_type === 'goto_message' && (
+                        <select value={btn.action_goto_message_id || ''} onChange={ev => updateFollowupButton(btn.id, { action_goto_message_id: ev.target.value || null })}
+                          className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]">
+                          <option value="">Выберите сообщение...</option>
+                          {allMessages.map(m => (
+                            <option key={m.id} value={m.id}>#{m.order_position + 1}: {(m.text || '').slice(0, 40)}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -375,8 +462,9 @@ type FollowupSectionHandle = {
 const FollowupSection = React.forwardRef<FollowupSectionHandle, {
   projectId: string
   messageId: string
+  allMessages: Message[]
   onDirtyChange: (dirty: boolean) => void
-}>(function FollowupSection({ projectId, messageId, onDirtyChange }, ref) {
+}>(function FollowupSection({ projectId, messageId, allMessages, onDirtyChange }, ref) {
   const supabase = createClient()
   const [followups, setFollowups] = useState<Followup[]>([])
   const [savedFollowups, setSavedFollowups] = useState<Followup[]>([])
@@ -573,6 +661,7 @@ const FollowupSection = React.forwardRef<FollowupSectionHandle, {
         <div className="space-y-2">
           {followups.map((f, i) => (
             <FollowupCard key={f.id} projectId={projectId} followup={f} index={i}
+              allMessages={allMessages}
               onEdit={editFollowup} onDelete={deleteFollowup} />
           ))}
         </div>
@@ -882,7 +971,7 @@ function MessageCard({
 
           {/* Followups */}
           {!hideFollowups && (
-            <FollowupSection ref={followupRef} projectId={projectId} messageId={msg.id} onDirtyChange={setFollowupsDirty} />
+            <FollowupSection ref={followupRef} projectId={projectId} messageId={msg.id} allMessages={allMessages} onDirtyChange={setFollowupsDirty} />
           )}
 
           {/* Save / Discard / Delete */}

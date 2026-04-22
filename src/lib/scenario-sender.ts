@@ -73,33 +73,66 @@ export function delayToMs(value: number, unit: string): number {
  * Works for both followups and standalone messages.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function sendFollowupContent(botToken: string, chatId: number, f: any) {
+export async function sendFollowupContent(
+  botToken: string,
+  chatId: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  f: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  buttons?: any[]
+) {
   const caption = f.text || undefined
+  const kb = buttons && buttons.length > 0 ? buttons : undefined
   if (f.media_type && f.media_url) {
     switch (f.media_type) {
       case 'photo':
-        await sendTelegramPhoto(botToken, chatId, f.media_url, caption)
+        await sendTelegramPhoto(botToken, chatId, f.media_url, caption, kb)
         return
       case 'video':
-        await sendTelegramVideo(botToken, chatId, f.media_url, caption)
+        await sendTelegramVideo(botToken, chatId, f.media_url, caption, kb)
         return
       case 'animation':
-        await sendTelegramAnimation(botToken, chatId, f.media_url, caption)
+        await sendTelegramAnimation(botToken, chatId, f.media_url, caption, kb)
         return
       case 'video_note':
         await sendTelegramVideoNote(botToken, chatId, f.media_url)
-        if (f.text) await sendTelegramMessage(botToken, chatId, f.text)
+        if (f.text) await sendTelegramMessage(botToken, chatId, f.text, kb)
         return
       case 'audio':
-        await sendTelegramAudio(botToken, chatId, f.media_url, caption)
+        await sendTelegramAudio(botToken, chatId, f.media_url, caption, kb)
         return
       case 'document':
       default:
-        await sendTelegramDocument(botToken, chatId, f.media_url, caption)
+        await sendTelegramDocument(botToken, chatId, f.media_url, caption, kb)
         return
     }
   }
-  if (f.text) await sendTelegramMessage(botToken, chatId, f.text)
+  if (f.text) await sendTelegramMessage(botToken, chatId, f.text, kb)
+}
+
+// Сборка inline-кнопок для followup — те же типы что у сообщения (url/trigger/goto_message),
+// обёртка URL в прокси /btn/<id>?c=<customerId>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function loadFollowupButtons(supabase: SupabaseClient, followupId: string, customerId: string | null, appUrl: string) {
+  const { data: btns } = await supabase
+    .from('scenario_buttons')
+    .select('*')
+    .eq('followup_id', followupId)
+    .order('order_position')
+  if (!btns || btns.length === 0) return []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return btns.filter((b: any) => b.text).map((b: any) => {
+    let url: string | undefined
+    if (b.action_type === 'url' && b.action_url) {
+      const cParam = customerId ? `?c=${customerId}` : ''
+      url = `${appUrl}/btn/${b.id}${cParam}`
+    }
+    return {
+      text: b.text,
+      url,
+      callback_data: b.action_type !== 'url' ? `btn:${b.id}` : undefined,
+    }
+  })
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -389,7 +422,8 @@ export async function sendScenarioMessage(
           try {
             const channel = f.channel ?? 'telegram'
             if (channel === 'telegram' || channel === 'both') {
-              await sendFollowupContent(botToken, chatId, f)
+              const fuButtons = await loadFollowupButtons(supabase, f.id, customerIdForClicks, appUrl)
+              await sendFollowupContent(botToken, chatId, f, fuButtons)
             }
             if (channel === 'email' || channel === 'both' || f.duplicate_to_email) {
               await maybeDuplicateToEmail(supabase, conversationId, f)

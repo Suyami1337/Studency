@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   // Простой запрос — без nested join, который раньше молча падал и ронял весь redirect
   const { data: btn, error: btnErr } = await supabase
     .from('scenario_buttons')
-    .select('id, action_url, action_type, message_id')
+    .select('id, action_url, action_type, message_id, followup_id')
     .eq('id', token)
     .maybeSingle()
 
@@ -56,11 +56,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   void (async () => {
     try {
       let projectId: string | undefined
-      if (btn.message_id) {
+      // Находим message_id — либо напрямую, либо через followup
+      let ownerMessageId: string | null = btn.message_id
+      if (!ownerMessageId && btn.followup_id) {
+        const { data: fu } = await supabase
+          .from('message_followups')
+          .select('scenario_message_id')
+          .eq('id', btn.followup_id)
+          .maybeSingle()
+        ownerMessageId = fu?.scenario_message_id ?? null
+      }
+      if (ownerMessageId) {
         const { data: msg } = await supabase
           .from('scenario_messages')
           .select('scenario_id, chatbot_scenarios!inner(telegram_bot_id, telegram_bots!inner(project_id))')
-          .eq('id', btn.message_id)
+          .eq('id', ownerMessageId)
           .maybeSingle()
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         projectId = (msg as any)?.chatbot_scenarios?.telegram_bots?.project_id
