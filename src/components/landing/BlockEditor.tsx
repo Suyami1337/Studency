@@ -50,13 +50,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       const res = await fetch(`/api/landings/${landingId}/blocks`)
       const json = await res.json()
       if (!json.ok) {
-        // Частая причина — ещё не применена SQL-миграция 34-landing-blocks.sql
-        const msg = String(json.error || '')
-        if (/landing_blocks|relation|does not exist|is_blocks_based|Миграция/i.test(msg)) {
-          setLoadError('MIGRATION_NEEDED')
-        } else {
-          setLoadError(msg || 'Не удалось загрузить блоки')
-        }
+        setLoadError(String(json.error || 'Не удалось загрузить блоки'))
         setLoading(false)
         return
       }
@@ -337,9 +331,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   if (loading) {
     return <div className="bg-white rounded-xl border border-gray-100 p-20 text-center text-sm text-gray-400">Загрузка блоков...</div>
   }
-  if (loadError === 'MIGRATION_NEEDED') {
-    return <MigrationNeededBanner onRetry={() => void loadBlocks()} />
-  }
   if (loadError) {
     return (
       <div className="bg-amber-50 rounded-xl border border-amber-200 p-8 text-center">
@@ -466,57 +457,6 @@ function FormatButtons({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-
-function MigrationNeededBanner({ onRetry }: { onRetry: () => void }) {
-  const [copied, setCopied] = useState(false)
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-  // URL to Supabase SQL Editor (project-specific). Если не задан env — просто копируем имя файла.
-  const editorUrl = supabaseUrl ? supabaseUrl.replace('https://', 'https://supabase.com/dashboard/project/').replace('.supabase.co', '/sql/new') : ''
-
-  async function copyInstruction() {
-    try {
-      const res = await fetch('/api/landings/migration-34-sql')
-      if (res.ok) {
-        const sql = await res.text()
-        await navigator.clipboard.writeText(sql)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 3000)
-      }
-    } catch { /* ignore */ }
-  }
-
-  return (
-    <div className="bg-amber-50 rounded-xl border border-amber-200 p-8 max-w-2xl mx-auto">
-      <div className="flex items-start gap-4">
-        <div className="text-3xl flex-shrink-0">🔧</div>
-        <div className="flex-1">
-          <h3 className="text-base font-semibold text-amber-900 mb-2">Нужно применить обновление базы данных</h3>
-          <p className="text-sm text-amber-800 mb-4">
-            Редактор лендингов обновился до блочной архитектуры. Чтобы он заработал, нужно один раз запустить SQL-скрипт в Supabase (это займёт 10 секунд, не сломает существующие данные).
-          </p>
-          <ol className="text-sm text-amber-800 space-y-1.5 list-decimal list-inside mb-4">
-            <li>Открой <a href={editorUrl || '#'} target="_blank" rel="noopener noreferrer" className="underline font-medium">Supabase → SQL Editor</a></li>
-            <li>Вставь в редактор SQL ниже и нажми <b>Run</b></li>
-            <li>Вернись сюда и нажми «Попробовать снова»</li>
-          </ol>
-          <div className="flex items-center gap-2 mb-4">
-            <button onClick={copyInstruction}
-              className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium">
-              {copied ? '✓ SQL скопирован' : '📋 Скопировать SQL миграции'}
-            </button>
-            <button onClick={onRetry}
-              className="px-4 py-2 text-sm bg-white border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-100 font-medium">
-              Попробовать снова
-            </button>
-          </div>
-          <p className="text-[11px] text-amber-700 opacity-70">
-            Файл миграции: <code className="bg-amber-100 px-1 rounded">supabase/34-landing-blocks.sql</code>
-          </p>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function HtmlBlockModal({
   block, onClose, onSave,
