@@ -271,7 +271,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         collectLiveHtml()
         void handleAddBlock()
       } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
-        setIframeHeight(Math.max(400, data.height))
+        // Cap защищает от патологических случаев когда шаблон растёт бесконечно
+        const safeHeight = Math.min(Math.max(400, data.height), 30000)
+        setIframeHeight(safeHeight)
       }
     }
     window.addEventListener('message', onMessage)
@@ -285,6 +287,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   // Инжектируем: CSS для hover-рамок, скрипт для contenteditable + кнопок блока
   const editorInject = `
 <style data-stud-editor-inject>
+  /* ВАЖНО: гасим min-height:100vh внутри iframe — иначе бесконечный самоусиливающийся рост
+     (iframe растёт → body vh увеличивается → scrollHeight растёт → iframe растёт...) */
+  html, body { min-height: 0 !important; height: auto !important; overflow: visible !important; }
+  [data-block-id] { min-height: 0 !important; }
+  .vsl-root, .hero { min-height: auto !important; }
+
   [data-block-id] { position: relative; transition: outline 0.1s; }
   [data-block-id]:hover { outline: 2px dashed rgba(106,85,248,0.4); outline-offset: -2px; }
   [data-block-id] .stud-block-toolbar {
@@ -308,6 +316,37 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     font-family: system-ui, sans-serif;
   }
   .stud-add-block-btn:hover { background: #6A55F8; color: #fff; border-style: solid; }
+
+  /* Popover с размерами для выделенного элемента */
+  .stud-elem-popover {
+    position: absolute; z-index: 10000;
+    background: rgba(17,24,39,0.96); color: #fff; border-radius: 10px;
+    padding: 8px; font-family: system-ui, sans-serif; font-size: 11px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    display: flex; flex-direction: column; gap: 6px; min-width: 200px;
+  }
+  .stud-elem-popover .stud-drag-handle {
+    cursor: move; background: rgba(106,85,248,0.9); padding: 4px 8px;
+    border-radius: 6px; font-weight: 600; text-align: center; user-select: none;
+  }
+  .stud-elem-popover .stud-drag-handle:hover { background: rgba(106,85,248,1); }
+  .stud-elem-popover .stud-size-row { display: flex; gap: 4px; align-items: center; }
+  .stud-elem-popover label { opacity: 0.7; min-width: 36px; font-size: 10px; }
+  .stud-elem-popover input {
+    flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
+    color: #fff; border-radius: 4px; padding: 3px 6px; font-size: 11px;
+    font-family: inherit; width: 50px;
+  }
+  .stud-elem-popover input:focus { outline: 1px solid #6A55F8; background: rgba(255,255,255,0.15); }
+  .stud-elem-popover .stud-popover-close {
+    position: absolute; top: -8px; right: -8px; width: 20px; height: 20px;
+    background: #6A55F8; color: #fff; border: none; border-radius: 50%;
+    cursor: pointer; font-size: 12px; line-height: 20px; padding: 0;
+  }
+  /* Resize handles — 8 угловых/стороновых точек вокруг выделенного элемента */
+  .stud-elem-selected {
+    outline: 2px solid #6A55F8 !important; outline-offset: 2px !important;
+  }
 </style>
 <script data-stud-editor-inject>
   (function() {
@@ -382,28 +421,147 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       parent.postMessage({ type: 'stud-input', blockId: blockId }, '*');
     });
 
-    // Авто-высота iframe: отправляем scrollHeight родителю при загрузке и
-    // каждом изменении размера контента. Родитель растягивает iframe под него —
-    // не будет внутреннего скролла, страница листается целиком.
+    // Авто-высота iframe: отправляем scrollHeight родителю.
+    // Защита от цикла: если новая высота почти совпадает с прошлой (±20px) — игнор.
+    // Плюс жёсткий cap 50k px — если вёрстка шаблона всё равно растягивается, не утянем браузер.
+    var lastReported = 0;
     function reportHeight() {
-      var h = Math.max(
-        document.documentElement.scrollHeight,
-        document.body.scrollHeight
+      var h = Math.min(
+        Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
+        50000
       );
+      if (Math.abs(h - lastReported) < 20) return;
+      lastReported = h;
       parent.postMessage({ type: 'stud-resize', height: h }, '*');
     }
     reportHeight();
     window.addEventListener('load', reportHeight);
     if (typeof ResizeObserver !== 'undefined') {
       try {
-        var ro = new ResizeObserver(reportHeight);
+        var ro = new ResizeObserver(function() {
+          // debounce через rAF — чтобы не репортить в каждой фазе layout
+          if (window.__studRafId) cancelAnimationFrame(window.__studRafId);
+          window.__studRafId = requestAnimationFrame(reportHeight);
+        });
         ro.observe(document.body);
       } catch (e) { /* ignore */ }
     }
-    // Периодически — на случай если ResizeObserver не ловит (например images.onload)
     setTimeout(reportHeight, 300);
     setTimeout(reportHeight, 1000);
     setTimeout(reportHeight, 3000);
+
+    // ───────────────────────────────────────────────────────────────
+    // Popover с размерами / drag-handle для выделенного элемента
+    // При клике на элемент (h1, p, img, button...) появляется popover
+    // рядом с ним — можно менять ширину/высоту/отступы/шрифт в числах
+    // и перетаскивать элемент через handle «✥ Двигать»
+    // ───────────────────────────────────────────────────────────────
+    var popover = null;
+    var selectedEl = null;
+    var EDITABLE_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','IMG','DIV','LI'];
+
+    function removePopover() {
+      if (popover && popover.parentNode) popover.parentNode.removeChild(popover);
+      popover = null;
+      if (selectedEl) selectedEl.classList.remove('stud-elem-selected');
+      selectedEl = null;
+    }
+
+    function buildPopover(target) {
+      removePopover();
+      selectedEl = target;
+      target.classList.add('stud-elem-selected');
+
+      var cs = window.getComputedStyle(target);
+      popover = document.createElement('div');
+      popover.className = 'stud-elem-popover';
+      popover.setAttribute('data-stud-editor-inject', 'true');
+      popover.setAttribute('contenteditable', 'false');
+      popover.innerHTML = [
+        '<div class="stud-drag-handle">✥ Перетащить</div>',
+        '<div class="stud-size-row"><label>Ширина</label><input data-prop="width" placeholder="auto" value="' + (target.style.width || '') + '"></div>',
+        '<div class="stud-size-row"><label>Высота</label><input data-prop="height" placeholder="auto" value="' + (target.style.height || '') + '"></div>',
+        '<div class="stud-size-row"><label>Шрифт</label><input data-prop="fontSize" placeholder="' + cs.fontSize + '" value="' + (target.style.fontSize || '') + '"></div>',
+        '<div class="stud-size-row"><label>Отступы</label><input data-prop="padding" placeholder="' + cs.padding + '" value="' + (target.style.padding || '') + '"></div>',
+        '<div class="stud-size-row"><label>Поля</label><input data-prop="margin" placeholder="' + cs.margin + '" value="' + (target.style.margin || '') + '"></div>',
+        '<button class="stud-popover-close" data-act="close">✕</button>',
+      ].join('');
+
+      document.body.appendChild(popover);
+      positionPopover();
+
+      // Drag handle — перетаскиваем через translate (элемент остаётся в потоке, но визуально сдвигается)
+      var handle = popover.querySelector('.stud-drag-handle');
+      var dragState = null;
+      handle.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        var curTransform = target.style.transform || '';
+        var m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(curTransform);
+        dragState = {
+          startX: e.clientX, startY: e.clientY,
+          origTx: m ? parseFloat(m[1]) : 0,
+          origTy: m ? parseFloat(m[2]) : 0,
+        };
+      });
+      document.addEventListener('mousemove', function(e) {
+        if (!dragState) return;
+        var dx = e.clientX - dragState.startX;
+        var dy = e.clientY - dragState.startY;
+        target.style.transform = 'translate(' + (dragState.origTx + dx) + 'px, ' + (dragState.origTy + dy) + 'px)';
+        positionPopover();
+      });
+      document.addEventListener('mouseup', function() {
+        if (dragState) {
+          dragState = null;
+          // Отметить блок как dirty
+          var section = target.closest('[data-block-id]');
+          if (section) {
+            parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
+          }
+        }
+      });
+
+      // Inputs для размеров — применяют inline style
+      popover.querySelectorAll('input[data-prop]').forEach(function(inp) {
+        inp.addEventListener('input', function() {
+          var prop = inp.getAttribute('data-prop');
+          target.style[prop] = inp.value;
+          var section = target.closest('[data-block-id]');
+          if (section) {
+            parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
+          }
+        });
+      });
+
+      popover.querySelector('[data-act="close"]').addEventListener('click', removePopover);
+    }
+
+    function positionPopover() {
+      if (!popover || !selectedEl) return;
+      var r = selectedEl.getBoundingClientRect();
+      popover.style.left = (window.scrollX + r.right + 12) + 'px';
+      popover.style.top = (window.scrollY + r.top) + 'px';
+    }
+
+    document.addEventListener('click', function(e) {
+      // Клик по popover — не трогаем
+      if (e.target.closest && e.target.closest('.stud-elem-popover')) return;
+      // Клик по toolbar блока или add-block — не показываем popover
+      if (e.target.closest && (e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn'))) return;
+      // Ищем подходящий редактируемый элемент
+      var el = e.target;
+      while (el && el !== document.body) {
+        if (el.tagName && EDITABLE_TAGS.indexOf(el.tagName) !== -1) break;
+        el = el.parentElement;
+      }
+      if (!el || el === document.body) { removePopover(); return; }
+      // Элемент должен быть внутри блока
+      if (!el.closest('[data-block-id]')) { removePopover(); return; }
+      buildPopover(el);
+    });
+
+    window.addEventListener('scroll', positionPopover, true);
+    window.addEventListener('resize', positionPopover);
   })();
 </script>`
 
