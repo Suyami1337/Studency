@@ -14,6 +14,7 @@ const MODEL = 'claude-haiku-4-5'
 const MAX_AGENT_ITERATIONS = 10
 const TIMEOUT_BUDGET_MS = 45000
 const MAX_HISTORY_TURNS = 12
+const MAX_OUTPUT_TOKENS = 8192  // Haiku 4.5 легко держит 8k, нужно для update_landing_html
 
 type ChatMessage =
   | { role: 'user'; content: string }
@@ -79,9 +80,21 @@ ${EXAMPLES_BLOCK}
 
 ## 🎯 Стратегия редактирования
 
-**Точечные правки** (изменить заголовок, переписать абзац, поменять CTA) — через \`apply_html_patch\` с find/replace. НЕ переписывай весь HTML ради одной строки — сломаешь другое.
+**Точечные правки** (изменить заголовок, переписать абзац, поменять CTA, вставить шорткод) — через \`apply_html_patch\` с find/replace. НЕ переписывай весь HTML ради одной строки — сломаешь другое.
 
 **Крупные изменения** (добавить новый блок, полная перестройка) — через \`update_landing_html\` (полная замена). Предварительно ОБЯЗАТЕЛЬНО прочти текущий HTML через \`read_landing_state\` и держи в голове что не ломаешь.
+
+### Как писать \`find\` для apply_html_patch
+
+- **Копируй строку точно как в HTML** — любой символ важен.
+- Инструмент делает **fuzzy-поиск по пробелам/переносам строк**, так что ты можешь не заморачиваться с точным количеством пробелов/табов/переносов — они сопоставляются как \`\\s+\`. Пиши естественно.
+- Главное требование: **подстрока уникальна в HTML**. Если тот же тег встречается несколько раз — передавай больше контекста (родительский div, уникальный класс/id рядом, уникальный текст).
+- Не передавай строки короче 20 символов — высокий шанс что найдется несколько совпадений.
+
+### Как вставить видео вместо мок-плеера
+
+1. \`list_project_videos\` → получи UUID нужного видео.
+2. \`apply_html_patch\`: в \`find\` передай весь блок мок-плеера (от открывающего \`<div class="vsl-player">\` до закрывающего \`</div>\` этого же плеера), в \`replace\` — шорткод \`{{video:UUID}}\` обёрнутый в такой же родительский контейнер если нужно сохранить стили. Шорткод на рантайме заменится на реальный плеер Kinescope.
 
 ## 🚨 Режим исполнения
 
@@ -149,6 +162,50 @@ function getTools(): Anthropic.Messages.Tool[] {
   ]
 }
 
+/**
+ * Ищем подстроку в HTML с fallback'ами:
+ * 1. exact — буквальное indexOf
+ * 2. fuzzy — экранируем find как regex и все \s+ → \s+ (любые пробелы/переносы)
+ *
+ * Это решает частую проблему: модель реконструирует HTML по памяти и не попадает
+ * в точные отступы template-literal шаблона (табы vs 2 пробела, \r\n vs \n и т.п.)
+ */
+function findWithFallback(haystack: string, needle: string): { idx: number; matchedLength: number; mode: 'exact' | 'fuzzy'; ambiguous: boolean } | null {
+  // 1. Точное совпадение
+  const exactIdx = haystack.indexOf(needle)
+  if (exactIdx >= 0) {
+    const secondIdx = haystack.indexOf(needle, exactIdx + 1)
+    return { idx: exactIdx, matchedLength: needle.length, mode: 'exact', ambiguous: secondIdx >= 0 }
+  }
+
+  // 2. Fuzzy по whitespace
+  // Escape regex meta-chars, потом все блоки \s в needle превращаем в \s+ в паттерне
+  const escaped = needle
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\s+/g, '\\s+')
+  let re: RegExp
+  try {
+    re = new RegExp(escaped)
+  } catch {
+    return null
+  }
+  const m = re.exec(haystack)
+  if (!m) return null
+  const firstIdx = m.index
+  const firstLen = m[0].length
+  re.lastIndex = firstIdx + firstLen
+  const ambiguous = new RegExp(escaped, 'g')
+  let count = 0
+  for (let mm = ambiguous.exec(haystack); mm !== null; mm = ambiguous.exec(haystack)) {
+    count++
+    if (count > 1) break
+    if (mm.index + mm[0].length === ambiguous.lastIndex) { /* advance naturally */ } else {
+      ambiguous.lastIndex = mm.index + 1
+    }
+  }
+  return { idx: firstIdx, matchedLength: firstLen, mode: 'fuzzy', ambiguous: count > 1 }
+}
+
 async function executeTool(
   name: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -195,20 +252,32 @@ async function executeTool(
         const html = cur.html_content ?? ''
         const find = String(input.find ?? '')
         if (!find) throw new Error('find пустой')
-        const firstIdx = html.indexOf(find)
-        if (firstIdx < 0) throw new Error(`подстрока не найдена: "${find.slice(0, 40)}..."`)
-        const secondIdx = html.indexOf(find, firstIdx + 1)
-        if (secondIdx >= 0) throw new Error('подстрока встречается больше одного раза — передай больше контекста для уникальности')
-        const replaced = html.slice(0, firstIdx) + String(input.replace ?? '') + html.slice(firstIdx + find.length)
+
+        // Стратегия поиска с fallback'ами:
+        // 1) Точное совпадение — как было
+        // 2) Fuzzy по whitespace — \s+ вместо любых пробелов/переносов (решает проблему
+        //    когда модель угадывает отступы в template-literal HTML и промахивается)
+        const match = findWithFallback(html, find)
+        if (!match) {
+          const preview = find.length > 60 ? find.slice(0, 60) + '…' : find
+          throw new Error(`подстрока не найдена (ни точно, ни по нормализованным пробелам): "${preview}"`)
+        }
+        if (match.ambiguous) {
+          throw new Error('подстрока встречается больше одного раза — передай больше контекста для уникальности')
+        }
+
+        const replaced = html.slice(0, match.idx) + String(input.replace ?? '') + html.slice(match.idx + match.matchedLength)
         const { error } = await supabase
           .from('landings')
           .update({ html_content: replaced, updated_at: new Date().toISOString() })
           .eq('id', landingId)
           .eq('project_id', projectId)
         if (error) throw error
+        const delta = String(input.replace ?? '').length - match.matchedLength
+        const mode = match.mode === 'exact' ? '' : ' (fuzzy)'
         return {
-          content: JSON.stringify({ ok: true, new_length: replaced.length }),
-          summary: `применил патч HTML (${String(input.replace ?? '').length - find.length >= 0 ? '+' : ''}${String(input.replace ?? '').length - find.length} симв.)`,
+          content: JSON.stringify({ ok: true, new_length: replaced.length, mode: match.mode }),
+          summary: `применил патч HTML${mode} (${delta >= 0 ? '+' : ''}${delta} симв.)`,
           ok: true, wrote: true,
         }
       }
@@ -293,7 +362,7 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
     try {
       response = await client.messages.create({
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: MAX_OUTPUT_TOKENS,
         system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
         tools: getTools().map((t, i, arr) => i === arr.length - 1 ? { ...t, cache_control: { type: 'ephemeral' } } : t),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
