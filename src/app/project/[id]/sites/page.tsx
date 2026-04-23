@@ -178,6 +178,53 @@ function LandingDetail({
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const htmlTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [showVideoPicker, setShowVideoPicker] = useState(false)
+  const [showImagePicker, setShowImagePicker] = useState(false)
+
+  /**
+   * Вставляет строку (shortcode/HTML) в текущий режим редактора:
+   * - Visual: в позицию курсора iframe (если есть селекшн), иначе в конец body
+   * - Code: в позицию курсора textarea
+   * В обоих случаях обновляет html state.
+   */
+  function insertAtCursor(snippet: string, asHtml = false) {
+    if (editorMode === 'visual') {
+      const doc = iframeRef.current?.contentDocument
+      if (!doc) return
+      const sel = doc.getSelection()
+      if (sel && sel.rangeCount > 0 && doc.body.contains(sel.anchorNode)) {
+        const range = sel.getRangeAt(0)
+        range.deleteContents()
+        if (asHtml) {
+          const tmp = doc.createElement('div')
+          tmp.innerHTML = snippet
+          const frag = doc.createDocumentFragment()
+          while (tmp.firstChild) frag.appendChild(tmp.firstChild)
+          range.insertNode(frag)
+        } else {
+          range.insertNode(doc.createTextNode(snippet))
+        }
+      } else {
+        if (asHtml) doc.body.insertAdjacentHTML('beforeend', '\n' + snippet)
+        else doc.body.insertAdjacentText('beforeend', '\n' + snippet)
+      }
+      syncFromIframe()
+      return
+    }
+    // Code mode — вставка в textarea
+    const textarea = htmlTextareaRef.current
+    if (textarea) {
+      const start = textarea.selectionStart ?? html.length
+      const end = textarea.selectionEnd ?? html.length
+      const next = html.slice(0, start) + snippet + html.slice(end)
+      setHtml(next)
+      setTimeout(() => {
+        textarea.focus()
+        textarea.selectionStart = textarea.selectionEnd = start + snippet.length
+      }, 0)
+    } else {
+      setHtml(html + '\n' + snippet + '\n')
+    }
+  }
 
   // Sync visual edits from iframe into html state (called on save/tab switch)
   function syncFromIframe() {
@@ -419,6 +466,14 @@ function LandingDetail({
                       📱 Mobile
                     </button>
                   </div>
+                  <button onClick={() => setShowVideoPicker(true)}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                    🎬 Видео
+                  </button>
+                  <button onClick={() => setShowImagePicker(true)}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+                    🖼 Картинка
+                  </button>
                   <button onClick={() => setFullscreen(!fullscreen)}
                     className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${fullscreen ? 'bg-[#6A55F8] text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                     {fullscreen ? '✕ Свернуть' : '⛶ На весь экран'}
@@ -458,8 +513,11 @@ function LandingDetail({
                       <button onClick={() => setViewport('mobile')}
                         className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'mobile' ? 'bg-white shadow-sm' : 'text-gray-500'}`}>📱 Mobile</button>
                     </div>
+                    <button onClick={() => setShowVideoPicker(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">🎬 Видео</button>
+                    <button onClick={() => setShowImagePicker(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50">🖼 Картинка</button>
                     <span className="text-xs text-gray-400">studency.app/{landing.slug}</span>
-                    <span className="text-xs text-[#6A55F8]">Кликай на текст чтобы редактировать</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => { syncFromIframe(); handleSaveHtml() }} className="px-3 py-1.5 text-xs bg-[#6A55F8] text-white rounded-lg font-medium">Сохранить</button>
@@ -488,16 +546,36 @@ function LandingDetail({
                     ref={iframeRef}
                     srcDoc={`${html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
                       <style>
-                        [contenteditable]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
-                        [contenteditable]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
-                        a[contenteditable]:hover { outline-color: #F59E0B; }
+                        [contenteditable="true"]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
+                        [contenteditable="true"]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
+                        a[contenteditable="true"]:hover { outline-color: #F59E0B; }
                       </style>
                       <script>
-                        document.querySelectorAll('h1,h2,h3,h4,p,span,a,button,li,td,th,label,div:not(:has(*))').forEach(el => {
-                          if (el.textContent.trim() && el.children.length === 0) {
+                        (function(){
+                          // Блочные текстовые элементы — делаем редактируемыми ЦЕЛИКОМ,
+                          // даже если внутри есть inline-теги (span/b/i/em/strong).
+                          // Это даёт h1 с <span>-акцентом редактироваться целиком,
+                          // а не только span внутри него.
+                          var BLOCK_SEL = 'h1, h2, h3, h4, h5, h6, p, li, td, th, label, blockquote, figcaption, dt, dd';
+                          document.querySelectorAll(BLOCK_SEL).forEach(function(el) {
+                            if (el.textContent.trim()) el.setAttribute('contenteditable', 'true');
+                          });
+                          // Inline-элементы делаем editable только если они НЕ внутри
+                          // уже editable блока (иначе получаем вложенный contenteditable).
+                          var INLINE_SEL = 'a, button, span, b, i, em, strong';
+                          document.querySelectorAll(INLINE_SEL).forEach(function(el) {
+                            if (!el.textContent.trim()) return;
+                            if (el.closest('[contenteditable="true"]')) return;
                             el.setAttribute('contenteditable', 'true');
-                          }
-                        });
+                          });
+                          // div-листья без детей (простые текстовые обёртки) — редактируемы
+                          document.querySelectorAll('div').forEach(function(el) {
+                            if (el.children.length > 0) return;
+                            if (!el.textContent.trim()) return;
+                            if (el.closest('[contenteditable="true"]')) return;
+                            el.setAttribute('contenteditable', 'true');
+                          });
+                        })();
                       </script>`}
                     className={`w-full border-0 ${fullscreen ? 'h-full' : 'h-[600px]'}`}
                     sandbox="allow-scripts allow-same-origin"
@@ -940,24 +1018,20 @@ function LandingDetail({
           projectId={landing.project_id}
           onClose={() => setShowVideoPicker(false)}
           onPick={(videoId) => {
-            const shortcode = `{{video:${videoId}}}`
-            // Вставляем в textarea в позицию курсора или в конец
-            const textarea = htmlTextareaRef.current
-            if (textarea && editorMode === 'code') {
-              const start = textarea.selectionStart ?? html.length
-              const end = textarea.selectionEnd ?? html.length
-              const next = html.slice(0, start) + shortcode + html.slice(end)
-              setHtml(next)
-              // Восстанавливаем курсор после вставленного шорткода
-              setTimeout(() => {
-                textarea.focus()
-                textarea.selectionStart = textarea.selectionEnd = start + shortcode.length
-              }, 0)
-            } else {
-              // Если редактор в визуальном режиме — просто добавляем в конец
-              setHtml(html + '\n' + shortcode + '\n')
-            }
+            insertAtCursor(`{{video:${videoId}}}`, false)
             setShowVideoPicker(false)
+          }}
+        />
+      )}
+
+      {showImagePicker && (
+        <ImagePickerModal
+          onClose={() => setShowImagePicker(false)}
+          onPick={(imgUrl, alt) => {
+            const safeAlt = (alt || '').replace(/"/g, '&quot;')
+            const html = `<img src="${imgUrl}" alt="${safeAlt}" style="max-width:100%;height:auto;display:block;margin:16px auto;border-radius:8px" />`
+            insertAtCursor(html, true)
+            setShowImagePicker(false)
           }}
         />
       )}
@@ -1059,6 +1133,119 @@ function VideoPickerModal({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IMAGE PICKER MODAL — вставить картинку по URL или загрузкой файла (base64)
+// ═══════════════════════════════════════════════════════════════════════════
+function ImagePickerModal({
+  onClose,
+  onPick,
+}: {
+  onClose: () => void
+  onPick: (url: string, alt: string) => void
+}) {
+  const [tab, setTab] = useState<'url' | 'upload'>('url')
+  const [url, setUrl] = useState('')
+  const [alt, setAlt] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handlePick() {
+    const trimmed = url.trim()
+    if (!trimmed) { setError('Вставь URL картинки'); return }
+    onPick(trimmed, alt.trim())
+  }
+
+  async function handleFile(file: File) {
+    setError(null)
+    if (!file.type.startsWith('image/')) { setError('Файл должен быть картинкой'); return }
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Картинка больше 2 МБ — лучше загрузи на хостинг и вставь по URL')
+      return
+    }
+    setUploading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result)
+      setUploading(false)
+      onPick(dataUrl, alt.trim() || file.name)
+    }
+    reader.onerror = () => { setUploading(false); setError('Не удалось прочитать файл') }
+    reader.readAsDataURL(file)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl max-w-md w-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-gray-900">Вставить картинку</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        </div>
+
+        <div className="px-4 pt-3 flex gap-1 border-b border-gray-100">
+          <button onClick={() => setTab('url')}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === 'url' ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            По URL
+          </button>
+          <button onClick={() => setTab('upload')}
+            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === 'upload' ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Загрузить файл
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {tab === 'url' ? (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">URL картинки</label>
+                <input type="url" value={url} onChange={e => setUrl(e.target.value)}
+                  placeholder="https://example.com/image.jpg"
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter' && url.trim()) handlePick() }}
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Alt-текст (необязательно)</label>
+                <input type="text" value={alt} onChange={e => setAlt(e.target.value)}
+                  placeholder="Описание для SEO и доступности"
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
+              </div>
+            </>
+          ) : (
+            <>
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { if (e.target.files?.[0]) void handleFile(e.target.files[0]); e.target.value = '' }} />
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                className="w-full py-8 rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors disabled:opacity-50">
+                {uploading ? 'Загрузка...' : '📁 Выбрать картинку (до 2 МБ)'}
+              </button>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Alt-текст (необязательно)</label>
+                <input type="text" value={alt} onChange={e => setAlt(e.target.value)}
+                  placeholder="Описание для SEO и доступности"
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
+              </div>
+              <p className="text-[11px] text-gray-400">Картинка встроится в HTML как base64. Для больших картинок лучше залить на внешний хостинг и вставить по URL.</p>
+            </>
+          )}
+
+          {error && <div className="text-xs text-red-500">{error}</div>}
+        </div>
+
+        {tab === 'url' && (
+          <div className="p-4 border-t border-gray-100 flex items-center justify-end gap-2">
+            <button onClick={onClose} className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+            <button onClick={handlePick} disabled={!url.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+              Вставить
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
