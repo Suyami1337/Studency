@@ -167,11 +167,13 @@ function LandingDetail({
     if (data) {
       setLanding(data as Landing)
       setHtml(data.html_content ?? '')
+      setSavedHtml(data.html_content ?? '')
     }
   }
 
   // Editor state
   const [html, setHtml] = useState(landing.html_content ?? '')
+  const [savedHtml, setSavedHtml] = useState(landing.html_content ?? '')  // что сейчас в БД — для dirty detection
   const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
   const [fullscreen, setFullscreen] = useState(false)
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop')
@@ -179,6 +181,49 @@ function LandingDetail({
   const htmlTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [showVideoPicker, setShowVideoPicker] = useState(false)
   const [showImagePicker, setShowImagePicker] = useState(false)
+  // Когда кликают по <img> в preview — сохраняем его data-stud-img-idx, чтобы на pick заменить src именно этой картинки
+  const [replacingImgIdx, setReplacingImgIdx] = useState<number | null>(null)
+  const [replacingVideoIdx, setReplacingVideoIdx] = useState<number | null>(null)
+  // Видео проекта — для client-side замены {{video:UUID}} → iframe в preview
+  const [projectVideos, setProjectVideos] = useState<Array<{ id: string; kinescope_id: string | null; embed_url: string | null; title: string | null }>>([])
+  // Inline-форматирование текста: когда в iframe есть выделение, кнопки тулбара активны
+  const [hasSelection, setHasSelection] = useState(false)
+
+  const dirty = html !== savedHtml
+
+  // Грузим видео проекта один раз — для replaceVideoShortcodesInPreview
+  useEffect(() => {
+    supabase.from('videos')
+      .select('id, kinescope_id, embed_url, title')
+      .eq('project_id', projectId)
+      .then(({ data }) => setProjectVideos(data ?? []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  // Слушаем сообщения от iframe-редактора (клик по img/video, selection, input)
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const src = iframeRef.current?.contentWindow
+      if (!src || e.source !== src) return
+      const data = e.data
+      if (!data || typeof data !== 'object') return
+      if (data.type === 'stud-img-click' && typeof data.idx === 'number') {
+        setReplacingImgIdx(data.idx)
+        setShowImagePicker(true)
+      } else if (data.type === 'stud-video-click' && typeof data.idx === 'number') {
+        setReplacingVideoIdx(data.idx)
+        setShowVideoPicker(true)
+      } else if (data.type === 'stud-selection') {
+        setHasSelection(Boolean(data.has))
+      } else if (data.type === 'stud-input') {
+        // При вводе — сразу синхронизируемся для корректного dirty state
+        syncFromIframe()
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /**
    * Вставляет строку (shortcode/HTML) в текущий режим редактора:
@@ -231,16 +276,84 @@ function LandingDetail({
     try {
       const doc = iframeRef.current?.contentDocument
       if (doc) {
-        // Remove our injected script/style before saving
-        doc.querySelectorAll('script, style:last-of-type').forEach(el => {
-          if (el.textContent?.includes('contenteditable') || el.textContent?.includes('htmlUpdate')) el.remove()
+        // Клон для сохранения — удаляем только наши инжекты, не трогая живой DOM
+        const cloneRoot = doc.documentElement.cloneNode(true) as HTMLElement
+        cloneRoot.querySelectorAll('[data-stud-editor-inject]').forEach(el => el.remove())
+        cloneRoot.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'))
+        cloneRoot.querySelectorAll('[data-stud-img-idx]').forEach(el => el.removeAttribute('data-stud-img-idx'))
+        // Вернуть iframe-рендер видео обратно в шорткоды (чтобы в БД лежали {{video:UUID}}, а не iframe)
+        cloneRoot.querySelectorAll('.stud-video-wrap[data-stud-video-shortcode]').forEach(el => {
+          const sc = el.getAttribute('data-stud-video-shortcode')
+          if (sc) {
+            const text = doc.createTextNode(sc)
+            el.parentNode?.replaceChild(text, el)
+          }
         })
-        doc.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'))
-        setHtml(doc.documentElement.outerHTML)
-        return doc.documentElement.outerHTML
+        const nextHtml = cloneRoot.outerHTML
+        setHtml(nextHtml)
+        return nextHtml
       }
     } catch { /* cross-origin */ }
     return html
+  }
+
+  /** Клиентская замена {{video:UUID}} → iframe для визуального preview (аналогично серверной в /s/[slug]/route.ts) */
+  function replaceVideoShortcodesInPreview(source: string): string {
+    if (!source) return source
+    const map = new Map(projectVideos.map(v => [v.id, v]))
+    return source.replace(/\{\{\s*video\s*:\s*([a-f0-9-]{36})\s*\}\}/gi, (match, uuid) => {
+      const v = map.get(uuid)
+      if (!v || !v.kinescope_id) return match  // нет видео — оставляем шорткод как есть
+      const src = v.embed_url || `https://kinescope.io/embed/${v.kinescope_id}`
+      const title = (v.title || '').replace(/"/g, '&quot;')
+      // data-stud-video-shortcode позволит при сохранении вернуть текстовый шорткод обратно
+      return `<div class="stud-video-wrap" data-stud-video-shortcode="${match.replace(/"/g, '&quot;')}" style="position:relative;width:100%;max-width:960px;margin:20px auto;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000;">
+<iframe src="${src}" style="width:100%;height:100%;border:0;pointer-events:none" allow="autoplay; fullscreen; picture-in-picture; encrypted-media;" title="${title}"></iframe>
+<div class="stud-video-overlay" data-stud-editor-inject="true" style="position:absolute;inset:0;cursor:pointer;display:flex;align-items:flex-start;justify-content:flex-end;padding:10px;background:linear-gradient(180deg,rgba(0,0,0,0.35) 0%,transparent 35%);">
+<div style="background:rgba(106,85,248,0.95);color:#fff;font-size:12px;font-weight:600;padding:6px 12px;border-radius:8px;font-family:system-ui,sans-serif">✏ Заменить видео</div>
+</div>
+</div>`
+    })
+  }
+
+  /** Выполнить document.execCommand над текущим выделением в iframe */
+  function applyInlineFormat(command: string, value?: string) {
+    const doc = iframeRef.current?.contentDocument
+    const win = iframeRef.current?.contentWindow
+    if (!doc || !win) return
+    try {
+      doc.execCommand(command, false, value)
+      win.focus()
+      // После форматирования — помечаем как изменённое
+      syncFromIframe()
+    } catch { /* ignore */ }
+  }
+
+  /** Изменить font-size выделения через обёртку в <span style="font-size:..."> */
+  function applyFontSize(px: number) {
+    const doc = iframeRef.current?.contentDocument
+    const win = iframeRef.current?.contentWindow
+    if (!doc || !win) return
+    const sel = doc.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+    const range = sel.getRangeAt(0)
+    const span = doc.createElement('span')
+    span.style.fontSize = `${px}px`
+    try {
+      range.surroundContents(span)
+      win.focus()
+      syncFromIframe()
+    } catch {
+      // если selection пересекает границы тегов — fallback через execCommand fontSize (грубее)
+      doc.execCommand('fontSize', false, '7')
+      doc.querySelectorAll('font[size="7"]').forEach(f => {
+        const s = doc.createElement('span')
+        s.style.fontSize = `${px}px`
+        while (f.firstChild) s.appendChild(f.firstChild)
+        f.parentNode?.replaceChild(s, f)
+      })
+      syncFromIframe()
+    }
   }
 
   // Analytics state
@@ -342,7 +455,7 @@ function LandingDetail({
       .eq('id', landing.id)
       .select()
       .single()
-    if (data) setLanding(data as Landing)
+    if (data) { setLanding(data as Landing); setSavedHtml(currentHtml) }
     setSaving(false)
   }
 
@@ -355,7 +468,7 @@ function LandingDetail({
       .eq('id', landing.id)
       .select()
       .single()
-    if (data) { setLanding(data as Landing); setHtml(currentHtml) }
+    if (data) { setLanding(data as Landing); setHtml(currentHtml); setSavedHtml(currentHtml) }
     setSaving(false)
   }
 
@@ -481,10 +594,14 @@ function LandingDetail({
                 </>
               )}
             </div>
-            <div className="flex gap-2">
-              <button onClick={handleSaveHtml} disabled={saving}
-                className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50">
-                {saving ? 'Сохранение...' : 'Сохранить'}
+            <div className="flex gap-2 items-center">
+              <button onClick={handleSaveHtml} disabled={saving || !dirty}
+                className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors disabled:opacity-60 ${
+                  dirty
+                    ? 'bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100'
+                    : 'border border-gray-200 text-gray-500'
+                }`}>
+                {saving ? 'Сохранение...' : dirty ? '● Сохранить' : '✓ Сохранено'}
               </button>
               <button onClick={handlePublish} disabled={saving}
                 className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors disabled:opacity-50 ${
@@ -539,45 +656,78 @@ function LandingDetail({
                         <span className="w-3 h-3 rounded-full bg-green-400" />
                       </div>
                       <span className="text-xs text-gray-400 flex-1 text-center">studency.app/{landing.slug}</span>
-                      <span className="text-xs text-[#6A55F8] font-medium">Кликай на текст</span>
                     </div>
                   )}
+                  {/* Inline-format toolbar — активен когда есть selection */}
+                  <InlineFormatToolbar
+                    active={hasSelection}
+                    onBold={() => applyInlineFormat('bold')}
+                    onItalic={() => applyInlineFormat('italic')}
+                    onUnderline={() => applyInlineFormat('underline')}
+                    onAlign={(dir) => applyInlineFormat('justify' + dir)}
+                    onColor={(c) => applyInlineFormat('foreColor', c)}
+                    onFontSize={(px) => applyFontSize(px)}
+                  />
                   <iframe
                     ref={iframeRef}
-                    srcDoc={`${html || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
-                      <style>
+                    srcDoc={`${replaceVideoShortcodesInPreview(html) || '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9CA3AF;font-family:sans-serif;font-size:14px">Создайте контент в HTML коде</div>'}
+                      <style data-stud-editor-inject="true">
                         [contenteditable="true"]:hover { outline: 2px dashed #6A55F8; outline-offset: 2px; cursor: text; }
                         [contenteditable="true"]:focus { outline: 2px solid #6A55F8; outline-offset: 2px; }
                         a[contenteditable="true"]:hover { outline-color: #F59E0B; }
+                        img[data-stud-img-idx]:hover { outline: 3px solid #6A55F8; outline-offset: 2px; cursor: pointer; }
+                        .stud-video-wrap:hover .stud-video-overlay { background: linear-gradient(180deg,rgba(0,0,0,0.55) 0%,rgba(0,0,0,0.2) 50%,transparent 100%) !important; }
                       </style>
-                      <script>
+                      <script data-stud-editor-inject="true">
                         (function(){
-                          // Блочные текстовые элементы — делаем редактируемыми ЦЕЛИКОМ,
-                          // даже если внутри есть inline-теги (span/b/i/em/strong).
-                          // Это даёт h1 с <span>-акцентом редактироваться целиком,
-                          // а не только span внутри него.
                           var BLOCK_SEL = 'h1, h2, h3, h4, h5, h6, p, li, td, th, label, blockquote, figcaption, dt, dd';
                           document.querySelectorAll(BLOCK_SEL).forEach(function(el) {
                             if (el.textContent.trim()) el.setAttribute('contenteditable', 'true');
                           });
-                          // Inline-элементы делаем editable только если они НЕ внутри
-                          // уже editable блока (иначе получаем вложенный contenteditable).
                           var INLINE_SEL = 'a, button, span, b, i, em, strong';
                           document.querySelectorAll(INLINE_SEL).forEach(function(el) {
                             if (!el.textContent.trim()) return;
                             if (el.closest('[contenteditable="true"]')) return;
                             el.setAttribute('contenteditable', 'true');
                           });
-                          // div-листья без детей (простые текстовые обёртки) — редактируемы
                           document.querySelectorAll('div').forEach(function(el) {
                             if (el.children.length > 0) return;
                             if (!el.textContent.trim()) return;
                             if (el.closest('[contenteditable="true"]')) return;
                             el.setAttribute('contenteditable', 'true');
                           });
+                          // Пометить все img уникальными индексами + клик на img → сообщить parent'у
+                          var imgs = document.querySelectorAll('img');
+                          imgs.forEach(function(img, idx) {
+                            img.setAttribute('data-stud-img-idx', String(idx));
+                            img.addEventListener('click', function(e) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              parent.postMessage({ type: 'stud-img-click', idx: idx }, '*');
+                            });
+                          });
+                          // Клик по видео-оверлею → сообщить parent'у
+                          var overlays = document.querySelectorAll('.stud-video-overlay');
+                          overlays.forEach(function(ov, idx) {
+                            ov.addEventListener('click', function(e) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              parent.postMessage({ type: 'stud-video-click', idx: idx }, '*');
+                            });
+                          });
+                          // Selection в iframe → сообщить parent'у чтобы обновить toolbar
+                          document.addEventListener('selectionchange', function() {
+                            var sel = document.getSelection();
+                            var has = !!(sel && sel.rangeCount > 0 && !sel.isCollapsed);
+                            parent.postMessage({ type: 'stud-selection', has: has }, '*');
+                          });
+                          // Любая правка в editable → dirty
+                          document.addEventListener('input', function() {
+                            parent.postMessage({ type: 'stud-input' }, '*');
+                          });
                         })();
                       </script>`}
-                    className={`w-full border-0 ${fullscreen ? 'h-full' : 'h-[600px]'}`}
+                    className={`w-full border-0 ${fullscreen ? 'h-full' : 'h-[85vh]'}`}
                     sandbox="allow-scripts allow-same-origin"
                   />
                 </div>
@@ -1016,25 +1166,122 @@ function LandingDetail({
       {showVideoPicker && (
         <VideoPickerModal
           projectId={landing.project_id}
-          onClose={() => setShowVideoPicker(false)}
+          onClose={() => { setShowVideoPicker(false); setReplacingVideoIdx(null) }}
           onPick={(videoId) => {
-            insertAtCursor(`{{video:${videoId}}}`, false)
+            if (replacingVideoIdx !== null) {
+              // Заменяем существующий stud-video-wrap: меняем data-stud-video-shortcode на новый
+              const doc = iframeRef.current?.contentDocument
+              if (doc) {
+                const wraps = doc.querySelectorAll('.stud-video-wrap')
+                const wrap = wraps[replacingVideoIdx]
+                if (wrap) {
+                  wrap.setAttribute('data-stud-video-shortcode', `{{video:${videoId}}}`)
+                  const v = projectVideos.find(x => x.id === videoId)
+                  if (v && v.kinescope_id) {
+                    const src = v.embed_url || `https://kinescope.io/embed/${v.kinescope_id}`
+                    const iframe = wrap.querySelector('iframe')
+                    if (iframe) iframe.setAttribute('src', src)
+                  }
+                  syncFromIframe()
+                }
+              }
+            } else {
+              insertAtCursor(`{{video:${videoId}}}`, false)
+            }
             setShowVideoPicker(false)
+            setReplacingVideoIdx(null)
           }}
         />
       )}
 
       {showImagePicker && (
         <ImagePickerModal
-          onClose={() => setShowImagePicker(false)}
+          mode={replacingImgIdx !== null ? 'replace' : 'insert'}
+          onClose={() => { setShowImagePicker(false); setReplacingImgIdx(null) }}
           onPick={(imgUrl, alt) => {
-            const safeAlt = (alt || '').replace(/"/g, '&quot;')
-            const html = `<img src="${imgUrl}" alt="${safeAlt}" style="max-width:100%;height:auto;display:block;margin:16px auto;border-radius:8px" />`
-            insertAtCursor(html, true)
+            if (replacingImgIdx !== null) {
+              // Заменяем src существующей картинки
+              const doc = iframeRef.current?.contentDocument
+              if (doc) {
+                const img = doc.querySelector(`img[data-stud-img-idx="${replacingImgIdx}"]`) as HTMLImageElement | null
+                if (img) {
+                  img.src = imgUrl
+                  if (alt) img.alt = alt
+                  syncFromIframe()
+                }
+              }
+            } else {
+              const safeAlt = (alt || '').replace(/"/g, '&quot;')
+              const snippet = `<img src="${imgUrl}" alt="${safeAlt}" style="max-width:100%;height:auto;display:block;margin:16px auto;border-radius:8px" />`
+              insertAtCursor(snippet, true)
+            }
             setShowImagePicker(false)
+            setReplacingImgIdx(null)
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INLINE FORMAT TOOLBAR — плавающая панель форматирования для визуального редактора
+// Активна когда в iframe есть выделение текста.
+// ═══════════════════════════════════════════════════════════════════════════
+function InlineFormatToolbar({
+  active,
+  onBold,
+  onItalic,
+  onUnderline,
+  onAlign,
+  onColor,
+  onFontSize,
+}: {
+  active: boolean
+  onBold: () => void
+  onItalic: () => void
+  onUnderline: () => void
+  onAlign: (dir: 'Left' | 'Center' | 'Right') => void
+  onColor: (hex: string) => void
+  onFontSize: (px: number) => void
+}) {
+  const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 56, 64, 72]
+  const COLORS = ['#111827', '#FFFFFF', '#6A55F8', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#EC4899']
+  return (
+    <div className={`border-b border-gray-100 px-3 py-2 flex items-center gap-1 bg-white flex-wrap transition-opacity ${active ? 'opacity-100' : 'opacity-50'}`}>
+      <div className="text-[11px] text-gray-400 mr-1">{active ? 'Форматирование:' : 'Выдели текст →'}</div>
+      <button onMouseDown={e => { e.preventDefault(); onBold() }} disabled={!active}
+        className="w-8 h-8 rounded text-sm font-bold hover:bg-gray-100 disabled:opacity-40">B</button>
+      <button onMouseDown={e => { e.preventDefault(); onItalic() }} disabled={!active}
+        className="w-8 h-8 rounded text-sm italic hover:bg-gray-100 disabled:opacity-40">I</button>
+      <button onMouseDown={e => { e.preventDefault(); onUnderline() }} disabled={!active}
+        className="w-8 h-8 rounded text-sm underline hover:bg-gray-100 disabled:opacity-40">U</button>
+      <div className="w-px h-5 bg-gray-200 mx-1" />
+      <select
+        onMouseDown={e => e.preventDefault()}
+        onChange={e => { if (e.target.value) { onFontSize(Number(e.target.value)); e.target.value = '' } }}
+        disabled={!active}
+        className="px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40"
+        defaultValue=""
+      >
+        <option value="">Размер</option>
+        {SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+      </select>
+      <div className="flex items-center gap-0.5 ml-1">
+        {COLORS.map(c => (
+          <button key={c} onMouseDown={e => { e.preventDefault(); onColor(c) }} disabled={!active}
+            title={c}
+            className="w-5 h-5 rounded border border-gray-300 disabled:opacity-40"
+            style={{ background: c }} />
+        ))}
+      </div>
+      <div className="w-px h-5 bg-gray-200 mx-1" />
+      <button onMouseDown={e => { e.preventDefault(); onAlign('Left') }} disabled={!active}
+        className="w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По левому краю">⬅</button>
+      <button onMouseDown={e => { e.preventDefault(); onAlign('Center') }} disabled={!active}
+        className="w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По центру">↔</button>
+      <button onMouseDown={e => { e.preventDefault(); onAlign('Right') }} disabled={!active}
+        className="w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По правому краю">➡</button>
     </div>
   )
 }
@@ -1144,9 +1391,11 @@ function VideoPickerModal({
 function ImagePickerModal({
   onClose,
   onPick,
+  mode = 'insert',
 }: {
   onClose: () => void
   onPick: (url: string, alt: string) => void
+  mode?: 'insert' | 'replace'
 }) {
   const [tab, setTab] = useState<'url' | 'upload'>('url')
   const [url, setUrl] = useState('')
@@ -1183,7 +1432,7 @@ function ImagePickerModal({
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl max-w-md w-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-900">Вставить картинку</h3>
+          <h3 className="text-base font-semibold text-gray-900">{mode === 'replace' ? 'Заменить картинку' : 'Вставить картинку'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
 
