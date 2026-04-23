@@ -1,16 +1,29 @@
+// Публичный лендинг — отдаём СЫРОЙ HTML через Route Handler, без React-гидрации.
+//
+// Почему так: раньше страница была Server Component с <html><body>
+// dangerouslySetInnerHTML=... React оборачивал это в runtime и пытался гидрировать.
+// Любой <script> внутри HTML лендинга (таймер VSL, кастомный JS) менял DOM сразу
+// при parse → React видел mismatch → Minified React error #418. Плюс если шаблон
+// содержал свой <!DOCTYPE><html><head>, получалась вложенность html-в-html.
+//
+// Решение: Route Handler возвращает text/html Response. Браузер парсит как обычную
+// страницу, все скрипты работают нативно, никакого React-runtime на клиенте не
+// подгружается.
 import { createClient } from '@supabase/supabase-js'
-import { notFound } from 'next/navigation'
 import { cookies } from 'next/headers'
+import type { NextRequest } from 'next/server'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://studency.vercel.app'
 
-/**
- * Заменяет шорткоды {{video:UUID}} в HTML на реальные iframe-плееры Kinescope.
- * Делает lookup в БД по UUID → получает kinescope_id и embed_url → строит iframe.
- * Каждый iframe получает data-studency-video-id для клиентского трекинга.
- */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]!))
+}
+
 async function replaceVideoShortcodes(
   html: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,7 +37,6 @@ async function replaceVideoShortcodes(
   }
   if (uuids.size === 0) return html
 
-  // Батч-запрос всех видео
   const { data: videos } = await supabase
     .from('videos')
     .select('id, kinescope_id, embed_url, title')
@@ -35,7 +47,7 @@ async function replaceVideoShortcodes(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const v of (videos ?? []) as any[]) map.set(v.id, v)
 
-  return html.replace(pattern, (match, uuid) => {
+  return html.replace(pattern, (_, uuid) => {
     const video = map.get(uuid)
     if (!video || !video.kinescope_id) {
       return `<div style="padding:20px;background:#f3f4f6;border:2px dashed #d1d5db;border-radius:8px;text-align:center;color:#6b7280;font-family:sans-serif;font-size:14px;">Видео не найдено</div>`
@@ -47,62 +59,44 @@ async function replaceVideoShortcodes(
   src="${src}"
   style="width:100%;height:100%;border:0;"
   allow="autoplay; fullscreen; picture-in-picture; encrypted-media;"
-  allowfullscreen
   title="${(video.title || '').replace(/"/g, '&quot;')}"
 ></iframe>
 </div>`
   })
 }
 
-export default async function LandingPage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params
+/**
+ * Разбирает HTML шаблона на head/body части. Шаблоны могут быть как полным
+ * документом (<!DOCTYPE...><html>...), так и фрагментом — работает и там и там.
+ * Из headInner удаляется <title> (мы ставим свой на основе meta_title).
+ */
+function extractHtmlParts(html: string): { headInner: string; bodyInner: string; bodyAttrs: string } {
+  const headMatch = /<head[^>]*>([\s\S]*?)<\/head>/i.exec(html)
+  const bodyMatch = /<body([^>]*)>([\s\S]*?)<\/body>/i.exec(html)
+  const headInner = headMatch
+    ? headMatch[1].replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '')
+    : ''
+  const bodyInner = bodyMatch ? bodyMatch[2] : html
+  const bodyAttrs = bodyMatch ? (bodyMatch[1] ?? '') : ''
+  return { headInner, bodyInner, bodyAttrs }
+}
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-
-  const { data: landing } = await supabase
-    .from('landings')
-    .select('id, html_content, status, name, meta_title, meta_description, is_mini_app, project_id')
-    .eq('slug', slug)
-    .eq('status', 'published')
-    .single()
-
-  if (!landing || !landing.html_content) {
-    notFound()
-  }
-
-  // Подставляем видео по шорткодам {{video:UUID}}
-  const htmlContent = await replaceVideoShortcodes(landing.html_content, supabase)
-
-  // Visitor token из cookie (устанавливается при переходе через /go/[slug] из бота)
-  const cookieStore = await cookies()
-  const visitorToken = cookieStore.get('stud_vid')?.value ?? ''
-
-  // Универсальный трекинг-скрипт.
-  // Не требует никакой ручной разметки в HTML.
-  // Автоматически трекает:
-  //   • клики по ЛЮБЫМ кнопкам, ссылкам и элементам с role=button
-  //   • отправку ЛЮБЫХ форм (name/phone/email/telegram по полю name/placeholder)
-  //   • просмотры ВСЕХ Kinescope iframe с data-studency-video-id
-  const isMiniApp = Boolean(landing.is_mini_app)
-  const projectId = landing.project_id
-
-  const trackingScript = `
-<script>
+function buildTrackingScript(opts: {
+  slug: string
+  visitorToken: string
+  baseUrl: string
+  isMiniApp: boolean
+  projectId: string
+}): string {
+  const { slug, visitorToken, baseUrl, isMiniApp, projectId } = opts
+  return `<script>
 (function() {
   var SLUG = ${JSON.stringify(slug)};
   var VT   = ${JSON.stringify(visitorToken)};
-  var BASE = ${JSON.stringify(BASE_URL)};
+  var BASE = ${JSON.stringify(baseUrl)};
   var IS_MINI_APP = ${isMiniApp ? 'true' : 'false'};
   var PROJECT_ID = ${JSON.stringify(projectId)};
 
-  // ── Telegram Mini App identity bridge ────────────────────────
-  // Когда лендинг открыт как Mini App внутри Telegram — SDK отдаёт
-  // initData с telegram_id клиента. Привязываем visitor_token к
-  // telegram_id сразу при загрузке, чтобы все последующие события
-  // шли на правильного customer.
   try {
     if (IS_MINI_APP && window.Telegram && window.Telegram.WebApp) {
       var wa = window.Telegram.WebApp;
@@ -120,14 +114,11 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     }
   } catch (e) { /* ignore */ }
 
-  // Утилита: получить читаемый текст элемента
   function getLabel(el) {
     var t = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || el.title || '').trim();
-    // Обрезаем до 80 символов, убираем переносы
     return t.replace(/\\s+/g, ' ').slice(0, 80);
   }
 
-  // Утилита: отправить событие (fire-and-forget)
   function track(payload) {
     fetch(BASE + '/api/track', {
       method: 'POST',
@@ -137,10 +128,7 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     }).catch(function() {});
   }
 
-  // ── Видео-трекинг ────────────────────────────────────────────
-  // Для каждого iframe с data-studency-video-id слушаем postMessage от Kinescope
-  // и шлём в /api/videos/track с visitor_token.
-  var videoStates = {}; // videoId → { sessionId, started, completed, lastReported, maxPos, watchTime, duration, iframeEl }
+  var videoStates = {};
 
   function genSessionId() {
     return 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
@@ -184,14 +172,12 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     }).catch(function() {});
   }
 
-  // Слушаем postMessage от Kinescope iframes
   window.addEventListener('message', function(e) {
     if (!e.origin || e.origin.indexOf('kinescope.io') === -1) return;
     var data = e.data || {};
     var eventType = (data.event || data.type || '').toString().replace(/^kinescope[:.]/, '');
     var payload = data.data || data;
 
-    // Находим какому iframe принадлежит событие (по source)
     var ids = Object.keys(videoStates);
     var matchedId = null;
     for (var i = 0; i < ids.length; i++) {
@@ -200,7 +186,6 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
         break;
       }
     }
-    // Fallback: если не нашли по source — берём первый не-completed
     if (!matchedId && ids.length === 1) matchedId = ids[0];
     if (!matchedId) return;
 
@@ -235,7 +220,6 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     }
   });
 
-  // На выгрузке — финальный репорт для всех смотренных видео
   window.addEventListener('pagehide', function() {
     Object.keys(videoStates).forEach(function(id) {
       var s = videoStates[id];
@@ -243,7 +227,6 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     });
   });
 
-  // Инициализация после DOM ready + повтор через 500ms на случай ленивой загрузки
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initVideoTracking);
   } else {
@@ -252,13 +235,12 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
   setTimeout(initVideoTracking, 500);
   setTimeout(initVideoTracking, 2000);
 
-  // ── 1. Авто-трекинг ВСЕХ кнопок и ссылок ─────────────────────
   document.addEventListener('click', function(e) {
     var el = e.target.closest('button, [type=submit], [role=button], a[href]');
     if (!el) return;
 
     var label = getLabel(el);
-    if (!label) return; // пустые кнопки не трекаем
+    if (!label) return;
 
     var isLink = el.tagName === 'A';
     track({
@@ -266,14 +248,12 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
       buttonHref: isLink ? (el.getAttribute('href') || '') : '',
       eventType: isLink ? 'link_click' : 'button_click',
     });
-  }, true); // capture=true: ловим до обработчиков страницы
+  }, true);
 
-  // ── 2. Авто-обработка форм ────────────────────────────────────
   document.addEventListener('submit', function(e) {
     var form = e.target;
     if (!form || form.tagName !== 'FORM') return;
 
-    // Не перехватываем формы, у которых есть свой action на другой домен
     var action = form.getAttribute('action') || '';
     if (action && !action.startsWith('/') && !action.startsWith(BASE) && action !== '#') return;
 
@@ -292,7 +272,6 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
       else { if (!data.extra) data.extra = {}; data.extra[fieldName] = val; }
     });
 
-    // UX: блокируем кнопку отправки
     var submitBtn = form.querySelector('[type=submit]');
     var origText = submitBtn ? (submitBtn.innerText || submitBtn.value) : '';
     if (submitBtn) { submitBtn.disabled = true; if (submitBtn.innerText !== undefined) submitBtn.innerText = '...'; }
@@ -304,7 +283,6 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
     })
     .then(function(r) { return r.json(); })
     .then(function() {
-      // Ищем блок с классом success / thank-you / stud-success
       var successEl = form.querySelector('.stud-success, [data-stud-success]')
         || document.querySelector('.stud-success, [data-stud-success], .thank-you, .success-message');
       if (successEl) {
@@ -325,24 +303,92 @@ export default async function LandingPage({ params }: { params: Promise<{ slug: 
   });
 
 })();
-</script>
-`
+</script>`
+}
 
-  const title = landing.meta_title || landing.name
-  const description = landing.meta_description || ''
+function notFoundResponse(): Response {
+  const html = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Страница не найдена</title>
+<style>body{font-family:system-ui,sans-serif;background:#f9fafb;color:#111827;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}.c{text-align:center;max-width:400px}.c h1{font-size:4rem;margin:0;color:#6A55F8}.c p{color:#6b7280}</style>
+</head>
+<body>
+<div class="c">
+  <h1>404</h1>
+  <p>Такого лендинга нет или он снят с публикации</p>
+</div>
+</body>
+</html>`
+  return new Response(html, {
+    status: 404,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
+}
 
-  return (
-    <html>
-      <head>
-        <title>{title}</title>
-        {description && <meta name="description" content={description} />}
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        {isMiniApp && <script src="https://telegram.org/js/telegram-web-app.js" async />}
-      </head>
-      <body>
-        <div dangerouslySetInnerHTML={{ __html: htmlContent }} />
-        <div dangerouslySetInnerHTML={{ __html: trackingScript }} />
-      </body>
-    </html>
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params
+
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
+
+  const { data: landing } = await supabase
+    .from('landings')
+    .select('id, html_content, status, name, meta_title, meta_description, is_mini_app, project_id')
+    .eq('slug', slug)
+    .eq('status', 'published')
+    .single()
+
+  if (!landing || !landing.html_content) {
+    return notFoundResponse()
+  }
+
+  const htmlContent = await replaceVideoShortcodes(landing.html_content, supabase)
+  const { headInner, bodyInner, bodyAttrs } = extractHtmlParts(htmlContent)
+
+  const cookieStore = await cookies()
+  const visitorToken = cookieStore.get('stud_vid')?.value ?? ''
+
+  const title = landing.meta_title || landing.name || 'Лендинг'
+  const description = landing.meta_description || ''
+  const isMiniApp = Boolean(landing.is_mini_app)
+
+  const trackingScript = buildTrackingScript({
+    slug,
+    visitorToken,
+    baseUrl: BASE_URL,
+    isMiniApp,
+    projectId: landing.project_id,
+  })
+
+  const doc = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(title)}</title>
+${description ? `<meta name="description" content="${escapeHtml(description)}">` : ''}
+${isMiniApp ? `<script src="https://telegram.org/js/telegram-web-app.js" async></script>` : ''}
+${headInner}
+</head>
+<body${bodyAttrs}>
+${bodyInner}
+${trackingScript}
+</body>
+</html>`
+
+  return new Response(doc, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  })
 }
