@@ -16,14 +16,25 @@ async function ensureLandingOwnership(
   supabase: any,
   landingId: string
 ): Promise<{ ok: true; landing: { id: string; project_id: string; html_content: string | null; is_blocks_based: boolean } } | { ok: false; status: number; error: string }> {
-  const { data } = await supabase
+  // Сначала пробуем новую схему (с is_blocks_based — добавлена миграцией 34)
+  const full = await supabase
     .from('landings')
     .select('id, project_id, html_content, is_blocks_based')
     .eq('id', landingId)
     .maybeSingle()
-  if (!data) return { ok: false, status: 404, error: 'Лендинг не найден' }
-  // project_id доверяем RLS — если пользователь видит лендинг, значит он в его проекте
-  return { ok: true, landing: data }
+  if (full.error) {
+    // Если колонки нет — значит миграция 34-landing-blocks.sql не применена. Скажем это прямо.
+    const msg = full.error.message || ''
+    if (/is_blocks_based|column.*does not exist/i.test(msg)) {
+      return {
+        ok: false, status: 500,
+        error: 'Миграция БД не применена. Открой Supabase → SQL Editor → запусти supabase/34-landing-blocks.sql',
+      }
+    }
+    return { ok: false, status: 500, error: `Supabase: ${msg}` }
+  }
+  if (!full.data) return { ok: false, status: 404, error: 'Лендинг не найден' }
+  return { ok: true, landing: full.data }
 }
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
