@@ -167,13 +167,15 @@ function LandingDetail({
     if (data) {
       setLanding(data as Landing)
       setHtml(data.html_content ?? '')
-      setSavedHtml(data.html_content ?? '')
+      setDirty(false)
     }
   }
 
   // Editor state
+  // html — срез HTML который УЖЕ синхронизирован из iframe (обновляется при save / tab switch / mode switch).
+  // Пока пользователь печатает в iframe, html НЕ меняется — это важно чтобы React не пересобирал iframe
+  // (иначе при каждом клике/нажатии перезагружался бы srcDoc и терялось выделение).
   const [html, setHtml] = useState(landing.html_content ?? '')
-  const [savedHtml, setSavedHtml] = useState(landing.html_content ?? '')  // что сейчас в БД — для dirty detection
   const [editorMode, setEditorMode] = useState<'visual' | 'code'>('visual')
   const [fullscreen, setFullscreen] = useState(false)
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop')
@@ -181,15 +183,12 @@ function LandingDetail({
   const htmlTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [showVideoPicker, setShowVideoPicker] = useState(false)
   const [showImagePicker, setShowImagePicker] = useState(false)
-  // Когда кликают по <img> в preview — сохраняем его data-stud-img-idx, чтобы на pick заменить src именно этой картинки
   const [replacingImgIdx, setReplacingImgIdx] = useState<number | null>(null)
   const [replacingVideoIdx, setReplacingVideoIdx] = useState<number | null>(null)
-  // Видео проекта — для client-side замены {{video:UUID}} → iframe в preview
   const [projectVideos, setProjectVideos] = useState<Array<{ id: string; kinescope_id: string | null; embed_url: string | null; title: string | null }>>([])
-  // Inline-форматирование текста: когда в iframe есть выделение, кнопки тулбара активны
   const [hasSelection, setHasSelection] = useState(false)
-
-  const dirty = html !== savedHtml
+  // Отдельный флаг dirty — взводится любой правкой в iframe (stud-input), сбрасывается при сохранении
+  const [dirty, setDirty] = useState(false)
 
   // Грузим видео проекта один раз — для replaceVideoShortcodesInPreview
   useEffect(() => {
@@ -199,6 +198,27 @@ function LandingDetail({
       .then(({ data }) => setProjectVideos(data ?? []))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  // Синхронизация живого iframe DOM → html state при уходе с вкладки «Редактор»
+  // или переключении из визуального режима в код — чтобы в html попали свежие правки,
+  // не слитые через syncFromIframe при печати.
+  useEffect(() => {
+    if (activeTab !== 'editor' && editorMode === 'visual') {
+      syncFromIframe()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  // beforeunload: предупреждаем о потере несохранённых правок при закрытии/перезагрузке
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (!dirty) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
 
   // Слушаем сообщения от iframe-редактора (клик по img/video, selection, input)
   useEffect(() => {
@@ -216,13 +236,13 @@ function LandingDetail({
       } else if (data.type === 'stud-selection') {
         setHasSelection(Boolean(data.has))
       } else if (data.type === 'stud-input') {
-        // При вводе — сразу синхронизируемся для корректного dirty state
-        syncFromIframe()
+        // Не синхронизируем html-state — иначе iframe перемонтируется и слетит выделение.
+        // Просто помечаем как изменённое. Реальный extract DOM → html будет при save/смене таба.
+        setDirty(true)
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /**
@@ -316,16 +336,19 @@ function LandingDetail({
     })
   }
 
-  /** Выполнить document.execCommand над текущим выделением в iframe */
+  /**
+   * Выполнить document.execCommand над текущим выделением в iframe.
+   * ВАЖНО: НЕ вызываем setHtml после — React перемонтирует iframe и слетит выделение.
+   * Просто помечаем dirty. Реальная синхронизация в state — только при сохранении / смене таба.
+   */
   function applyInlineFormat(command: string, value?: string) {
     const doc = iframeRef.current?.contentDocument
     const win = iframeRef.current?.contentWindow
     if (!doc || !win) return
     try {
-      doc.execCommand(command, false, value)
       win.focus()
-      // После форматирования — помечаем как изменённое
-      syncFromIframe()
+      doc.execCommand(command, false, value)
+      setDirty(true)
     } catch { /* ignore */ }
   }
 
@@ -340,11 +363,10 @@ function LandingDetail({
     const span = doc.createElement('span')
     span.style.fontSize = `${px}px`
     try {
-      range.surroundContents(span)
       win.focus()
-      syncFromIframe()
+      range.surroundContents(span)
+      setDirty(true)
     } catch {
-      // если selection пересекает границы тегов — fallback через execCommand fontSize (грубее)
       doc.execCommand('fontSize', false, '7')
       doc.querySelectorAll('font[size="7"]').forEach(f => {
         const s = doc.createElement('span')
@@ -352,7 +374,7 @@ function LandingDetail({
         while (f.firstChild) s.appendChild(f.firstChild)
         f.parentNode?.replaceChild(s, f)
       })
-      syncFromIframe()
+      setDirty(true)
     }
   }
 
@@ -455,7 +477,7 @@ function LandingDetail({
       .eq('id', landing.id)
       .select()
       .single()
-    if (data) { setLanding(data as Landing); setSavedHtml(currentHtml) }
+    if (data) { setLanding(data as Landing); setHtml(currentHtml); setDirty(false) }
     setSaving(false)
   }
 
@@ -468,7 +490,7 @@ function LandingDetail({
       .eq('id', landing.id)
       .select()
       .single()
-    if (data) { setLanding(data as Landing); setHtml(currentHtml); setSavedHtml(currentHtml) }
+    if (data) { setLanding(data as Landing); setHtml(currentHtml); setDirty(false) }
     setSaving(false)
   }
 
