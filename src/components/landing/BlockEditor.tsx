@@ -132,34 +132,58 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }
 
   async function handleAddBlock() {
-    // Сначала собираем живой DOM чтобы не потерять несохранённые правки
     collectLiveHtml()
-    const res = await fetch(`/api/landings/${landingId}/blocks`, {
+    // Optimistic: сразу добавляем блок с temp-id, в фоне делаем POST
+    const tempId = `temp-${Date.now()}`
+    const tempBlock: LandingBlock = {
+      id: tempId,
+      landing_id: landingId,
+      order_position: blocks.length,
+      block_type: 'custom_html',
+      name: `Блок ${blocks.length + 1}`,
+      html_content: '<div style="padding:40px 20px;text-align:center;font-family:system-ui,sans-serif"><p style="color:#888;font-size:14px">Новый блок. Дважды кликни на текст чтобы редактировать, или нажми ✏ HTML в правом верхнем углу.</p></div>',
+      content: {},
+      desktop_styles: {},
+      mobile_styles: {},
+      layout: {},
+      is_hidden: false,
+    }
+    setBlocks(prev => [...applyLiveToBlocks(prev), tempBlock])
+    liveHtmlRef.current = {}
+    markDirty(tempId)
+    // Фоновый POST — заменяем temp-id на реальный после ответа
+    fetch(`/api/landings/${landingId}/blocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        block_type: 'custom_html',
-        name: `Блок ${blocks.length + 1}`,
-        html_content: '<div style="padding:40px 20px;text-align:center;font-family:system-ui,sans-serif"><p style="color:#888;font-size:14px">Новый блок. Кликни на текст чтобы редактировать, или нажми ✏ HTML справа сверху.</p></div>',
+        block_type: tempBlock.block_type,
+        name: tempBlock.name,
+        html_content: tempBlock.html_content,
       }),
+    }).then(r => r.json()).then(json => {
+      if (json.ok) {
+        setBlocks(prev => prev.map(b => b.id === tempId ? json.block : b))
+        setDirty(prev => {
+          const n = new Set(prev)
+          n.delete(tempId)
+          n.add(json.block.id)
+          return n
+        })
+      }
     })
-    const json = await res.json()
-    if (json.ok) {
-      // Применяем live к текущим + добавляем новый в конец (без loadBlocks, чтобы не терять live правки)
-      setBlocks(prev => [...applyLiveToBlocks(prev), json.block])
-      liveHtmlRef.current = {}
-      markDirty(json.block.id)
-      setEditingHtmlBlockId(json.block.id)
-    }
   }
 
   async function handleDeleteBlock(id: string) {
     if (!confirm('Удалить этот блок?')) return
     collectLiveHtml()
-    await fetch(`/api/landings/${landingId}/blocks/${id}`, { method: 'DELETE' })
-    setBlocks(prev => applyLiveToBlocks(prev.filter(b => b.id !== id)))
+    // Optimistic: сразу убираем из UI, DELETE в фоне
+    setBlocks(prev => applyLiveToBlocks(prev).filter(b => b.id !== id))
     liveHtmlRef.current = {}
     setDirty(prev => { const n = new Set(prev); n.delete(id); return n })
+    // Если это temp-блок — нет смысла слать на сервер, там его и не было
+    if (!id.startsWith('temp-')) {
+      void fetch(`/api/landings/${landingId}/blocks/${id}`, { method: 'DELETE' })
+    }
   }
 
   async function handleMove(id: string, direction: -1 | 1) {
@@ -317,36 +341,37 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }
   .stud-add-block-btn:hover { background: #6A55F8; color: #fff; border-style: solid; }
 
-  /* Popover с размерами для выделенного элемента */
-  .stud-elem-popover {
-    position: absolute; z-index: 10000;
-    background: rgba(17,24,39,0.96); color: #fff; border-radius: 10px;
-    padding: 8px; font-family: system-ui, sans-serif; font-size: 11px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    display: flex; flex-direction: column; gap: 6px; min-width: 200px;
+  /* Overlay с ручками вокруг выделенного элемента — drag/resize */
+  .stud-overlay {
+    position: absolute; pointer-events: none; z-index: 10000;
+    border: 2px solid #6A55F8; box-sizing: border-box;
   }
-  .stud-elem-popover .stud-drag-handle {
-    cursor: move; background: rgba(106,85,248,0.9); padding: 4px 8px;
-    border-radius: 6px; font-weight: 600; text-align: center; user-select: none;
+  .stud-overlay .stud-drag-zone {
+    position: absolute; inset: 0; pointer-events: auto; cursor: move;
+    background: rgba(106,85,248,0.03);
   }
-  .stud-elem-popover .stud-drag-handle:hover { background: rgba(106,85,248,1); }
-  .stud-elem-popover .stud-size-row { display: flex; gap: 4px; align-items: center; }
-  .stud-elem-popover label { opacity: 0.7; min-width: 36px; font-size: 10px; }
-  .stud-elem-popover input {
-    flex: 1; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.15);
-    color: #fff; border-radius: 4px; padding: 3px 6px; font-size: 11px;
-    font-family: inherit; width: 50px;
+  .stud-overlay .stud-handle {
+    position: absolute; pointer-events: auto;
+    width: 12px; height: 12px; background: #6A55F8;
+    border: 2px solid #fff; border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   }
-  .stud-elem-popover input:focus { outline: 1px solid #6A55F8; background: rgba(255,255,255,0.15); }
-  .stud-elem-popover .stud-popover-close {
-    position: absolute; top: -8px; right: -8px; width: 20px; height: 20px;
-    background: #6A55F8; color: #fff; border: none; border-radius: 50%;
-    cursor: pointer; font-size: 12px; line-height: 20px; padding: 0;
+  .stud-overlay .stud-h-nw { top: -7px; left: -7px; cursor: nw-resize; }
+  .stud-overlay .stud-h-n  { top: -7px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+  .stud-overlay .stud-h-ne { top: -7px; right: -7px; cursor: ne-resize; }
+  .stud-overlay .stud-h-e  { top: 50%; right: -7px; transform: translateY(-50%); cursor: e-resize; }
+  .stud-overlay .stud-h-se { bottom: -7px; right: -7px; cursor: se-resize; }
+  .stud-overlay .stud-h-s  { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+  .stud-overlay .stud-h-sw { bottom: -7px; left: -7px; cursor: sw-resize; }
+  .stud-overlay .stud-h-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; }
+  .stud-overlay .stud-hint {
+    position: absolute; top: -28px; left: 0;
+    background: #6A55F8; color: #fff; font-size: 10px; font-weight: 600;
+    padding: 3px 8px; border-radius: 4px; font-family: system-ui, sans-serif;
+    pointer-events: none; white-space: nowrap;
   }
-  /* Resize handles — 8 угловых/стороновых точек вокруг выделенного элемента */
-  .stud-elem-selected {
-    outline: 2px solid #6A55F8 !important; outline-offset: 2px !important;
-  }
+  body.stud-dragging { user-select: none !important; }
+  body.stud-dragging * { cursor: inherit !important; }
 </style>
 <script data-stud-editor-inject>
   (function() {
@@ -376,25 +401,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       section.appendChild(toolbar);
     });
 
-    // Делаем текст контентом редактируемым (как раньше)
-    document.querySelectorAll('[data-block-id] .block-inner').forEach(function(inner) {
-      var BLOCK_SEL = 'h1, h2, h3, h4, h5, h6, p, li, td, th, label, blockquote';
-      inner.querySelectorAll(BLOCK_SEL).forEach(function(el) {
-        if (el.textContent.trim()) el.setAttribute('contenteditable', 'true');
-      });
-      var INLINE_SEL = 'a, button, span, b, i, em, strong';
-      inner.querySelectorAll(INLINE_SEL).forEach(function(el) {
-        if (!el.textContent.trim()) return;
-        if (el.closest('[contenteditable="true"]')) return;
-        el.setAttribute('contenteditable', 'true');
-      });
-      inner.querySelectorAll('div').forEach(function(el) {
-        if (el.children.length > 0) return;
-        if (!el.textContent.trim()) return;
-        if (el.closest('[contenteditable="true"]')) return;
-        el.setAttribute('contenteditable', 'true');
-      });
-    });
+    // Автоматического contenteditable НЕ делаем.
+    // Элементы становятся редактируемыми только после double-click.
+    // Это чтобы одиночный клик мог выделить элемент для drag/resize, не входя сразу
+    // в режим текстового редактирования (как в Tilda).
 
     // Кнопка «+ Добавить блок» в конце body
     var addBtn = document.createElement('button');
@@ -451,117 +461,177 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     setTimeout(reportHeight, 3000);
 
     // ───────────────────────────────────────────────────────────────
-    // Popover с размерами / drag-handle для выделенного элемента
-    // При клике на элемент (h1, p, img, button...) появляется popover
-    // рядом с ним — можно менять ширину/высоту/отступы/шрифт в числах
-    // и перетаскивать элемент через handle «✥ Двигать»
+    // Tilda-like direct manipulation для выделенного элемента:
+    //  - Одиночный клик → выделить (рамка + 8 resize-handles)
+    //  - Drag по центру → перемещение через transform: translate()
+    //  - Drag за уголок/сторону → resize (width/height)
+    //  - Double-click → включить contenteditable, можно печатать
+    //  - Esc / клик вне → снять выделение (и выйти из edit-mode)
     // ───────────────────────────────────────────────────────────────
-    var popover = null;
+    var overlay = null;
     var selectedEl = null;
-    var EDITABLE_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','IMG','DIV','LI'];
+    var editingEl = null;  // элемент который сейчас в contenteditable
+    var EDITABLE_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','IMG','DIV','LI','BLOCKQUOTE','FIGCAPTION','LABEL'];
 
-    function removePopover() {
-      if (popover && popover.parentNode) popover.parentNode.removeChild(popover);
-      popover = null;
-      if (selectedEl) selectedEl.classList.remove('stud-elem-selected');
+    function removeOverlay() {
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      overlay = null;
       selectedEl = null;
     }
 
-    function buildPopover(target) {
-      removePopover();
+    function exitEditMode() {
+      if (editingEl) {
+        editingEl.removeAttribute('contenteditable');
+        editingEl = null;
+      }
+    }
+
+    function buildOverlay(target) {
+      removeOverlay();
+      exitEditMode();
       selectedEl = target;
-      target.classList.add('stud-elem-selected');
 
-      var cs = window.getComputedStyle(target);
-      popover = document.createElement('div');
-      popover.className = 'stud-elem-popover';
-      popover.setAttribute('data-stud-editor-inject', 'true');
-      popover.setAttribute('contenteditable', 'false');
-      popover.innerHTML = [
-        '<div class="stud-drag-handle">✥ Перетащить</div>',
-        '<div class="stud-size-row"><label>Ширина</label><input data-prop="width" placeholder="auto" value="' + (target.style.width || '') + '"></div>',
-        '<div class="stud-size-row"><label>Высота</label><input data-prop="height" placeholder="auto" value="' + (target.style.height || '') + '"></div>',
-        '<div class="stud-size-row"><label>Шрифт</label><input data-prop="fontSize" placeholder="' + cs.fontSize + '" value="' + (target.style.fontSize || '') + '"></div>',
-        '<div class="stud-size-row"><label>Отступы</label><input data-prop="padding" placeholder="' + cs.padding + '" value="' + (target.style.padding || '') + '"></div>',
-        '<div class="stud-size-row"><label>Поля</label><input data-prop="margin" placeholder="' + cs.margin + '" value="' + (target.style.margin || '') + '"></div>',
-        '<button class="stud-popover-close" data-act="close">✕</button>',
+      overlay = document.createElement('div');
+      overlay.className = 'stud-overlay';
+      overlay.setAttribute('data-stud-editor-inject', 'true');
+      overlay.innerHTML = [
+        '<div class="stud-hint">Тащи — двигает. За уголок — меняет размер. 2× клик — редактировать текст</div>',
+        '<div class="stud-drag-zone" data-handle="move"></div>',
+        '<div class="stud-handle stud-h-nw" data-handle="nw"></div>',
+        '<div class="stud-handle stud-h-n"  data-handle="n"></div>',
+        '<div class="stud-handle stud-h-ne" data-handle="ne"></div>',
+        '<div class="stud-handle stud-h-e"  data-handle="e"></div>',
+        '<div class="stud-handle stud-h-se" data-handle="se"></div>',
+        '<div class="stud-handle stud-h-s"  data-handle="s"></div>',
+        '<div class="stud-handle stud-h-sw" data-handle="sw"></div>',
+        '<div class="stud-handle stud-h-w"  data-handle="w"></div>',
       ].join('');
+      document.body.appendChild(overlay);
+      positionOverlay();
+      attachDragHandlers();
+    }
 
-      document.body.appendChild(popover);
-      positionPopover();
+    function positionOverlay() {
+      if (!overlay || !selectedEl) return;
+      var r = selectedEl.getBoundingClientRect();
+      overlay.style.left = (window.scrollX + r.left) + 'px';
+      overlay.style.top = (window.scrollY + r.top) + 'px';
+      overlay.style.width = r.width + 'px';
+      overlay.style.height = r.height + 'px';
+    }
 
-      // Drag handle — перетаскиваем через translate (элемент остаётся в потоке, но визуально сдвигается)
-      var handle = popover.querySelector('.stud-drag-handle');
-      var dragState = null;
-      handle.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        var curTransform = target.style.transform || '';
-        var m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(curTransform);
-        dragState = {
-          startX: e.clientX, startY: e.clientY,
-          origTx: m ? parseFloat(m[1]) : 0,
-          origTy: m ? parseFloat(m[2]) : 0,
-        };
-      });
-      document.addEventListener('mousemove', function(e) {
-        if (!dragState) return;
-        var dx = e.clientX - dragState.startX;
-        var dy = e.clientY - dragState.startY;
-        target.style.transform = 'translate(' + (dragState.origTx + dx) + 'px, ' + (dragState.origTy + dy) + 'px)';
-        positionPopover();
-      });
-      document.addEventListener('mouseup', function() {
-        if (dragState) {
-          dragState = null;
-          // Отметить блок как dirty
-          var section = target.closest('[data-block-id]');
-          if (section) {
-            parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
-          }
-        }
-      });
-
-      // Inputs для размеров — применяют inline style
-      popover.querySelectorAll('input[data-prop]').forEach(function(inp) {
-        inp.addEventListener('input', function() {
-          var prop = inp.getAttribute('data-prop');
-          target.style[prop] = inp.value;
-          var section = target.closest('[data-block-id]');
-          if (section) {
-            parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
-          }
+    function attachDragHandlers() {
+      overlay.querySelectorAll('[data-handle]').forEach(function(h) {
+        h.addEventListener('mousedown', function(e) {
+          var mode = h.getAttribute('data-handle');
+          startDrag(mode, e);
         });
       });
-
-      popover.querySelector('[data-act="close"]').addEventListener('click', removePopover);
     }
 
-    function positionPopover() {
-      if (!popover || !selectedEl) return;
+    function startDrag(mode, e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedEl) return;
+      var startX = e.clientX, startY = e.clientY;
       var r = selectedEl.getBoundingClientRect();
-      popover.style.left = (window.scrollX + r.right + 12) + 'px';
-      popover.style.top = (window.scrollY + r.top) + 'px';
+      var origW = r.width, origH = r.height;
+      // Парсим текущий translate если был
+      var curTx = 0, curTy = 0;
+      var m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(selectedEl.style.transform || '');
+      if (m) { curTx = parseFloat(m[1]); curTy = parseFloat(m[2]); }
+
+      document.body.classList.add('stud-dragging');
+
+      function onMove(ev) {
+        var dx = ev.clientX - startX;
+        var dy = ev.clientY - startY;
+        if (mode === 'move') {
+          // Сдвиг через transform — элемент остаётся в потоке, не ломает layout соседей
+          selectedEl.style.transform = 'translate(' + (curTx + dx) + 'px, ' + (curTy + dy) + 'px)';
+        } else {
+          // Resize — меняем width/height. Для shift с запада/севера — ещё смещаем translate чтобы
+          // элемент «тянулся» от противоположной стороны (визуально естественно)
+          var w = origW, h = origH, tx = curTx, ty = curTy;
+          if (mode.indexOf('e') !== -1) w = origW + dx;
+          if (mode.indexOf('w') !== -1) { w = origW - dx; tx = curTx + dx; }
+          if (mode.indexOf('s') !== -1) h = origH + dy;
+          if (mode.indexOf('n') !== -1) { h = origH - dy; ty = curTy + dy; }
+          if (w < 20) w = 20;
+          if (h < 20) h = 20;
+          selectedEl.style.width = w + 'px';
+          selectedEl.style.height = h + 'px';
+          if (mode.indexOf('w') !== -1 || mode.indexOf('n') !== -1) {
+            selectedEl.style.transform = 'translate(' + tx + 'px, ' + ty + 'px)';
+          }
+        }
+        positionOverlay();
+      }
+      function onUp() {
+        document.body.classList.remove('stud-dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        // Блок dirty
+        var section = selectedEl.closest('[data-block-id]');
+        if (section) {
+          parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
+        }
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     }
 
+    // Одиночный клик на элемент → выделить
     document.addEventListener('click', function(e) {
-      // Клик по popover — не трогаем
-      if (e.target.closest && e.target.closest('.stud-elem-popover')) return;
-      // Клик по toolbar блока или add-block — не показываем popover
-      if (e.target.closest && (e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn'))) return;
-      // Ищем подходящий редактируемый элемент
+      // Клик на overlay, toolbar блока или add-button — не трогаем выделение
+      if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn'))) return;
+      // Если кликнули внутри элемента, который сейчас в edit-mode — не перехватываем (нужно редактировать текст)
+      if (editingEl && editingEl.contains(e.target)) return;
       var el = e.target;
       while (el && el !== document.body) {
         if (el.tagName && EDITABLE_TAGS.indexOf(el.tagName) !== -1) break;
         el = el.parentElement;
       }
-      if (!el || el === document.body) { removePopover(); return; }
-      // Элемент должен быть внутри блока
-      if (!el.closest('[data-block-id]')) { removePopover(); return; }
-      buildPopover(el);
+      if (!el || el === document.body) { removeOverlay(); exitEditMode(); return; }
+      if (!el.closest('[data-block-id]')) { removeOverlay(); exitEditMode(); return; }
+      buildOverlay(el);
     });
 
-    window.addEventListener('scroll', positionPopover, true);
-    window.addEventListener('resize', positionPopover);
+    // Double-click → войти в режим редактирования текста
+    document.addEventListener('dblclick', function(e) {
+      var el = e.target;
+      while (el && el !== document.body) {
+        if (el.tagName && EDITABLE_TAGS.indexOf(el.tagName) !== -1 && el.closest('[data-block-id]')) break;
+        el = el.parentElement;
+      }
+      if (!el || el === document.body) return;
+      if (el.tagName === 'IMG') return;  // картинку не редактируем текстом
+      removeOverlay();
+      exitEditMode();
+      editingEl = el;
+      el.setAttribute('contenteditable', 'true');
+      el.focus();
+      // Выделить весь текст чтобы удобно переписать
+      var sel = window.getSelection();
+      if (sel) {
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+
+    // Esc → выйти из edit / снять выделение
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        exitEditMode();
+        removeOverlay();
+      }
+    });
+
+    // При скролле / ресайзе окна — обновляем позицию overlay
+    window.addEventListener('scroll', positionOverlay, true);
+    window.addEventListener('resize', positionOverlay);
   })();
 </script>`
 
