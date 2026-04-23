@@ -12,6 +12,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import type { NextRequest } from 'next/server'
+import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -341,17 +342,14 @@ export async function GET(
 
   const { data: landing } = await supabase
     .from('landings')
-    .select('id, html_content, status, name, meta_title, meta_description, is_mini_app, project_id')
+    .select('id, html_content, status, name, meta_title, meta_description, is_mini_app, project_id, is_blocks_based')
     .eq('slug', slug)
     .eq('status', 'published')
     .single()
 
-  if (!landing || !landing.html_content) {
+  if (!landing) {
     return notFoundResponse()
   }
-
-  const htmlContent = await replaceVideoShortcodes(landing.html_content, supabase)
-  const { headInner, bodyInner, bodyAttrs } = extractHtmlParts(htmlContent)
 
   const cookieStore = await cookies()
   const visitorToken = cookieStore.get('stud_vid')?.value ?? ''
@@ -368,6 +366,42 @@ export async function GET(
     projectId: landing.project_id,
   })
 
+  const extraHead = isMiniApp ? `<script src="https://telegram.org/js/telegram-web-app.js" async></script>` : ''
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Ветвление: блочный лендинг vs legacy монолитный HTML
+  // ────────────────────────────────────────────────────────────────────────
+  if (landing.is_blocks_based) {
+    const { data: blocks } = await supabase
+      .from('landing_blocks')
+      .select('*')
+      .eq('landing_id', landing.id)
+      .eq('is_hidden', false)
+      .order('order_position', { ascending: true })
+
+    const blockList = (blocks ?? []) as LandingBlock[]
+    let doc = assembleLandingHtml(blockList, {
+      title,
+      metaDescription: description,
+      extraHead,
+      extraBodyEnd: trackingScript,
+    })
+    // Видео-шорткоды внутри любого блока — заменяем на iframe
+    doc = await replaceVideoShortcodes(doc, supabase)
+    return new Response(doc, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    })
+  }
+
+  // Legacy-режим: монолитный html_content
+  if (!landing.html_content) {
+    return notFoundResponse()
+  }
+
+  const htmlContent = await replaceVideoShortcodes(landing.html_content, supabase)
+  const { headInner, bodyInner, bodyAttrs } = extractHtmlParts(htmlContent)
+
   const doc = `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -375,7 +409,7 @@ export async function GET(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(title)}</title>
 ${description ? `<meta name="description" content="${escapeHtml(description)}">` : ''}
-${isMiniApp ? `<script src="https://telegram.org/js/telegram-web-app.js" async></script>` : ''}
+${extraHead}
 ${headInner}
 </head>
 <body${bodyAttrs}>
