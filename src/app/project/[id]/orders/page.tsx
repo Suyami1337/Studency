@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 
 type Order = {
   id: string
@@ -192,7 +193,7 @@ function OrderDetail({ order, onBack, onUpdated }: { order: Order; onBack: () =>
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-gray-900">Платежи</h3>
           <button
-            onClick={() => setShowPayForm(v => !v)}
+            onClick={() => setShowPayForm(true)}
             className="text-sm font-medium px-3 py-1.5 rounded-lg text-white"
             style={{ backgroundColor: '#6A55F8' }}
           >
@@ -200,39 +201,46 @@ function OrderDetail({ order, onBack, onUpdated }: { order: Order; onBack: () =>
           </button>
         </div>
 
-        {showPayForm && (
-          <div className="mb-4 p-4 rounded-lg bg-[#F0EDFF] space-y-3">
-            <div className="flex gap-3">
+        <Modal
+          isOpen={showPayForm}
+          onClose={() => { setShowPayForm(false); setNewPayAmount(''); setNewPayNote('') }}
+          title="Новый платёж"
+          maxWidth="md"
+          footer={
+            <>
+              <button onClick={() => { setShowPayForm(false); setNewPayAmount(''); setNewPayNote('') }}
+                className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+              <button onClick={addPayment} disabled={addingPay || !newPayAmount}
+                className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                {addingPay ? 'Сохраняю...' : 'Сохранить платёж'}
+              </button>
+            </>
+          }
+        >
+          <div className="p-5 space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Сумма, ₽</label>
               <input
                 type="number"
-                placeholder="Сумма, ₽"
+                placeholder="0"
                 value={newPayAmount}
                 onChange={e => setNewPayAmount(e.target.value)}
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
+                autoFocus
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
               />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Примечание</label>
               <input
                 type="text"
-                placeholder="Примечание"
+                placeholder="Например, «оплата по QR»"
                 value={newPayNote}
                 onChange={e => setNewPayNote(e.target.value)}
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
               />
             </div>
-            <div className="flex gap-2">
-              <button
-                onClick={addPayment}
-                disabled={addingPay || !newPayAmount}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-                style={{ backgroundColor: '#6A55F8' }}
-              >
-                {addingPay ? 'Сохраняю...' : 'Сохранить'}
-              </button>
-              <button onClick={() => setShowPayForm(false)} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">
-                Отмена
-              </button>
-            </div>
           </div>
-        )}
+        </Modal>
 
         {payments.length === 0 ? (
           <p className="text-sm text-gray-400">Платежей пока нет</p>

@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 
 type Course = { id: string; project_id: string; name: string; description: string | null; is_published: boolean; product_id: string | null; created_at: string; module_count?: number }
 type Module = { id: string; course_id: string; name: string; order_position: number }
@@ -205,19 +206,37 @@ function ModuleDetail({ mod, courseId, onBack }: { mod: Module; courseId: string
             </div>
           ))}
 
-          {adding ? (
-            <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 flex gap-2">
-              <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addLesson()}
-                placeholder="Название урока" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
-              <button onClick={addLesson} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
-              <button onClick={() => setAdding(false)} className="text-sm text-gray-500">Отмена</button>
+          <button onClick={() => setAdding(true)}
+            className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
+            + Добавить урок
+          </button>
+
+          <Modal
+            isOpen={adding}
+            onClose={() => { setAdding(false); setNewName('') }}
+            title="Новый урок"
+            subtitle="Содержимое, видео и домашку настроишь в редакторе урока"
+            maxWidth="md"
+            footer={
+              <>
+                <button onClick={() => { setAdding(false); setNewName('') }}
+                  className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+                <button onClick={addLesson} disabled={!newName.trim()}
+                  className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                  Добавить урок
+                </button>
+              </>
+            }
+          >
+            <div className="p-5">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Название урока</label>
+              <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) addLesson() }}
+                placeholder="Например, «Как писать промпты»"
+                autoFocus
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
             </div>
-          ) : (
-            <button onClick={() => setAdding(true)}
-              className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
-              + Добавить урок
-            </button>
-          )}
+          </Modal>
         </div>
       )}
     </div>
@@ -453,19 +472,37 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
                 </div>
               ))}
 
-              {addingModule ? (
-                <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 flex gap-2">
-                  <input type="text" value={newModuleName} onChange={e => setNewModuleName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addModule()}
-                    placeholder="Название модуля" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
-                  <button onClick={addModule} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Добавить</button>
-                  <button onClick={() => setAddingModule(false)} className="text-sm text-gray-500">Отмена</button>
+              <button onClick={() => setAddingModule(true)}
+                className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
+                + Добавить модуль
+              </button>
+
+              <Modal
+                isOpen={addingModule}
+                onClose={() => { setAddingModule(false); setNewModuleName('') }}
+                title="Новый модуль"
+                subtitle="Уроки добавишь после создания модуля"
+                maxWidth="md"
+                footer={
+                  <>
+                    <button onClick={() => { setAddingModule(false); setNewModuleName('') }}
+                      className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+                    <button onClick={addModule} disabled={!newModuleName.trim()}
+                      className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                      Добавить модуль
+                    </button>
+                  </>
+                }
+              >
+                <div className="p-5">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Название модуля</label>
+                  <input type="text" value={newModuleName} onChange={e => setNewModuleName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && newModuleName.trim()) addModule() }}
+                    placeholder="Например, «Введение в AI»"
+                    autoFocus
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
                 </div>
-              ) : (
-                <button onClick={() => setAddingModule(true)}
-                  className="w-full py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
-                  + Добавить модуль
-                </button>
-              )}
+              </Modal>
             </>
           )}
         </div>
@@ -488,25 +525,40 @@ function CourseDetail({ course, onBack, onDeleted }: { course: Course; onBack: (
               {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
 
-            {!linkedProductId && !creatingProduct && (
+            {!linkedProductId && (
               <button onClick={() => setCreatingProduct(true)} className="text-xs text-[#6A55F8] font-medium hover:underline">
                 + Создать новый продукт для этого курса
               </button>
             )}
-
-            {creatingProduct && (
-              <div className="bg-[#F8F7FF] rounded-lg p-4 space-y-3 border border-[#6A55F8]/10">
-                <p className="text-xs font-medium text-[#6A55F8]">Новый продукт</p>
-                <input type="text" value={newProductName} onChange={e => setNewProductName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createProductForCourse()}
-                  placeholder="Название продукта" className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                <p className="text-[10px] text-gray-400">Будут созданы 2 тарифа по умолчанию (Базовый и Стандарт), которые можно изменить</p>
-                <div className="flex gap-2">
-                  <button onClick={createProductForCourse} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать</button>
-                  <button onClick={() => setCreatingProduct(false)} className="text-sm text-gray-500">Отмена</button>
-                </div>
-              </div>
-            )}
           </div>
+
+          <Modal
+            isOpen={creatingProduct}
+            onClose={() => { setCreatingProduct(false); setNewProductName('') }}
+            title="Новый продукт"
+            subtitle="Будут созданы 2 тарифа по умолчанию — сможешь их изменить"
+            maxWidth="md"
+            footer={
+              <>
+                <button onClick={() => { setCreatingProduct(false); setNewProductName('') }}
+                  className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+                <button onClick={createProductForCourse} disabled={!newProductName.trim()}
+                  className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                  Создать продукт
+                </button>
+              </>
+            }
+          >
+            <div className="p-5">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Название продукта</label>
+              <input type="text" value={newProductName} onChange={e => setNewProductName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && newProductName.trim()) createProductForCourse() }}
+                placeholder="Обычно — название курса"
+                autoFocus
+                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
+              <p className="text-[10px] text-gray-400 mt-2">Будут созданы тарифы «Базовый» и «Стандарт» — откроются для редактирования после создания</p>
+            </div>
+          </Modal>
 
           {linkedProductId && tariffs.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-100 p-5">
@@ -683,14 +735,32 @@ export default function LearningPage() {
         <button onClick={() => setAdding(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">+ Создать курс</button>
       </div>
 
-      {adding && (
-        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-4 shadow-sm flex gap-2">
-          <input type="text" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createCourse()}
-            placeholder="Название курса" autoFocus className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8]" />
-          <button onClick={createCourse} className="bg-[#6A55F8] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать</button>
-          <button onClick={() => setAdding(false)} className="text-sm text-gray-500">Отмена</button>
+      <Modal
+        isOpen={adding}
+        onClose={() => { setAdding(false); setNewName('') }}
+        title="Новый курс"
+        subtitle="Модули и уроки добавишь после создания"
+        maxWidth="md"
+        footer={
+          <>
+            <button onClick={() => { setAdding(false); setNewName('') }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+            <button onClick={createCourse} disabled={!newName.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+              Создать курс
+            </button>
+          </>
+        }
+      >
+        <div className="p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Название курса</label>
+          <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) createCourse() }}
+            placeholder="Например, «AI-маркетинг для новичков»"
+            autoFocus
+            className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
         </div>
-      )}
+      </Modal>
 
       {loading ? (
         <SkeletonList count={3} />

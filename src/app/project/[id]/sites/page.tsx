@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 import { landingTemplates } from '@/lib/landing-templates'
 
 type Landing = {
@@ -1197,15 +1198,35 @@ function LandingsList({
         </button>
       </div>
 
-      {/* Inline create form */}
-      {creating && (
-        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 mb-5 shadow-sm">
-          <p className="text-sm font-semibold text-gray-800 mb-4">Новый лендинг</p>
-
-          {/* Template selector */}
-          <div className="mb-4">
+      {/* Create modal */}
+      <Modal
+        isOpen={creating}
+        onClose={() => { setCreating(false); setNewName(''); setNewSlug(''); setSelectedTemplate(null) }}
+        title="Новый лендинг"
+        subtitle="Выбери шаблон и задай название — дальше сможешь редактировать"
+        maxWidth="2xl"
+        footer={
+          <>
+            <button
+              onClick={() => { setCreating(false); setNewName(''); setNewSlug(''); setSelectedTemplate(null) }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={handleCreate}
+              disabled={saving || !newName.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50"
+            >
+              {saving ? 'Создание...' : 'Создать лендинг'}
+            </button>
+          </>
+        }
+      >
+        <div className="p-5 space-y-4">
+          <div>
             <label className="block text-xs font-medium text-gray-600 mb-2">Шаблон (необязательно)</label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               {landingTemplates.map(t => (
                 <button key={t.id} onClick={() => setSelectedTemplate(selectedTemplate === t.id ? null : t.id)}
                   className={`p-4 rounded-xl border-2 text-left transition-all ${
@@ -1220,81 +1241,38 @@ function LandingsList({
             {!selectedTemplate && <p className="text-xs text-gray-400 mt-2">Или создайте пустой лендинг</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Название</label>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Название</label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => {
+                setNewName(e.target.value)
+                if (!newSlug) setNewSlug(autoSlug(e.target.value))
+              }}
+              placeholder="Лендинг для курса"
+              className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Slug (URL)</label>
+            <div className="flex items-center">
+              <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-xs text-gray-500 whitespace-nowrap">
+                studency.app/
+              </span>
               <input
                 type="text"
-                value={newName}
-                onChange={(e) => {
-                  setNewName(e.target.value)
-                  if (!newSlug) setNewSlug(autoSlug(e.target.value))
-                }}
-                placeholder="Лендинг для курса"
-                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
-                autoFocus
+                value={newSlug}
+                onChange={(e) => setNewSlug(e.target.value)}
+                placeholder="moi-lending"
+                className="flex-1 px-3 py-2.5 border border-gray-200 rounded-r-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Slug (URL)</label>
-              <div className="flex items-center">
-                <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-xs text-gray-500 whitespace-nowrap">
-                  studency.app/
-                </span>
-                <input
-                  type="text"
-                  value={newSlug}
-                  onChange={(e) => setNewSlug(e.target.value)}
-                  placeholder="moi-lending"
-                  className="flex-1 px-3 py-2.5 border border-gray-200 rounded-r-lg text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2 items-center">
-            <button
-              onClick={handleCreate}
-              disabled={saving || !newName.trim()}
-              className="px-5 py-2.5 bg-[#6A55F8] text-white text-sm font-medium rounded-lg hover:bg-[#5040D6] disabled:opacity-50 transition-colors"
-            >
-              {saving ? 'Создание...' : 'Создать'}
-            </button>
-            <button
-              onClick={async () => {
-                const description = prompt('Опиши продукт/услугу для которой делаем лендинг:')
-                if (!description) return
-                try {
-                  const res = await fetch('/api/ai/generate-landing', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ description }),
-                  })
-                  const json = await res.json()
-                  if (json.error) {
-                    alert('Ошибка: ' + json.error)
-                    return
-                  }
-                  const content = json.content
-                  if (!newName.trim()) setNewName(content.title || 'AI лендинг')
-                  if (!newSlug) setNewSlug(autoSlug(content.title || 'ai-landing'))
-                  alert(`AI сгенерировал контент:\n\n${content.title}\n${content.subtitle}\n\n${content.blocks.length} блоков.\nТеперь нажми "Создать" чтобы сохранить.`)
-                } catch (err) {
-                  alert('Ошибка: ' + (err instanceof Error ? err.message : 'unknown'))
-                }
-              }}
-              className="px-4 py-2.5 bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] text-white text-sm font-medium rounded-lg hover:opacity-90 transition-opacity"
-            >
-              ✨ Сгенерировать AI
-            </button>
-            <button
-              onClick={() => { setCreating(false); setNewName(''); setNewSlug('') }}
-              className="px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              Отмена
-            </button>
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* Empty state */}
       {landings.length === 0 && !creating && (

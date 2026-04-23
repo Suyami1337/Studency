@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 
 type Funnel = { id: string; name: string; project_id: string; status: string; created_at: string }
 type FunnelStage = { id: string; funnel_id: string; name: string; stage_type: string; order_position: number; tool_id: string | null; settings: Record<string, unknown> }
@@ -940,36 +941,43 @@ export default function FunnelsScreen() {
         </button>
       </div>
 
-      {/* Create funnel form */}
-      {showCreate && (
-        <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-900">Новая воронка</h3>
+      <Modal
+        isOpen={showCreate}
+        onClose={() => { setShowCreate(false); setNewFunnelName('') }}
+        title="Новая воронка"
+        subtitle="Назови воронку — стадии настроишь внутри"
+        maxWidth="md"
+        footer={
+          <>
+            <button
+              onClick={() => { setShowCreate(false); setNewFunnelName('') }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={createFunnel}
+              disabled={creating || !newFunnelName.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50"
+            >
+              {creating ? 'Создание...' : 'Создать воронку'}
+            </button>
+          </>
+        }
+      >
+        <div className="p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Название</label>
           <input
             autoFocus
             type="text"
             value={newFunnelName}
             onChange={e => setNewFunnelName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && createFunnel()}
-            placeholder="Название воронки, например «Автовебинар»"
-            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]"
+            onKeyDown={e => e.key === 'Enter' && newFunnelName.trim() && createFunnel()}
+            placeholder="Например, «Автовебинар»"
+            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
           />
-          <div className="flex gap-2">
-            <button
-              onClick={createFunnel}
-              disabled={creating || !newFunnelName.trim()}
-              className="bg-[#6A55F8] hover:bg-[#5040D6] disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-            >
-              {creating ? 'Создание...' : 'Создать'}
-            </button>
-            <button
-              onClick={() => { setShowCreate(false); setNewFunnelName('') }}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50"
-            >
-              Отмена
-            </button>
-          </div>
         </div>
-      )}
+      </Modal>
 
       {loading ? (
         <SkeletonList count={3} />

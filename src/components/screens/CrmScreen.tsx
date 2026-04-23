@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 
 const tagColors = ['bg-purple-100 text-purple-700', 'bg-amber-100 text-amber-700', 'bg-blue-100 text-blue-700', 'bg-green-100 text-green-700']
 
@@ -759,64 +760,10 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
                           </div>
                         ))}
 
-                        {/* Visual rule editor — каскадные dropdown */}
-                        {addingRuleForStage === stage.id ? (
-                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
-                            <div>
-                              <label className="text-xs font-medium text-gray-700 mb-1 block">Когда происходит</label>
-                              <select value={newRuleEventType}
-                                onChange={e => { setNewRuleEventType(e.target.value); setNewRuleFilters({}) }}
-                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                                {EVENT_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
-                              </select>
-                            </div>
-
-                            {/* Каскадные фильтры — каждый шаг зависит от предыдущего */}
-                            {getFilterSteps(newRuleEventType, newRuleFilters).map(step => (
-                              <div key={step.key}>
-                                <label className="text-xs font-medium text-gray-700 mb-1 block">{step.label}</label>
-                                {step.options ? (
-                                  <select
-                                    value={newRuleFilters[step.key] ?? ''}
-                                    onChange={e => {
-                                      const val = e.target.value
-                                      setNewRuleFilters(prev => {
-                                        const next = { ...prev, [step.key]: val }
-                                        // Очищаем дочерние фильтры при смене родителя
-                                        const allSteps = getFilterSteps(newRuleEventType, next)
-                                        const thisIdx = allSteps.findIndex(s => s.key === step.key)
-                                        for (let i = thisIdx + 1; i < allSteps.length; i++) {
-                                          delete next[allSteps[i].key]
-                                        }
-                                        return next
-                                      })
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
-                                    <option value="">— Любой —</option>
-                                    {step.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                  </select>
-                                ) : (
-                                  <input type="text" value={newRuleFilters[step.key] ?? ''}
-                                    onChange={e => setNewRuleFilters(prev => ({ ...prev, [step.key]: e.target.value }))}
-                                    placeholder="Введите значение..."
-                                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                                )}
-                              </div>
-                            ))}
-
-                            <div className="flex gap-2 pt-1">
-                              <button onClick={() => addRule(stage.id)}
-                                className="px-4 py-2 bg-[#6A55F8] text-white text-xs rounded-lg font-medium hover:bg-[#5845e0]">Добавить правило</button>
-                              <button onClick={() => { setAddingRuleForStage(null); setNewRuleFilters({}) }}
-                                className="px-4 py-2 text-gray-500 text-xs rounded-lg border border-gray-200 hover:bg-gray-100">Отмена</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <button onClick={() => setAddingRuleForStage(stage.id)}
-                            className="w-full py-2 rounded-lg border border-dashed border-[#6A55F8]/30 text-xs text-[#6A55F8] font-medium hover:bg-[#F8F7FF] transition-colors">
-                            + Добавить правило
-                          </button>
-                        )}
+                        <button onClick={() => setAddingRuleForStage(stage.id)}
+                          className="w-full py-2 rounded-lg border border-dashed border-[#6A55F8]/30 text-xs text-[#6A55F8] font-medium hover:bg-[#F8F7FF] transition-colors">
+                          + Добавить правило
+                        </button>
                       </div>
                     )}
 
@@ -832,27 +779,97 @@ function SettingsTab({ boardId, stages: initialStages, rules: initialRules, onRe
           })}
         </div>
 
-        {/* Add stage */}
-        {addingStage ? (
-          <div className="mt-3 flex gap-2">
+        <button onClick={() => setAddingStage(true)}
+          className="mt-3 w-full py-2.5 rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
+          + Добавить этап
+        </button>
+
+        <Modal
+          isOpen={addingStage}
+          onClose={() => { setAddingStage(false); setNewStageName('') }}
+          title="Новый этап"
+          subtitle="Автоматизацию, правила и цвет настроишь после создания"
+          maxWidth="md"
+          footer={
+            <>
+              <button onClick={() => { setAddingStage(false); setNewStageName('') }}
+                className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+              <button onClick={addStage} disabled={savingStage || !newStageName.trim()}
+                className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                {savingStage ? 'Добавляю...' : 'Добавить этап'}
+              </button>
+            </>
+          }
+        >
+          <div className="p-5">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Название этапа</label>
             <input autoFocus type="text" value={newStageName}
               onChange={e => setNewStageName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addStage()}
-              placeholder="Название этапа"
-              className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-            <button onClick={addStage} disabled={savingStage}
-              className="bg-[#6A55F8] text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-              {savingStage ? '...' : 'Добавить'}
-            </button>
-            <button onClick={() => { setAddingStage(false); setNewStageName('') }}
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-500">Отмена</button>
+              onKeyDown={e => { if (e.key === 'Enter' && newStageName.trim()) addStage() }}
+              placeholder="Например, «Ожидает оплату»"
+              className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
           </div>
-        ) : (
-          <button onClick={() => setAddingStage(true)}
-            className="mt-3 w-full py-2.5 rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-[#6A55F8] hover:text-[#6A55F8] transition-colors">
-            + Добавить этап
-          </button>
-        )}
+        </Modal>
+
+        <Modal
+          isOpen={addingRuleForStage !== null}
+          onClose={() => { setAddingRuleForStage(null); setNewRuleFilters({}) }}
+          title="Новое правило"
+          subtitle="Когда клиент должен автоматически попасть в этап"
+          maxWidth="lg"
+          footer={
+            <>
+              <button onClick={() => { setAddingRuleForStage(null); setNewRuleFilters({}) }}
+                className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+              <button onClick={() => addingRuleForStage && addRule(addingRuleForStage)}
+                className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0]">
+                Добавить правило
+              </button>
+            </>
+          }
+        >
+          <div className="p-5 space-y-3">
+            <div>
+              <label className="text-xs font-medium text-gray-700 mb-1 block">Когда происходит</label>
+              <select value={newRuleEventType}
+                onChange={e => { setNewRuleEventType(e.target.value); setNewRuleFilters({}) }}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                {EVENT_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
+              </select>
+            </div>
+
+            {getFilterSteps(newRuleEventType, newRuleFilters).map(step => (
+              <div key={step.key}>
+                <label className="text-xs font-medium text-gray-700 mb-1 block">{step.label}</label>
+                {step.options ? (
+                  <select
+                    value={newRuleFilters[step.key] ?? ''}
+                    onChange={e => {
+                      const val = e.target.value
+                      setNewRuleFilters(prev => {
+                        const next = { ...prev, [step.key]: val }
+                        const allSteps = getFilterSteps(newRuleEventType, next)
+                        const thisIdx = allSteps.findIndex(s => s.key === step.key)
+                        for (let i = thisIdx + 1; i < allSteps.length; i++) {
+                          delete next[allSteps[i].key]
+                        }
+                        return next
+                      })
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]">
+                    <option value="">— Любой —</option>
+                    {step.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <input type="text" value={newRuleFilters[step.key] ?? ''}
+                    onChange={e => setNewRuleFilters(prev => ({ ...prev, [step.key]: e.target.value }))}
+                    placeholder="Введите значение..."
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
+                )}
+              </div>
+            ))}
+          </div>
+        </Modal>
       </div>
     </div>
   )
@@ -1058,24 +1075,32 @@ export default function CrmScreen() {
         </button>
       </div>
 
-      {showCreate && (
-        <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-3">
-          <h3 className="text-sm font-semibold text-gray-900">Новая CRM-доска</h3>
+      <Modal
+        isOpen={showCreate}
+        onClose={() => { setShowCreate(false); setNewBoardName('') }}
+        title="Новая CRM-доска"
+        subtitle="Назови доску — этапы настроишь внутри"
+        maxWidth="md"
+        footer={
+          <>
+            <button onClick={() => { setShowCreate(false); setNewBoardName('') }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">Отмена</button>
+            <button onClick={createBoard} disabled={creating || !newBoardName.trim()}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+              {creating ? 'Создание...' : 'Создать доску'}
+            </button>
+          </>
+        }
+      >
+        <div className="p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Название</label>
           <input autoFocus type="text" value={newBoardName}
             onChange={e => setNewBoardName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && createBoard()}
-            placeholder="Название доски, например «Продажа курса»"
-            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-          <div className="flex gap-2">
-            <button onClick={createBoard} disabled={creating || !newBoardName.trim()}
-              className="bg-[#6A55F8] hover:bg-[#5040D6] disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium">
-              {creating ? 'Создание...' : 'Создать'}
-            </button>
-            <button onClick={() => { setShowCreate(false); setNewBoardName('') }}
-              className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">Отмена</button>
-          </div>
+            onKeyDown={e => { if (e.key === 'Enter' && newBoardName.trim()) createBoard() }}
+            placeholder="Например, «Продажа курса»"
+            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
         </div>
-      )}
+      </Modal>
 
       {loading ? <SkeletonList count={3} /> : boards.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">

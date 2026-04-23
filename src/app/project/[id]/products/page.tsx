@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 
 type Product = {
   id: string
@@ -906,7 +907,7 @@ export default function ProductsPage() {
           <p className="text-sm text-gray-500 mt-0.5">{products.length} продукт{products.length === 1 ? '' : products.length < 5 ? 'а' : 'ов'}</p>
         </div>
         <button
-          onClick={() => setShowCreate(v => !v)}
+          onClick={() => setShowCreate(true)}
           className="px-4 py-2.5 rounded-xl text-sm font-medium text-white shadow-sm"
           style={{ backgroundColor: '#6A55F8' }}
         >
@@ -914,34 +915,41 @@ export default function ProductsPage() {
         </button>
       </div>
 
-      {/* Create form */}
-      {showCreate && (
-        <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-3">
-          <h3 className="font-semibold text-gray-900">Новый продукт</h3>
-          <input
-            type="text"
-            placeholder="Название продукта"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && createProduct()}
-            autoFocus
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-          />
-          <div className="flex gap-2">
+      <Modal
+        isOpen={showCreate}
+        onClose={() => { setShowCreate(false); setNewName('') }}
+        title="Новый продукт"
+        subtitle="Название — остальное настроишь после создания"
+        maxWidth="md"
+        footer={
+          <>
+            <button onClick={() => { setShowCreate(false); setNewName('') }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+              Отмена
+            </button>
             <button
               onClick={createProduct}
               disabled={creating || !newName.trim()}
-              className="px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-              style={{ backgroundColor: '#6A55F8' }}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50"
             >
-              {creating ? 'Создаю...' : 'Создать'}
+              {creating ? 'Создаю...' : 'Создать продукт'}
             </button>
-            <button onClick={() => { setShowCreate(false); setNewName('') }} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">
-              Отмена
-            </button>
-          </div>
+          </>
+        }
+      >
+        <div className="p-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Название</label>
+          <input
+            type="text"
+            placeholder="Например, «Курс по AI-маркетингу»"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) createProduct() }}
+            autoFocus
+            className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+          />
         </div>
-      )}
+      </Modal>
 
       {/* Products grid */}
       {loading ? (

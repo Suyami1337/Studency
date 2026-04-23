@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { AiAssistantButton, AiAssistantOverlay } from '@/components/ui/AiAssistant'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
 import RichTextEditor from '@/components/RichTextEditor'
 import { MediaUpload } from '@/components/MediaUpload'
 
@@ -1340,12 +1341,31 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
         )}
       </div>
 
-      {creating && (
-        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-4">
+      <Modal
+        isOpen={creating}
+        onClose={() => { setCreating(false); setNewLabel('') }}
+        title="Новый триггер"
+        subtitle="Событие + сообщение сразу + дожимы"
+        maxWidth="2xl"
+        footer={
+          <>
+            <button onClick={() => { setCreating(false); setNewLabel('') }}
+              className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+              Отмена
+            </button>
+            <button onClick={createGroup}
+              className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0]">
+              Создать триггер
+            </button>
+          </>
+        }
+      >
+        <div className="p-5 space-y-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Имя триггера</label>
             <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)}
               placeholder="Например: Недосмотр видео про оффер"
+              autoFocus
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
           </div>
           <div>
@@ -1405,7 +1425,6 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
             </div>
           )}
 
-          {/* Immediate */}
           <label className="flex items-center gap-2 cursor-pointer border border-gray-200 rounded-lg p-3">
             <input type="checkbox" checked={newHasImmediate} onChange={e => setNewHasImmediate(e.target.checked)} />
             <div>
@@ -1414,7 +1433,6 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
             </div>
           </label>
 
-          {/* Followups */}
           {newEventDef.cancelOnEventType ? (
             <div className="border border-gray-200 rounded-lg p-3 space-y-3">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1436,18 +1454,8 @@ function EventTriggersTab({ scenarioId, projectId }: { scenarioId: string; messa
           ) : (
             <div className="text-xs text-gray-400">Для события «{newEventDef.label}» дожимы не предусмотрены — оно финальное</div>
           )}
-
-          <div className="flex gap-2 pt-2">
-            <button onClick={createGroup} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
-              Создать триггер
-            </button>
-            <button onClick={() => { setCreating(false); setNewLabel('') }}
-              className="px-4 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
-              Отмена
-            </button>
-          </div>
         </div>
-      )}
+      </Modal>
 
       {loading ? (
         <div className="text-center py-8 text-sm text-gray-400">Загрузка…</div>
@@ -2964,40 +2972,35 @@ export default function ChatbotsPage() {
         )
       })()}
 
-      {activePageTab === 'scenarios' && creating && (
-        <div className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-sm space-y-3">
-          <h3 className="text-sm font-semibold text-gray-900">Новый сценарий</h3>
-          <input type="text" value={newName} onChange={e => setNewName(e.target.value)} placeholder="Название сценария"
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8]" />
-          {/* Селектор бота скрыт — в контексте конкретного бота всегда привязываем к нему */}
-          <div className="flex gap-2 items-center">
-            <button onClick={createScenario} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">Создать пустой</button>
-            <button
-              onClick={async () => {
-                const targetBotId = urlBotId || newBotId
-                if (!targetBotId) { alert('Сначала выбери бота'); return }
-                const description = prompt('Опиши бота — какой он, для чего, как должен общаться с клиентом:')
-                if (!description) return
-                const res = await fetch('/api/ai/generate-scenario', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ description, telegram_bot_id: targetBotId }),
-                })
-                const json = await res.json()
-                if (json.error) {
-                  alert('Ошибка: ' + json.error + (json.hint ? '\n' + json.hint : ''))
-                  return
-                }
-                setCreating(false)
-                window.location.reload()
-              }}
-              className="bg-gradient-to-r from-[#6A55F8] to-[#8B7BFA] hover:from-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1"
-            >
-              ✨ Сгенерировать AI
-            </button>
-            <button onClick={() => setCreating(false)} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50">Отмена</button>
+      {activePageTab === 'scenarios' && (
+        <Modal
+          isOpen={creating}
+          onClose={() => { setCreating(false); setNewName('') }}
+          title="Новый сценарий"
+          subtitle="Назови сценарий — сообщения добавишь внутри"
+          maxWidth="md"
+          footer={
+            <>
+              <button onClick={() => { setCreating(false); setNewName('') }}
+                className="px-3 py-2 text-sm text-gray-500 rounded-lg hover:bg-gray-100">
+                Отмена
+              </button>
+              <button onClick={createScenario} disabled={!newName.trim()}
+                className="px-4 py-2 text-sm font-semibold bg-[#6A55F8] text-white rounded-lg hover:bg-[#5845e0] disabled:opacity-50">
+                Создать сценарий
+              </button>
+            </>
+          }
+        >
+          <div className="p-5">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Название</label>
+            <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
+              placeholder="Например: Приветственная цепочка"
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) createScenario() }}
+              className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10" />
           </div>
-        </div>
+        </Modal>
       )}
 
       {activePageTab === 'scenarios' && (loading ? (
