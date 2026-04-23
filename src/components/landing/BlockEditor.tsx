@@ -40,7 +40,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [saving, setSaving] = useState(false)
   const [editingHtmlBlockId, setEditingHtmlBlockId] = useState<string | null>(null)
   const [hasSelection, setHasSelection] = useState(false)
+  const [iframeHeight, setIframeHeight] = useState(600)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
+  // НЕ state — чтобы не триггерить ре-рендер iframe. Снимаем отсюда при save.
+  const liveHtmlRef = useRef<Record<string, string>>({})
 
   // ─── Загрузка блоков + lazy-миграция ──────────────────────────────────
   const loadBlocks = useCallback(async () => {
@@ -81,30 +85,55 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }
 
   async function handleSaveAll() {
+    // Сначала собираем живой DOM из iframe в ref (без setState — чтобы iframe не ремонтился)
+    collectLiveHtml()
     if (dirty.size === 0) return
     setSaving(true)
+    const updatedBlocks: LandingBlock[] = []
     for (const id of dirty) {
       const b = blocks.find(x => x.id === id)
       if (!b) continue
+      // Берём живой HTML из ref если есть — это последняя версия после всех inline-правок
+      const liveHtml = liveHtmlRef.current[id]
+      const htmlToSave = liveHtml !== undefined ? liveHtml : b.html_content
+      const next = { ...b, html_content: htmlToSave }
+      updatedBlocks.push(next)
       await fetch(`/api/landings/${landingId}/blocks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          html_content: b.html_content,
-          content: b.content,
-          desktop_styles: b.desktop_styles,
-          mobile_styles: b.mobile_styles,
-          layout: b.layout,
-          is_hidden: b.is_hidden,
+          html_content: next.html_content,
+          content: next.content,
+          desktop_styles: next.desktop_styles,
+          mobile_styles: next.mobile_styles,
+          layout: next.layout,
+          is_hidden: next.is_hidden,
         }),
       })
     }
+    // После успешного сохранения подтягиваем обновлённые html в state (iframe перерендерится,
+    // но это ок — юзер увидит «Сохранено»)
+    setBlocks(prev => prev.map(b => {
+      const updated = updatedBlocks.find(u => u.id === b.id)
+      return updated ? { ...b, html_content: updated.html_content } : b
+    }))
     setDirty(new Set())
+    liveHtmlRef.current = {}
     setSaving(false)
     onSave()
   }
 
+  /** Применить live HTML из iframe ко всем blocks (вызывать перед операциями, которые вызовут setBlocks → пересборку iframe) */
+  function applyLiveToBlocks(arr: LandingBlock[]): LandingBlock[] {
+    return arr.map(b => {
+      const live = liveHtmlRef.current[b.id]
+      return live !== undefined ? { ...b, html_content: live } : b
+    })
+  }
+
   async function handleAddBlock() {
+    // Сначала собираем живой DOM чтобы не потерять несохранённые правки
+    collectLiveHtml()
     const res = await fetch(`/api/landings/${landingId}/blocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -116,16 +145,20 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     })
     const json = await res.json()
     if (json.ok) {
-      await loadBlocks()
-      // Сразу открываем HTML-модалку нового блока для наполнения
+      // Применяем live к текущим + добавляем новый в конец (без loadBlocks, чтобы не терять live правки)
+      setBlocks(prev => [...applyLiveToBlocks(prev), json.block])
+      liveHtmlRef.current = {}
+      markDirty(json.block.id)
       setEditingHtmlBlockId(json.block.id)
     }
   }
 
   async function handleDeleteBlock(id: string) {
     if (!confirm('Удалить этот блок?')) return
+    collectLiveHtml()
     await fetch(`/api/landings/${landingId}/blocks/${id}`, { method: 'DELETE' })
-    setBlocks(prev => prev.filter(b => b.id !== id))
+    setBlocks(prev => applyLiveToBlocks(prev.filter(b => b.id !== id)))
+    liveHtmlRef.current = {}
     setDirty(prev => { const n = new Set(prev); n.delete(id); return n })
   }
 
@@ -134,11 +167,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     if (idx < 0) return
     const newIdx = idx + direction
     if (newIdx < 0 || newIdx >= blocks.length) return
-    const next = [...blocks]
+    collectLiveHtml()
+    const withLive = applyLiveToBlocks(blocks)
+    const next = [...withLive]
     const [moved] = next.splice(idx, 1)
     next.splice(newIdx, 0, moved)
     const reordered = next.map((b, i) => ({ ...b, order_position: i }))
     setBlocks(reordered)
+    liveHtmlRef.current = {}
     await fetch(`/api/landings/${landingId}/blocks?reorder=1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -147,13 +183,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }
 
   // ─── Inline-форматирование в iframe ────────────────────────────────────
+  // ВАЖНО: НЕ вызываем setBlocks после execCommand — иначе React перемонтирует
+  // iframe и слетит выделение. Изменения остаются в живом DOM iframe, мы только
+  // отмечаем блок как dirty. Реальная синхронизация — при save или open HTML-модалки.
   function applyFormat(command: string, value?: string) {
     const doc = iframeRef.current?.contentDocument
     const win = iframeRef.current?.contentWindow
     if (!doc || !win) return
     win.focus()
     try { doc.execCommand(command, false, value) } catch { /* ignore */ }
-    syncFromIframe()
+    markActiveBlockDirty()
   }
 
   function applyFontSize(px: number) {
@@ -168,30 +207,37 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     try {
       win.focus()
       range.surroundContents(span)
-      syncFromIframe()
+      markActiveBlockDirty()
     } catch { /* ignore */ }
   }
 
-  /** Извлекает HTML каждого блока из живого DOM iframe в state */
-  function syncFromIframe() {
+  /** Отмечает блок где сейчас каретка как dirty (без чтения DOM — чтоб не ремонтить iframe) */
+  function markActiveBlockDirty() {
     const doc = iframeRef.current?.contentDocument
     if (!doc) return
-    // У каждого блока в iframe есть data-block-id=<id> + внутри .block-inner
+    const sel = doc.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const anchor = sel.anchorNode
+    if (!anchor) return
+    const parent = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement
+    const section = parent?.closest('[data-block-id]')
+    const bId = section?.getAttribute('data-block-id')
+    if (bId) markDirty(bId)
+  }
+
+  /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
+  function collectLiveHtml() {
+    const doc = iframeRef.current?.contentDocument
+    if (!doc) return
     doc.querySelectorAll('[data-block-id]').forEach(sectionEl => {
       const bId = sectionEl.getAttribute('data-block-id')
       if (!bId) return
       const inner = sectionEl.querySelector(':scope > .block-inner') as HTMLElement | null
       if (!inner) return
-      // Клон — убираем служебные маркеры редактора перед извлечением
       const clone = inner.cloneNode(true) as HTMLElement
       clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'))
       clone.querySelectorAll('[data-stud-editor-inject]').forEach(el => el.remove())
-      const newHtml = clone.innerHTML
-      const existing = blocks.find(x => x.id === bId)
-      if (existing && existing.html_content !== newHtml) {
-        setBlocks(prev => prev.map(b => b.id === bId ? { ...b, html_content: newHtml } : b))
-        markDirty(bId)
-      }
+      liveHtmlRef.current[bId] = clone.innerHTML
     })
   }
 
@@ -204,16 +250,28 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (!data || typeof data !== 'object') return
       if (data.type === 'stud-selection') {
         setHasSelection(Boolean(data.has))
-      } else if (data.type === 'stud-input') {
-        syncFromIframe()
+      } else if (data.type === 'stud-input' && typeof data.blockId === 'string') {
+        // Пометить блок как dirty без чтения DOM (иначе ремонт iframe → теряется выделение)
+        markDirty(data.blockId)
       } else if (data.type === 'stud-edit-html' && typeof data.blockId === 'string') {
+        // Перед открытием модалки собираем живой HTML, чтобы textarea показала актуальное
+        collectLiveHtml()
+        // Подмешаем live html в blocks чтобы HtmlBlockModal получил свежее содержимое
+        const live = liveHtmlRef.current[data.blockId]
+        if (live !== undefined) {
+          setBlocks(prev => prev.map(b => b.id === data.blockId ? { ...b, html_content: live } : b))
+        }
         setEditingHtmlBlockId(data.blockId)
       } else if (data.type === 'stud-move-block' && typeof data.blockId === 'string') {
+        collectLiveHtml()  // сохранить живые правки перед перестановкой
         void handleMove(data.blockId, data.direction)
       } else if (data.type === 'stud-delete-block' && typeof data.blockId === 'string') {
         void handleDeleteBlock(data.blockId)
       } else if (data.type === 'stud-add-block') {
+        collectLiveHtml()
         void handleAddBlock()
+      } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
+        setIframeHeight(Math.max(400, data.height))
       }
     }
     window.addEventListener('message', onMessage)
@@ -316,10 +374,36 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       var has = !!(sel && sel.rangeCount > 0 && !sel.isCollapsed);
       parent.postMessage({ type: 'stud-selection', has: has }, '*');
     });
-    // Input → parent
-    document.addEventListener('input', function() {
-      parent.postMessage({ type: 'stud-input' }, '*');
+    // Input → parent (с blockId — чтобы отметить именно его как dirty)
+    document.addEventListener('input', function(e) {
+      var target = e.target;
+      var section = target && target.closest ? target.closest('[data-block-id]') : null;
+      var blockId = section ? section.getAttribute('data-block-id') : null;
+      parent.postMessage({ type: 'stud-input', blockId: blockId }, '*');
     });
+
+    // Авто-высота iframe: отправляем scrollHeight родителю при загрузке и
+    // каждом изменении размера контента. Родитель растягивает iframe под него —
+    // не будет внутреннего скролла, страница листается целиком.
+    function reportHeight() {
+      var h = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+      parent.postMessage({ type: 'stud-resize', height: h }, '*');
+    }
+    reportHeight();
+    window.addEventListener('load', reportHeight);
+    if (typeof ResizeObserver !== 'undefined') {
+      try {
+        var ro = new ResizeObserver(reportHeight);
+        ro.observe(document.body);
+      } catch (e) { /* ignore */ }
+    }
+    // Периодически — на случай если ResizeObserver не ловит (например images.onload)
+    setTimeout(reportHeight, 300);
+    setTimeout(reportHeight, 1000);
+    setTimeout(reportHeight, 3000);
   })();
 </script>`
 
@@ -365,10 +449,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           <span className="text-xs text-gray-400">
             {blocks.length} {blocks.length === 1 ? 'блок' : blocks.length < 5 ? 'блока' : 'блоков'}
           </span>
-          <button onClick={handleAddBlock}
-            className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">
-            + Добавить блок
-          </button>
           <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
             className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 ${
               dirty.size > 0
@@ -381,19 +461,29 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       </div>
 
       {/* ── Превью ── */}
-      <div className={`bg-gray-50 rounded-xl border border-gray-100 p-4 ${viewport === 'mobile' ? 'flex justify-center' : ''}`}>
-        <div className={`bg-white overflow-hidden transition-all ${
-          viewport === 'mobile' ? 'w-[390px] rounded-[2rem] border-[8px] border-gray-800' : 'w-full rounded-lg border border-gray-100'
-        }`}>
-          <iframe
-            ref={iframeRef}
-            srcDoc={previewDoc}
-            className="w-full border-0"
-            style={{ height: viewport === 'mobile' ? '720px' : 'calc(100vh - 260px)', minHeight: '500px' }}
-            sandbox="allow-scripts allow-same-origin"
-          />
+      {viewport === 'mobile' ? (
+        /* В mobile-режиме эмулируем телефон — рамка + фиксированная ширина */
+        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex justify-center">
+          <div className="bg-white rounded-[2rem] border-[8px] border-gray-800 overflow-hidden">
+            <iframe
+              ref={iframeRef}
+              srcDoc={previewDoc}
+              className="border-0 w-[390px]"
+              style={{ height: Math.min(iframeHeight, 720) }}
+              sandbox="allow-scripts allow-same-origin"
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Desktop — iframe растягивается под высоту контента, скроллится сама страница */
+        <iframe
+          ref={iframeRef}
+          srcDoc={previewDoc}
+          className="w-full border-0 rounded-lg bg-white shadow-sm"
+          style={{ height: iframeHeight }}
+          sandbox="allow-scripts allow-same-origin"
+        />
+      )}
 
       {/* ── HTML-редактор блока (modal) ── */}
       {activeHtmlBlock && (
