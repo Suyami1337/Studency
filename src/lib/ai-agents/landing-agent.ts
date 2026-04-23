@@ -86,9 +86,10 @@ ${EXAMPLES_BLOCK}
 
 ### Как писать \`find\` для apply_html_patch
 
-- **Копируй строку точно как в HTML** — любой символ важен.
-- Инструмент делает **fuzzy-поиск по пробелам/переносам строк**, так что ты можешь не заморачиваться с точным количеством пробелов/табов/переносов — они сопоставляются как \`\\s+\`. Пиши естественно.
-- Главное требование: **подстрока уникальна в HTML**. Если тот же тег встречается несколько раз — передавай больше контекста (родительский div, уникальный класс/id рядом, уникальный текст).
+- **Копируй строку ТОЧНО** из блока между маркерами \`===HTML_START===\` / \`===HTML_END===\` в ответе \`read_landing_state\`. То что между маркерами — это сырой HTML, не JSON.
+- ❌ НЕ пиши \`\\"\` вместо \`"\` и \`\\n\` вместо перевода строки. В \`find\` должны быть обычные кавычки \`"\` и обычные переносы строк.
+- Инструмент делает **fuzzy-поиск по whitespace** (любой пробел/таб/перенос сопоставляется как \`\\s+\`), поэтому можешь не заморачиваться с точным количеством пробелов.
+- Главное: **подстрока уникальна**. Если тот же тег встречается несколько раз — передавай больше контекста (родительский div, уникальный класс/id рядом, уникальный текст).
 - Не передавай строки короче 20 символов — высокий шанс что найдется несколько совпадений.
 
 ### Как вставить видео вместо мок-плеера
@@ -164,13 +165,11 @@ function getTools(): Anthropic.Messages.Tool[] {
 
 /**
  * Ищем подстроку в HTML с fallback'ами:
- * 1. exact — буквальное indexOf
- * 2. fuzzy — экранируем find как regex и все \s+ → \s+ (любые пробелы/переносы)
- *
- * Это решает частую проблему: модель реконструирует HTML по памяти и не попадает
- * в точные отступы template-literal шаблона (табы vs 2 пробела, \r\n vs \n и т.п.)
+ * 1. exact     — буквальный indexOf
+ * 2. fuzzy-ws  — любые подряд whitespace сопоставляются как \s+
+ * 3. unescape  — если модель скопировала JSON-escaped строку (\" \n \\), расэкранируем и ищем снова
  */
-function findWithFallback(haystack: string, needle: string): { idx: number; matchedLength: number; mode: 'exact' | 'fuzzy'; ambiguous: boolean } | null {
+function findWithFallback(haystack: string, needle: string): { idx: number; matchedLength: number; mode: 'exact' | 'fuzzy' | 'unescaped'; ambiguous: boolean } | null {
   // 1. Точное совпадение
   const exactIdx = haystack.indexOf(needle)
   if (exactIdx >= 0) {
@@ -179,7 +178,31 @@ function findWithFallback(haystack: string, needle: string): { idx: number; matc
   }
 
   // 2. Fuzzy по whitespace
-  // Escape regex meta-chars, потом все блоки \s в needle превращаем в \s+ в паттерне
+  const fuzzy = tryFuzzyRegex(haystack, needle)
+  if (fuzzy) return { ...fuzzy, mode: 'fuzzy' }
+
+  // 3. Unescape JSON-экранирования и попытка снова (exact → fuzzy)
+  if (/\\["\\n]/.test(needle)) {
+    const unescaped = needle
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\\\/g, '\\')
+    if (unescaped !== needle) {
+      const exIdx2 = haystack.indexOf(unescaped)
+      if (exIdx2 >= 0) {
+        const secondIdx = haystack.indexOf(unescaped, exIdx2 + 1)
+        return { idx: exIdx2, matchedLength: unescaped.length, mode: 'unescaped', ambiguous: secondIdx >= 0 }
+      }
+      const fz2 = tryFuzzyRegex(haystack, unescaped)
+      if (fz2) return { ...fz2, mode: 'unescaped' }
+    }
+  }
+
+  return null
+}
+
+function tryFuzzyRegex(haystack: string, needle: string): { idx: number; matchedLength: number; ambiguous: boolean } | null {
   const escaped = needle
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     .replace(/\s+/g, '\\s+')
@@ -193,17 +216,16 @@ function findWithFallback(haystack: string, needle: string): { idx: number; matc
   if (!m) return null
   const firstIdx = m.index
   const firstLen = m[0].length
-  re.lastIndex = firstIdx + firstLen
-  const ambiguous = new RegExp(escaped, 'g')
+  const global = new RegExp(escaped, 'g')
   let count = 0
-  for (let mm = ambiguous.exec(haystack); mm !== null; mm = ambiguous.exec(haystack)) {
+  for (let mm = global.exec(haystack); mm !== null; mm = global.exec(haystack)) {
     count++
     if (count > 1) break
-    if (mm.index + mm[0].length === ambiguous.lastIndex) { /* advance naturally */ } else {
-      ambiguous.lastIndex = mm.index + 1
+    if (mm.index + mm[0].length === global.lastIndex) { /* advance naturally */ } else {
+      global.lastIndex = mm.index + 1
     }
   }
-  return { idx: firstIdx, matchedLength: firstLen, mode: 'fuzzy', ambiguous: count > 1 }
+  return { idx: firstIdx, matchedLength: firstLen, ambiguous: count > 1 }
 }
 
 async function executeTool(
@@ -224,8 +246,22 @@ async function executeTool(
           .single()
         if (error || !data) throw new Error(`read landing: ${error?.message}`)
         if (data.project_id !== projectId) throw new Error('landing not in this project')
+        // HTML возвращаем СЫРЫМ внутри маркеров, а метаданные — плоским YAML-подобным списком.
+        // Причина: если HTML завернуть в JSON.stringify, модель видит его как "<div class=\"x\">"
+        // и может скопировать эти escape-последовательности в find → apply_html_patch промахивается.
+        const meta = [
+          `name: ${data.name}`,
+          `slug: ${data.slug}`,
+          `status: ${data.status ?? 'draft'}`,
+          `meta_title: ${data.meta_title ?? '(не задан)'}`,
+          `meta_description: ${data.meta_description ?? '(не задано)'}`,
+          `funnel_id: ${data.funnel_id ?? '(не связан)'}`,
+          `funnel_stage_id: ${data.funnel_stage_id ?? '(не связан)'}`,
+        ].join('\n')
+        const html = data.html_content ?? ''
+        const content = `${meta}\n\n===HTML_START===\n${html}\n===HTML_END===\n\n(${html.length} символов. Копируй подстроки ТОЧНО из блока между маркерами — без JSON-экранирования.)`
         return {
-          content: JSON.stringify(data, null, 2),
+          content,
           summary: `прочитал лендинг «${data.name}» (${data.status ?? 'draft'})`,
           ok: true, wrote: false,
         }
@@ -274,10 +310,10 @@ async function executeTool(
           .eq('project_id', projectId)
         if (error) throw error
         const delta = String(input.replace ?? '').length - match.matchedLength
-        const mode = match.mode === 'exact' ? '' : ' (fuzzy)'
+        const modeTag = match.mode === 'exact' ? '' : ` (${match.mode})`
         return {
           content: JSON.stringify({ ok: true, new_length: replaced.length, mode: match.mode }),
-          summary: `применил патч HTML${mode} (${delta >= 0 ? '+' : ''}${delta} симв.)`,
+          summary: `применил патч HTML${modeTag} (${delta >= 0 ? '+' : ''}${delta} симв.)`,
           ok: true, wrote: true,
         }
       }
