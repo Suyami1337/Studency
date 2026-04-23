@@ -158,7 +158,7 @@ function renderBlockInner(block: LandingBlock): string {
 
     case 'zero': {
       const items = c.zeroItems || []
-      if (items.length === 0) return '<div class="block-placeholder">Пустой холст. Добавь элементы через редактор.</div>'
+      if (items.length === 0) return '<div class="block-placeholder">Пустой холст. Добавь элементы через панель настроек справа.</div>'
       return items.map(item => {
         const styleParts: string[] = [
           `position:absolute`,
@@ -170,7 +170,7 @@ function renderBlockInner(block: LandingBlock): string {
         if (item.style) {
           for (const [k, v] of Object.entries(item.style)) styleParts.push(`${k}:${v}`)
         }
-        return `<div class="zero-item" data-zero-id="${escapeHtml(item.id)}" style="${styleParts.join(';')}">${item.content}</div>`
+        return `<div class="zero-item" data-zero-id="${escapeHtml(item.id)}" data-zero-block-id="${escapeHtml(block.id)}" style="${styleParts.join(';')}">${item.content}</div>`
       }).join('\n')
     }
 

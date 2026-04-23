@@ -9,6 +9,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { ROLE } from './knowledge/landing/role'
 import { CHECKLIST } from './knowledge/landing/checklist'
 import { EXAMPLES } from './knowledge/landing/examples'
+import { wrapLegacyHtmlAsBlock } from '../landing-blocks'
+
+/** Алиас для единообразия имени в этом файле */
+const wrapLegacyHtmlAsBlockForAgent = wrapLegacyHtmlAsBlock
 
 const MODEL = 'claude-haiku-4-5'
 const MAX_AGENT_ITERATIONS = 10
@@ -61,84 +65,168 @@ ${EXAMPLES_BLOCK}
 
 Ты AI-агент **одного** лендинга. Не знаешь и не трогаешь остальные лендинги, воронки, ботов проекта.
 
+Лендинг состоит из **БЛОКОВ**. Каждый блок — отдельная секция страницы (Hero, Текст, Видео, CTA, Картинка, Кастомный HTML, Zero-блок). У каждого:
+- своё имя и тип
+- свой контент (структурированный для типизированных, HTML для custom_html)
+- отдельные стили для **desktop** и **mobile** (mobile попадает в \`@media (max-width: 640px)\`)
+- лейаут: паддинги, max-width, цвет фона, скрыть на моб/десктопе
+
+**Правки одного блока не ломают соседние.** Это самое важное — работай точечно, по блокам.
+
 ## ⛔ UI-parity
 
-Делаешь только то, что юзер может сам в редакторе лендинга:
-- Редактировать HTML (целиком или точечно)
-- Менять имя, slug, мета-теги, статус (draft / published)
-- Связывать с воронкой / стадией
-- Вставлять шорткоды видео \`{{video:UUID}}\`
+Делаешь только то, что юзер может сам в редакторе:
+- Читать список блоков, читать конкретный блок
+- Создавать, удалять, переупорядочивать блоки
+- Править контент блока (текст, картинки, видео), стили, лейаут
+- Менять имя лендинга, slug, мета-теги, статус, связь с воронкой
+- Вставлять шорткоды видео \`{{video:UUID}}\` внутри блоков
 
-Не умеешь и не пытаешься: создавать новые лендинги, удалять, менять другие лендинги, трогать схему БД, менять домен без UI.
+Не трогаешь: другие лендинги, другие проекты, схему БД, биллинг.
 
-Если просят невозможное («запусти A/B тест», «подключи пиксель Google Ads», «добавь модуль оплаты прямо сейчас») — честно откажись и предложи альтернативу.
+## Регламент работы
 
-## Регламент
+1. **Начинай с обсуждения структуры.** Если задача «сделай лендинг» / «переделай» — сначала обсуди с юзером **список блоков** (сколько, какие, в каком порядке, за что каждый отвечает). Только после его ОК — верстай блок за блоком.
+2. **Никогда не делай правку без чтения актуального состояния.** Сначала \`list_blocks\` для контекста, потом \`read_block\` на конкретный.
+3. **Работай с одним блоком за раз.** Не создавай несколько блоков одним ходом без явного ОК юзера — он может захотеть поправить первый прежде чем продолжать.
+4. Жди явного «да / делай / поехали» перед вызовом write-инструментов.
+5. После каждой правки кратко резюмируй что изменил — 1-2 строки.
 
-0. **Сначала всегда прочитай текущее состояние лендинга** через \`read_landing_state\` — чтобы править относительно реального HTML, а не придумывать с нуля.
-1. Если задача непонятна — уточни (какая ЦА, оффер, цель). По 1-2 вопроса за раз.
-2. **Предложи план изменений в чате** (какой блок добавить/переписать). Дождись «да/делай».
-3. Только после явного подтверждения вызывай write-инструменты.
+## 🎯 Инструменты
 
-## 🎯 Стратегия редактирования
+**Чтение:**
+- \`list_blocks\` — список блоков лендинга (id, имя, тип, порядок) + мета лендинга
+- \`read_block(id)\` — детали конкретного блока: контент, стили, лейаут
 
-**Точечные правки** (изменить заголовок, переписать абзац, поменять CTA, вставить шорткод) — через \`apply_html_patch\` с find/replace. НЕ переписывай весь HTML ради одной строки — сломаешь другое.
+**Запись (ПО БЛОКАМ — не пытайся менять весь лендинг одной операцией):**
+- \`update_block(id, patches)\` — правки одного блока. Передавай только изменяемые поля (content, desktop_styles, mobile_styles, layout, name, html_content, is_hidden).
+- \`create_block\` — добавить новый блок (указывай after_block_id чтобы вставить после конкретного).
+- \`delete_block(id)\` — удалить
+- \`reorder_blocks(ids)\` — задать новый порядок (передавай массив всех id в нужной последовательности).
+- \`update_landing_meta\` — мета лендинга (имя, slug, seo, status).
 
-**Крупные изменения** (добавить новый блок, полная перестройка) — через \`update_landing_html\` (полная замена). Предварительно ОБЯЗАТЕЛЬНО прочти текущий HTML через \`read_landing_state\` и держи в голове что не ломаешь.
+**Утилиты:**
+- \`list_project_videos\` — UUID видео для вставки шорткодов \`{{video:UUID}}\`
 
-### Как писать \`find\` для apply_html_patch
+## Структура блока (content + styles)
 
-- **Копируй строку ТОЧНО** из блока между маркерами \`===HTML_START===\` / \`===HTML_END===\` в ответе \`read_landing_state\`. То что между маркерами — это сырой HTML, не JSON.
-- ❌ НЕ пиши \`\\"\` вместо \`"\` и \`\\n\` вместо перевода строки. В \`find\` должны быть обычные кавычки \`"\` и обычные переносы строк.
-- Инструмент делает **fuzzy-поиск по whitespace** (любой пробел/таб/перенос сопоставляется как \`\\s+\`), поэтому можешь не заморачиваться с точным количеством пробелов.
-- Главное: **подстрока уникальна**. Если тот же тег встречается несколько раз — передавай больше контекста (родительский div, уникальный класс/id рядом, уникальный текст).
-- Не передавай строки короче 20 символов — высокий шанс что найдется несколько совпадений.
+### content (зависит от block_type)
+- **hero**: \`{ headline, subheadline, ctaText, ctaUrl }\`
+- **text**: \`{ text }\` — HTML строка с возможной inline-разметкой (<b>, <i>, <span>)
+- **image**: \`{ src, alt }\`
+- **video**: \`{ videoId }\` — UUID из \`list_project_videos\`
+- **cta**: \`{ buttonText, buttonUrl }\`
+- **custom_html**: не используется, HTML в html_content поле
+- **zero**: \`{ zeroItems: [{ id, type, x, y, width, height, content, style? }] }\`
 
-### Как вставить видео вместо мок-плеера
+### desktop_styles / mobile_styles
+Формат \`{ "селектор": { "css-property": "value" } }\`. Селекторы относительно блока:
+- \`"&"\` — сам блок (применится к \`.block-<id>\`)
+- \`"h1"\`, \`".hero-cta"\`, \`"img"\` — относительно блока
+- Любой валидный CSS
 
-1. \`list_project_videos\` → получи UUID нужного видео.
-2. \`apply_html_patch\`: в \`find\` передай весь блок мок-плеера (от открывающего \`<div class="vsl-player">\` до закрывающего \`</div>\` этого же плеера), в \`replace\` — шорткод \`{{video:UUID}}\` обёрнутый в такой же родительский контейнер если нужно сохранить стили. Шорткод на рантайме заменится на реальный плеер Kinescope.
+Примеры:
+\`\`\`json
+{ "&": { "background": "#060418" }, "h1": { "font-size": "54px", "color": "#fff" } }
+\`\`\`
+Mobile-стили ТЕ ЖЕ селекторы, но применятся только на экранах ≤ 640px.
 
-## 🚨 Режим исполнения
+### layout
+\`{ paddingY, maxWidth, align, bgColor, bgImage, hideOnMobile, hideOnDesktop, mobile: { paddingY, maxWidth, align } }\`
 
-После «да / делай / применяй / погнали»:
-1. Следующий ответ = вызов write-инструмента, без долгих вступлений.
-2. Максимум 3-5 tool calls за ход (у тебя 45 секунд до таймаута).
-3. После каждой правки кратко резюмируй что изменил.
-4. Если правка большая (>4 отдельных блоков) — делай порциями, скажи «первые 3 применил, скажи «продолжай» для остальных».
+## Шорткоды видео
+
+В \`content.text\` / \`html_content\` можно вставить \`{{video:UUID}}\` — на публичной странице заменится на iframe Kinescope. Чтобы узнать UUID видео — \`list_project_videos\`.
 
 ## Стиль общения
 
-На «ты», без тех-жаргона. Пользователь — маркетолог, не фронтендер. Показывай куски HTML в \`\`\`html код-блоках\`\`\` когда обсуждаешь. Не вываливай весь HTML без просьбы.`
+На «ты», без тех-жаргона. Пользователь — маркетолог, не фронтендер. Когда обсуждаешь структуру — показывай списком блоков («1. Hero, 2. Видео, 3. 3 преимущества, 4. Отзывы, 5. CTA»). Когда правишь — коротко скажи что поменял в каком блоке.`
 
 function getTools(): Anthropic.Messages.Tool[] {
   return [
     {
-      name: 'read_landing_state',
-      description: 'Прочитать текущее состояние лендинга: весь HTML, имя, slug, мета-теги, статус, связь с воронкой. Вызывай перед любой правкой — чтобы видеть актуальный код.',
+      name: 'list_blocks',
+      description: 'Список всех блоков лендинга (id, имя, тип, порядок, is_hidden) + мета лендинга (name, slug, status). Начинай любую задачу с этого — чтобы видеть актуальную структуру.',
       input_schema: { type: 'object' as const, properties: {}, required: [] },
     },
     {
-      name: 'update_landing_html',
-      description: 'Полностью заменить HTML лендинга. Используй когда делаешь крупные изменения (перестройка всей страницы, добавление нескольких блоков разом). Для маленьких правок используй apply_html_patch — безопаснее.',
+      name: 'read_block',
+      description: 'Полные детали одного блока: content, html_content (если custom_html), desktop_styles, mobile_styles, layout. Вызывай перед update_block чтобы не затереть существующие правки.',
       input_schema: {
         type: 'object' as const,
         properties: {
-          html_content: { type: 'string', description: 'Полный HTML лендинга (с Tailwind классами, shortcode-ами {{video:UUID}} если есть)' },
+          block_id: { type: 'string', description: 'UUID блока из list_blocks' },
         },
-        required: ['html_content'],
+        required: ['block_id'],
       },
     },
     {
-      name: 'apply_html_patch',
-      description: 'Точечная правка HTML: найти подстроку и заменить на новую. Безопасно для небольших изменений. Если find встречается >1 раза — ошибка (чтобы не поломать случайно). Для таких случаев передавай больше контекста вокруг.',
+      name: 'update_block',
+      description: 'Точечно обновить один блок. Передавай ТОЛЬКО изменяемые поля — остальные сохранятся. Правки этого блока не затронут соседние.',
       input_schema: {
         type: 'object' as const,
         properties: {
-          find: { type: 'string', description: 'Точная подстрока которую ищем (с окружающим контекстом для уникальности)' },
-          replace: { type: 'string', description: 'Чем заменить. Передай пустую строку чтобы удалить фрагмент.' },
+          block_id: { type: 'string', description: 'UUID блока' },
+          name: { type: 'string', description: 'Человеко-читаемое имя блока' },
+          block_type: { type: 'string', enum: ['custom_html', 'hero', 'text', 'image', 'video', 'cta', 'zero'] },
+          html_content: { type: 'string', description: 'Для custom_html — сырой HTML блока' },
+          content: {
+            type: 'object',
+            description: 'Структурированный контент типизированного блока. Для hero: { headline, subheadline, ctaText, ctaUrl }. Для text: { text }. Для image: { src, alt }. Для video: { videoId }. Для cta: { buttonText, buttonUrl }.',
+          },
+          desktop_styles: {
+            type: 'object',
+            description: 'CSS override для десктопа: { "селектор": { "css-prop": "value" } }. Селектор "&" — сам блок. Примеры: { "&": { "background": "#000" }, "h1": { "font-size": "54px", "color": "#fff" } }',
+          },
+          mobile_styles: {
+            type: 'object',
+            description: 'Тот же формат что desktop_styles, но правила попадут в @media (max-width: 640px). Используй ТОЛЬКО для отличий на мобилке — что одинаково на обоих, пиши в desktop_styles.',
+          },
+          layout: {
+            type: 'object',
+            description: 'Лейаут блока. Поля: paddingY (число px), maxWidth (число px), align (left/center/right), bgColor (#hex), bgImage (URL), hideOnMobile (boolean), hideOnDesktop (boolean), mobile: { paddingY, maxWidth, align }',
+          },
+          is_hidden: { type: 'boolean', description: 'Временно скрыть блок без удаления' },
         },
-        required: ['find', 'replace'],
+        required: ['block_id'],
+      },
+    },
+    {
+      name: 'create_block',
+      description: 'Создать новый блок. Можно вставить после указанного (after_block_id), иначе добавится в конец. После создания сразу вызови update_block если хочешь наполнить контентом.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          block_type: { type: 'string', enum: ['custom_html', 'hero', 'text', 'image', 'video', 'cta', 'zero'] },
+          name: { type: 'string' },
+          after_block_id: { type: 'string', description: 'UUID блока после которого вставить. Если опущено — в конец.' },
+          content: { type: 'object', description: 'Начальный контент (по той же схеме что в update_block)' },
+          html_content: { type: 'string' },
+          layout: { type: 'object' },
+        },
+        required: ['block_type'],
+      },
+    },
+    {
+      name: 'delete_block',
+      description: 'Удалить блок. Необратимо.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          block_id: { type: 'string' },
+        },
+        required: ['block_id'],
+      },
+    },
+    {
+      name: 'reorder_blocks',
+      description: 'Задать новый порядок всех блоков. Передавай массив UUID в нужной последовательности — получишь весь список переставленным.',
+      input_schema: {
+        type: 'object' as const,
+        properties: {
+          ids: { type: 'array', items: { type: 'string' }, description: 'Массив UUID блоков в целевом порядке' },
+        },
+        required: ['ids'],
       },
     },
     {
@@ -151,57 +239,18 @@ function getTools(): Anthropic.Messages.Tool[] {
           slug: { type: 'string', description: 'URL-slug (латиница, дефисы, без пробелов)' },
           meta_title: { type: 'string', description: 'SEO title (до 60 символов)' },
           meta_description: { type: 'string', description: 'SEO description (до 160 символов)' },
-          status: { type: 'string', enum: ['draft', 'published'], description: 'draft — черновик, published — опубликован' },
-          funnel_id: { type: 'string', description: 'UUID воронки к которой привязать (null чтобы отвязать)' },
-          funnel_stage_id: { type: 'string', description: 'UUID стадии воронки' },
+          status: { type: 'string', enum: ['draft', 'published'] },
+          funnel_id: { type: 'string' },
+          funnel_stage_id: { type: 'string' },
         },
       },
     },
     {
       name: 'list_project_videos',
-      description: 'Список видео проекта — чтобы узнать UUID для вставки шорткода {{video:UUID}} в HTML лендинга.',
+      description: 'Список видео проекта — чтобы узнать UUID для вставки шорткода {{video:UUID}} или для content.videoId в блоке video.',
       input_schema: { type: 'object' as const, properties: {}, required: [] },
     },
   ]
-}
-
-/**
- * Ищем подстроку в HTML с fallback'ами:
- * 1. exact     — буквальный indexOf
- * 2. fuzzy-ws  — любые подряд whitespace сопоставляются как \s+
- * 3. unescape  — если модель скопировала JSON-escaped строку (\" \n \\), расэкранируем и ищем снова
- */
-function findWithFallback(haystack: string, needle: string): { idx: number; matchedLength: number; mode: 'exact' | 'fuzzy' | 'unescaped'; ambiguous: boolean } | null {
-  // 1. Точное совпадение
-  const exactIdx = haystack.indexOf(needle)
-  if (exactIdx >= 0) {
-    const secondIdx = haystack.indexOf(needle, exactIdx + 1)
-    return { idx: exactIdx, matchedLength: needle.length, mode: 'exact', ambiguous: secondIdx >= 0 }
-  }
-
-  // 2. Fuzzy по whitespace
-  const fuzzy = tryFuzzyRegex(haystack, needle)
-  if (fuzzy) return { ...fuzzy, mode: 'fuzzy' }
-
-  // 3. Unescape JSON-экранирования и попытка снова (exact → fuzzy)
-  if (/\\["\\n]/.test(needle)) {
-    const unescaped = needle
-      .replace(/\\"/g, '"')
-      .replace(/\\n/g, '\n')
-      .replace(/\\t/g, '\t')
-      .replace(/\\\\/g, '\\')
-    if (unescaped !== needle) {
-      const exIdx2 = haystack.indexOf(unescaped)
-      if (exIdx2 >= 0) {
-        const secondIdx = haystack.indexOf(unescaped, exIdx2 + 1)
-        return { idx: exIdx2, matchedLength: unescaped.length, mode: 'unescaped', ambiguous: secondIdx >= 0 }
-      }
-      const fz2 = tryFuzzyRegex(haystack, unescaped)
-      if (fz2) return { ...fz2, mode: 'unescaped' }
-    }
-  }
-
-  return null
 }
 
 /**
@@ -238,31 +287,6 @@ function parseDataUrl(url: string): { mediaType: string; data: string } | null {
   return { mediaType: mediaType.toLowerCase(), data: m[2] }
 }
 
-function tryFuzzyRegex(haystack: string, needle: string): { idx: number; matchedLength: number; ambiguous: boolean } | null {
-  const escaped = needle
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\s+/g, '\\s+')
-  let re: RegExp
-  try {
-    re = new RegExp(escaped)
-  } catch {
-    return null
-  }
-  const m = re.exec(haystack)
-  if (!m) return null
-  const firstIdx = m.index
-  const firstLen = m[0].length
-  const global = new RegExp(escaped, 'g')
-  let count = 0
-  for (let mm = global.exec(haystack); mm !== null; mm = global.exec(haystack)) {
-    count++
-    if (count > 1) break
-    if (mm.index + mm[0].length === global.lastIndex) { /* advance naturally */ } else {
-      global.lastIndex = mm.index + 1
-    }
-  }
-  return { idx: firstIdx, matchedLength: firstLen, ambiguous: count > 1 }
-}
 
 async function executeTool(
   name: string,
@@ -274,82 +298,183 @@ async function executeTool(
 
   try {
     switch (name) {
-      case 'read_landing_state': {
-        const { data, error } = await supabase
+      case 'list_blocks': {
+        const { data: l } = await supabase
           .from('landings')
-          .select('id, name, slug, html_content, status, meta_title, meta_description, funnel_id, funnel_stage_id, project_id')
+          .select('id, name, slug, status, meta_title, meta_description, funnel_id, funnel_stage_id, is_blocks_based, html_content, project_id')
           .eq('id', landingId)
           .single()
-        if (error || !data) throw new Error(`read landing: ${error?.message}`)
-        if (data.project_id !== projectId) throw new Error('landing not in this project')
-        // HTML возвращаем СЫРЫМ внутри маркеров, а метаданные — плоским YAML-подобным списком.
-        // Причина: если HTML завернуть в JSON.stringify, модель видит его как "<div class=\"x\">"
-        // и может скопировать эти escape-последовательности в find → apply_html_patch промахивается.
+        if (!l) throw new Error('landing not found')
+        if (l.project_id !== projectId) throw new Error('landing not in this project')
+
+        // Lazy-миграция если ещё не блочный (у legacy лендингов html_content монолитный)
+        if (!l.is_blocks_based && l.html_content) {
+          const block = wrapLegacyHtmlAsBlockForAgent(l.html_content, landingId)
+          await supabase.from('landing_blocks').insert(block)
+          await supabase.from('landings').update({ is_blocks_based: true }).eq('id', landingId)
+        }
+
+        const { data: blocks } = await supabase
+          .from('landing_blocks')
+          .select('id, order_position, block_type, name, is_hidden')
+          .eq('landing_id', landingId)
+          .order('order_position', { ascending: true })
+
         const meta = [
-          `name: ${data.name}`,
-          `slug: ${data.slug}`,
-          `status: ${data.status ?? 'draft'}`,
-          `meta_title: ${data.meta_title ?? '(не задан)'}`,
-          `meta_description: ${data.meta_description ?? '(не задано)'}`,
-          `funnel_id: ${data.funnel_id ?? '(не связан)'}`,
-          `funnel_stage_id: ${data.funnel_stage_id ?? '(не связан)'}`,
+          `name: ${l.name}`,
+          `slug: ${l.slug}`,
+          `status: ${l.status ?? 'draft'}`,
+          `meta_title: ${l.meta_title ?? '(не задан)'}`,
+          `meta_description: ${l.meta_description ?? '(не задано)'}`,
         ].join('\n')
-        const html = data.html_content ?? ''
-        const content = `${meta}\n\n===HTML_START===\n${html}\n===HTML_END===\n\n(${html.length} символов. Копируй подстроки ТОЧНО из блока между маркерами — без JSON-экранирования.)`
+        const blocksList = (blocks ?? []).map((b, i) => {
+          const hidden = b.is_hidden ? ' [скрыт]' : ''
+          return `${i + 1}. [${b.block_type}] ${b.name || '(без имени)'}${hidden} — id: ${b.id}`
+        }).join('\n')
+        const content = `# Мета лендинга\n${meta}\n\n# Блоки (${(blocks ?? []).length})\n${blocksList || '(блоков нет — создай первый через create_block)'}`
         return {
           content,
-          summary: `прочитал лендинг «${data.name}» (${data.status ?? 'draft'})`,
+          summary: `список блоков: ${(blocks ?? []).length}`,
           ok: true, wrote: false,
         }
       }
 
-      case 'update_landing_html': {
-        const { error } = await supabase
-          .from('landings')
-          .update({ html_content: input.html_content, updated_at: new Date().toISOString() })
-          .eq('id', landingId)
-          .eq('project_id', projectId)
-        if (error) throw error
+      case 'read_block': {
+        const blockId = String(input.block_id ?? '')
+        if (!blockId) throw new Error('block_id обязателен')
+        const { data: b } = await supabase
+          .from('landing_blocks')
+          .select('*')
+          .eq('id', blockId)
+          .eq('landing_id', landingId)
+          .single()
+        if (!b) throw new Error('блок не найден')
+        // HTML отдаём сырым между маркеров, остальное — как JSON
+        const htmlSection = b.html_content
+          ? `\n===HTML_START===\n${b.html_content}\n===HTML_END===\n`
+          : ''
+        const content = JSON.stringify({
+          id: b.id,
+          name: b.name,
+          block_type: b.block_type,
+          order_position: b.order_position,
+          is_hidden: b.is_hidden,
+          content: b.content,
+          desktop_styles: b.desktop_styles,
+          mobile_styles: b.mobile_styles,
+          layout: b.layout,
+        }, null, 2) + htmlSection
         return {
-          content: JSON.stringify({ ok: true }),
-          summary: `заменил весь HTML (${input.html_content.length} символов)`,
+          content,
+          summary: `прочитал блок «${b.name || b.block_type}»`,
+          ok: true, wrote: false,
+        }
+      }
+
+      case 'update_block': {
+        const blockId = String(input.block_id ?? '')
+        if (!blockId) throw new Error('block_id обязателен')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const updates: any = {}
+        for (const k of ['name', 'block_type', 'html_content', 'content', 'desktop_styles', 'mobile_styles', 'layout', 'is_hidden']) {
+          if (input[k] !== undefined) updates[k] = input[k]
+        }
+        if (Object.keys(updates).length === 0) throw new Error('нет полей для обновления')
+        const { data, error } = await supabase
+          .from('landing_blocks')
+          .update(updates)
+          .eq('id', blockId)
+          .eq('landing_id', landingId)
+          .select('id, name, block_type')
+          .single()
+        if (error || !data) throw new Error(error?.message || 'блок не найден')
+        const changed = Object.keys(updates).join(', ')
+        return {
+          content: JSON.stringify({ ok: true, id: data.id }),
+          summary: `обновил блок «${data.name || data.block_type}»: ${changed}`,
           ok: true, wrote: true,
         }
       }
 
-      case 'apply_html_patch': {
-        const { data: cur, error: e1 } = await supabase
-          .from('landings').select('html_content').eq('id', landingId).eq('project_id', projectId).single()
-        if (e1 || !cur) throw new Error(`read for patch: ${e1?.message}`)
-        const html = cur.html_content ?? ''
-        const find = String(input.find ?? '')
-        if (!find) throw new Error('find пустой')
+      case 'create_block': {
+        const blockType = String(input.block_type ?? '')
+        const allowed = ['custom_html', 'hero', 'text', 'image', 'video', 'cta', 'zero']
+        if (!allowed.includes(blockType)) throw new Error(`неизвестный block_type: ${blockType}`)
 
-        // Стратегия поиска с fallback'ами:
-        // 1) Точное совпадение — как было
-        // 2) Fuzzy по whitespace — \s+ вместо любых пробелов/переносов (решает проблему
-        //    когда модель угадывает отступы в template-literal HTML и промахивается)
-        const match = findWithFallback(html, find)
-        if (!match) {
-          const preview = find.length > 60 ? find.slice(0, 60) + '…' : find
-          throw new Error(`подстрока не найдена (ни точно, ни по нормализованным пробелам): "${preview}"`)
-        }
-        if (match.ambiguous) {
-          throw new Error('подстрока встречается больше одного раза — передай больше контекста для уникальности')
+        // Вычисляем позицию — после указанного блока или в конец
+        let newOrder = 0
+        const afterId = input.after_block_id ? String(input.after_block_id) : null
+        if (afterId) {
+          const { data: after } = await supabase
+            .from('landing_blocks').select('order_position').eq('id', afterId).eq('landing_id', landingId).maybeSingle()
+          if (after) {
+            newOrder = after.order_position + 1
+            const { data: toShift } = await supabase
+              .from('landing_blocks').select('id, order_position').eq('landing_id', landingId).gte('order_position', newOrder)
+            for (const s of (toShift ?? [])) {
+              await supabase.from('landing_blocks').update({ order_position: s.order_position + 1 }).eq('id', s.id)
+            }
+          }
+        } else {
+          const { data: last } = await supabase
+            .from('landing_blocks').select('order_position').eq('landing_id', landingId).order('order_position', { ascending: false }).limit(1).maybeSingle()
+          newOrder = (last?.order_position ?? -1) + 1
         }
 
-        const replaced = html.slice(0, match.idx) + String(input.replace ?? '') + html.slice(match.idx + match.matchedLength)
-        const { error } = await supabase
-          .from('landings')
-          .update({ html_content: replaced, updated_at: new Date().toISOString() })
-          .eq('id', landingId)
-          .eq('project_id', projectId)
-        if (error) throw error
-        const delta = String(input.replace ?? '').length - match.matchedLength
-        const modeTag = match.mode === 'exact' ? '' : ` (${match.mode})`
+        const { data: created, error } = await supabase.from('landing_blocks').insert({
+          landing_id: landingId,
+          order_position: newOrder,
+          block_type: blockType,
+          name: input.name ?? null,
+          html_content: input.html_content ?? null,
+          content: input.content ?? {},
+          desktop_styles: {},
+          mobile_styles: {},
+          layout: input.layout ?? {},
+        }).select().single()
+        if (error || !created) throw new Error(error?.message || 'не удалось создать блок')
+
+        // Переключаем лендинг на блочный режим если ещё не
+        await supabase.from('landings').update({ is_blocks_based: true }).eq('id', landingId)
+
         return {
-          content: JSON.stringify({ ok: true, new_length: replaced.length, mode: match.mode }),
-          summary: `применил патч HTML${modeTag} (${delta >= 0 ? '+' : ''}${delta} симв.)`,
+          content: JSON.stringify({ ok: true, id: created.id, order_position: newOrder }),
+          summary: `создал блок ${blockType} «${created.name || '(без имени)'}»`,
+          ok: true, wrote: true,
+        }
+      }
+
+      case 'delete_block': {
+        const blockId = String(input.block_id ?? '')
+        if (!blockId) throw new Error('block_id обязателен')
+        const { error } = await supabase
+          .from('landing_blocks')
+          .delete()
+          .eq('id', blockId)
+          .eq('landing_id', landingId)
+        if (error) throw error
+        return {
+          content: JSON.stringify({ ok: true }),
+          summary: `удалил блок`,
+          ok: true, wrote: true,
+        }
+      }
+
+      case 'reorder_blocks': {
+        const ids: unknown = input.ids
+        if (!Array.isArray(ids) || !ids.every(x => typeof x === 'string')) {
+          throw new Error('ids[] обязателен (массив UUID)')
+        }
+        for (let i = 0; i < ids.length; i++) {
+          await supabase
+            .from('landing_blocks')
+            .update({ order_position: i })
+            .eq('id', ids[i])
+            .eq('landing_id', landingId)
+        }
+        return {
+          content: JSON.stringify({ ok: true, count: ids.length }),
+          summary: `переупорядочил ${ids.length} блоков`,
           ok: true, wrote: true,
         }
       }

@@ -216,7 +216,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
   }
 
-  // ─── Слушаем postMessage от iframe: клик по блоку, selection, input ──
+  // ─── Слушаем postMessage от iframe: клик по блоку, selection, input, zero-move ──
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       const src = iframeRef.current?.contentWindow
@@ -229,6 +229,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         setHasSelection(Boolean(data.has))
       } else if (data.type === 'stud-input') {
         syncActiveBlockFromIframe()
+      } else if (data.type === 'stud-zero-move' && typeof data.blockId === 'string') {
+        // Перемещение zero-item внутри zero-блока
+        const b = blocks.find(x => x.id === data.blockId)
+        if (!b || b.block_type !== 'zero') return
+        const items = (b.content.zeroItems || []).map(it =>
+          it.id === data.itemId ? { ...it, x: Math.max(0, Math.round(data.x)), y: Math.max(0, Math.round(data.y)) } : it
+        )
+        updateBlockLocal(b.id, { content: { ...b.content, zeroItems: items } })
       }
     }
     window.addEventListener('message', onMessage)
@@ -245,6 +253,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   [data-block-id]:hover { outline: 2px dashed rgba(106,85,248,0.5); outline-offset: -2px; }
   [data-block-id].stud-active { outline: 2px solid #6A55F8; outline-offset: -2px; }
   [contenteditable="true"]:focus { outline: 2px solid #F59E0B; outline-offset: 2px; }
+  .zero-item { cursor: move; }
+  .zero-item:hover { outline: 2px dashed rgba(106,85,248,0.6); }
+  .zero-item.stud-dragging { opacity: 0.7; outline: 2px solid #6A55F8; }
 </style>
 <script data-stud-editor>
   (function() {
@@ -290,6 +301,53 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     document.addEventListener('input', function() {
       parent.postMessage({ type: 'stud-input' }, '*');
     });
+
+    // Zero-item drag внутри zero-блока
+    (function initZeroDrag() {
+      document.querySelectorAll('.zero-item').forEach(function(item) {
+        var el = item;
+        var state = null;
+        el.addEventListener('mousedown', function(e) {
+          if (e.target.closest('[contenteditable="true"]')) return;
+          e.preventDefault();
+          var rect = el.getBoundingClientRect();
+          var canvas = el.parentElement;
+          var canvasRect = canvas.getBoundingClientRect();
+          state = {
+            startX: e.clientX,
+            startY: e.clientY,
+            origLeft: rect.left - canvasRect.left,
+            origTop: rect.top - canvasRect.top,
+            canvasLeft: canvasRect.left,
+            canvasTop: canvasRect.top,
+          };
+          el.classList.add('stud-dragging');
+        });
+        document.addEventListener('mousemove', function(e) {
+          if (!state) return;
+          var dx = e.clientX - state.startX;
+          var dy = e.clientY - state.startY;
+          var newX = state.origLeft + dx;
+          var newY = state.origTop + dy;
+          el.style.left = newX + 'px';
+          el.style.top = newY + 'px';
+        });
+        document.addEventListener('mouseup', function() {
+          if (!state) return;
+          el.classList.remove('stud-dragging');
+          var blockId = el.getAttribute('data-zero-block-id');
+          var itemId = el.getAttribute('data-zero-id');
+          parent.postMessage({
+            type: 'stud-zero-move',
+            blockId: blockId,
+            itemId: itemId,
+            x: parseFloat(el.style.left) || 0,
+            y: parseFloat(el.style.top) || 0,
+          }, '*');
+          state = null;
+        });
+      });
+    })();
   })();
 </script>`
 
@@ -607,6 +665,67 @@ function BlockSettingsPanel({
           <textarea rows={10} value={block.html_content ?? ''} onChange={e => onChange({ html_content: e.target.value })}
             className="w-full px-2.5 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8] resize-y" />
           <p className="text-[10px] text-gray-400 mt-1">Сырой HTML. Можно редактировать визуально кликом по тексту в превью.</p>
+        </div>
+      )}
+
+      {block.block_type === 'zero' && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">Холст: элементы можно перетаскивать мышью прямо в превью.</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => {
+                const items = block.content.zeroItems || []
+                const newItem = {
+                  id: `zi_${Date.now().toString(36)}`,
+                  type: 'text' as const,
+                  x: 40 + (items.length * 20),
+                  y: 40 + (items.length * 20),
+                  width: 200,
+                  height: 60,
+                  content: '<p style="margin:0;padding:10px;font-size:18px">Новый текст</p>',
+                }
+                onChange({ content: { ...block.content, zeroItems: [...items, newItem] } })
+              }}
+              className="px-3 py-2 text-xs font-medium border border-gray-200 rounded-lg hover:border-[#6A55F8] hover:bg-[#F8F7FF]"
+            >
+              + Текст
+            </button>
+            <button
+              onClick={() => {
+                const url = prompt('URL картинки:')
+                if (!url) return
+                const items = block.content.zeroItems || []
+                const newItem = {
+                  id: `zi_${Date.now().toString(36)}`,
+                  type: 'image' as const,
+                  x: 40 + (items.length * 20),
+                  y: 40 + (items.length * 20),
+                  width: 200,
+                  height: 200,
+                  content: `<img src="${url.replace(/"/g, '&quot;')}" style="width:100%;height:100%;object-fit:cover;border-radius:8px" />`,
+                }
+                onChange({ content: { ...block.content, zeroItems: [...items, newItem] } })
+              }}
+              className="px-3 py-2 text-xs font-medium border border-gray-200 rounded-lg hover:border-[#6A55F8] hover:bg-[#F8F7FF]"
+            >
+              + Картинка
+            </button>
+          </div>
+          {(block.content.zeroItems || []).length > 0 && (
+            <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+              <p className="text-[11px] text-gray-500 mb-1">Элементы ({(block.content.zeroItems || []).length}):</p>
+              {(block.content.zeroItems || []).map((it) => (
+                <div key={it.id} className="flex items-center gap-2 text-[11px] bg-gray-50 rounded px-2 py-1">
+                  <span className="text-gray-400">{it.type === 'text' ? '¶' : '🖼'}</span>
+                  <span className="flex-1 truncate">{it.x},{it.y} · {it.width}×{it.height}</span>
+                  <button onClick={() => {
+                    const items = (block.content.zeroItems || []).filter(x => x.id !== it.id)
+                    onChange({ content: { ...block.content, zeroItems: items } })
+                  }} className="text-gray-400 hover:text-red-500">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
