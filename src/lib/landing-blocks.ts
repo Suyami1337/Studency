@@ -182,15 +182,23 @@ function renderBlockInner(block: LandingBlock): string {
 /** CSS-правила для блока: лейаут + override'ы пользователя + mobile @media */
 function buildBlockCss(block: LandingBlock, klass: string): string {
   const layout = block.layout || {}
-  const paddingY = layout.paddingY ?? 64
-  const maxWidth = layout.maxWidth ?? 880
+  // Для custom_html блоков (импортированные шаблоны) — НОЛЕВЫЕ дефолты:
+  // пусть шаблон сам управляет своими паддингами и шириной. Иначе мы
+  // накладываем свой padding + max-width поверх шаблона и всё ломается.
+  const isCustomHtml = block.block_type === 'custom_html'
+  const paddingY = layout.paddingY ?? (isCustomHtml ? 0 : 64)
+  const maxWidth = layout.maxWidth ?? (isCustomHtml ? null : 880)
   const align = layout.align ?? 'center'
 
   const lines: string[] = []
 
-  // Базовые стили секции + inner-контейнер с max-width
-  lines.push(`.${klass} { padding: ${paddingY}px 20px; position: relative; }`)
-  lines.push(`.${klass} > .block-inner { max-width: ${maxWidth}px; margin: 0 auto; text-align: ${align}; }`)
+  // Базовые стили секции + inner-контейнер
+  lines.push(`.${klass} { padding: ${paddingY}px ${isCustomHtml ? 0 : 20}px; position: relative; }`)
+  if (maxWidth !== null) {
+    lines.push(`.${klass} > .block-inner { max-width: ${maxWidth}px; margin: 0 auto; text-align: ${align}; }`)
+  } else {
+    lines.push(`.${klass} > .block-inner { width: 100%; }`)
+  }
   if (layout.hideOnMobile) lines.push(`@media (max-width: 640px) { .${klass} { display: none !important; } }`)
   if (layout.hideOnDesktop) lines.push(`@media (min-width: 641px) { .${klass} { display: none !important; } }`)
 
@@ -352,10 +360,8 @@ export function wrapLegacyHtmlAsBlock(legacyHtml: string, landingId: string): {
     content: {},
     desktop_styles: {},
     mobile_styles: {},
-    layout: {
-      paddingY: 0,   // custom_html обычно сам управляет своими паддингами
-      maxWidth: 99999,
-      align: 'center',
-    },
+    // Пустой layout → срабатывают дефолты для custom_html: без padding, full-width.
+    // Шаблон сам управляет своим дизайном.
+    layout: {},
   }
 }
