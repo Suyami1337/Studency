@@ -26,6 +26,8 @@ type AgentInput = {
   projectId: string
   history: Array<{ role: 'user' | 'assistant'; content: unknown }>
   userMessage: string
+  /** data URL картинок от юзера (`data:image/png;base64,...`). Добавятся в текущую user-message блоками type:'image'. */
+  attachments?: string[]
   supabase: SupabaseClient
 }
 
@@ -200,6 +202,40 @@ function findWithFallback(haystack: string, needle: string): { idx: number; matc
   }
 
   return null
+}
+
+/**
+ * Строит content для user-message: если нет картинок — просто строка,
+ * если есть — массив блоков [text, image, image...]. Пустой text пропускается.
+ * Anthropic image API: { type: 'image', source: { type: 'base64', media_type, data } }
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildUserMessageContent(text: string, attachments?: string[]): any {
+  if (!attachments || attachments.length === 0) return text
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blocks: any[] = []
+  if (text && text.trim()) blocks.push({ type: 'text', text })
+  for (const url of attachments) {
+    const parsed = parseDataUrl(url)
+    if (!parsed) continue
+    blocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: parsed.mediaType, data: parsed.data },
+    })
+  }
+  // Если вообще ни одной картинки не удалось распарсить и text пуст — вернём пустой text,
+  // чтобы API не ругнулся на пустой content-массив.
+  if (blocks.length === 0) return text || ' '
+  return blocks
+}
+
+function parseDataUrl(url: string): { mediaType: string; data: string } | null {
+  // data:image/png;base64,iVBOR...
+  const m = /^data:([^;,]+);base64,(.*)$/.exec(url)
+  if (!m) return null
+  const mediaType = m[1]
+  if (!/^image\/(png|jpeg|jpg|gif|webp)$/i.test(mediaType)) return null
+  return { mediaType: mediaType.toLowerCase(), data: m[2] }
 }
 
 function tryFuzzyRegex(haystack: string, needle: string): { idx: number; matchedLength: number; ambiguous: boolean } | null {
@@ -378,7 +414,7 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
   }
   const conversation: ChatMessage[] = [
     ...trimmedHistory,
-    { role: 'user', content: ctx.userMessage },
+    { role: 'user', content: buildUserMessageContent(ctx.userMessage, ctx.attachments) } as ChatMessage,
   ]
 
   const toolCalls: Array<{ name: string; summary: string; ok: boolean }> = []
@@ -411,7 +447,7 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
       if (isBrokenHistory && iter === 0 && conversation.length > 1) {
         console.warn('[landing-agent] rebuilding conversation from scratch')
         conversation.length = 0
-        conversation.push({ role: 'user', content: ctx.userMessage })
+        conversation.push({ role: 'user', content: buildUserMessageContent(ctx.userMessage, ctx.attachments) } as ChatMessage)
         iter--
         continue
       }

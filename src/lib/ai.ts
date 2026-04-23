@@ -12,21 +12,36 @@ function getClient(): Anthropic {
 // Default to Claude Sonnet 4.5 — good balance of quality and cost
 const DEFAULT_MODEL = 'claude-sonnet-4-5'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function claudeMessage(params: {
   system: string
   user: string
   maxTokens?: number
+  /** data URL картинок (`data:image/png;base64,...`) — прицепятся image-блоками к user-сообщению */
+  attachments?: string[]
 }): Promise<string> {
   const client = getClient()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let content: any = params.user
+  if (params.attachments && params.attachments.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks: any[] = []
+    if (params.user && params.user.trim()) blocks.push({ type: 'text', text: params.user })
+    for (const url of params.attachments) {
+      const m = /^data:([^;,]+);base64,(.*)$/.exec(url)
+      if (!m) continue
+      const mediaType = m[1].toLowerCase()
+      if (!/^image\/(png|jpeg|jpg|gif|webp)$/.test(mediaType)) continue
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: m[2] } })
+    }
+    if (blocks.length > 0) content = blocks
+  }
   const msg = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: params.maxTokens ?? 4096,
     system: params.system,
-    messages: [{ role: 'user', content: params.user }],
+    messages: [{ role: 'user', content }],
   })
 
-  // Extract text from the first content block
   const first = msg.content[0]
   if (first.type === 'text') return first.text
   return ''
@@ -129,8 +144,8 @@ export async function generateLandingContent(description: string): Promise<{
 /**
  * Simple assistant query for the chat interface.
  */
-export async function aiAssistant(question: string, context?: string): Promise<string> {
+export async function aiAssistant(question: string, context?: string, attachments?: string[]): Promise<string> {
   const system = `Ты AI-ассистент маркетинговой платформы Studency. Помогаешь пользователю с воронками, чат-ботами, лендингами, CRM и аналитикой. Отвечай на русском, кратко и по делу.${context ? `\n\nКонтекст: ${context}` : ''}`
 
-  return claudeMessage({ system, user: question, maxTokens: 1500 })
+  return claudeMessage({ system, user: question, maxTokens: 1500, attachments })
 }

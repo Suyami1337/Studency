@@ -30,7 +30,26 @@ type AgentInput = {
   projectId: string
   history: Array<{ role: 'user' | 'assistant'; content: unknown }>
   userMessage: string
+  /** data URL картинок от юзера (`data:image/png;base64,...`). Добавятся в текущую user-message блоками type:'image'. */
+  attachments?: string[]
   supabase: SupabaseClient
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildUserContent(text: string, attachments?: string[]): any {
+  if (!attachments || attachments.length === 0) return text
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blocks: any[] = []
+  if (text && text.trim()) blocks.push({ type: 'text', text })
+  for (const url of attachments) {
+    const m = /^data:([^;,]+);base64,(.*)$/.exec(url)
+    if (!m) continue
+    const mediaType = m[1].toLowerCase()
+    if (!/^image\/(png|jpeg|jpg|gif|webp)$/.test(mediaType)) continue
+    blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: m[2] } })
+  }
+  if (blocks.length === 0) return text || ' '
+  return blocks
 }
 
 type AgentOutput = {
@@ -1022,7 +1041,7 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
   }
   const conversation: ChatMessage[] = [
     ...trimmedHistory,
-    { role: 'user', content: ctx.userMessage },
+    { role: 'user', content: buildUserContent(ctx.userMessage, ctx.attachments) } as ChatMessage,
   ]
 
   const toolCalls: Array<{ name: string; summary: string; ok: boolean }> = []
@@ -1062,7 +1081,7 @@ export async function runChatbotAgent(ctx: AgentInput): Promise<AgentOutput> {
       if (isBrokenHistory && iter === 0 && conversation.length > 1) {
         console.warn('[chatbot-agent] rebuilding conversation from scratch to recover from broken history')
         conversation.length = 0
-        conversation.push({ role: 'user', content: ctx.userMessage })
+        conversation.push({ role: 'user', content: buildUserContent(ctx.userMessage, ctx.attachments) } as ChatMessage)
         iter-- // повторяем эту итерацию с чистой историей
         continue
       }

@@ -1,13 +1,36 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, ClipboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 type ToolCallInfo = { name: string; summary: string; ok: boolean }
+/** Картинка — data URL вида `data:image/png;base64,iVBOR...`. Храним целиком, на беке парсим. */
+type ImageAttachment = { dataUrl: string }
 type ChatEntry =
-  | { kind: 'user'; text: string }
+  | { kind: 'user'; text: string; images?: string[] }
   | { kind: 'ai'; text: string; tools?: ToolCallInfo[] }
   | { kind: 'system'; text: string }
+
+// SpeechRecognition — webkit префикс в Chromium, стандарт в Safari. Типов в lib.dom нет — объявим минимальные.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SpeechRecognitionInstance = any
+function getSpeechRecognitionCtor(): { new (): SpeechRecognitionInstance } | null {
+  if (typeof window === 'undefined') return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = window as any
+  return w.SpeechRecognition || w.webkitSpeechRecognition || null
+}
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024  // 5 МБ на картинку
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(file)
+  })
+}
 
 type PreviewButton = { text: string; type?: 'url' | 'goto' | 'trigger' | 'gate' | 'subscribe'; hint?: string }
 type MessagePreview = { text: string; buttons?: PreviewButton[]; label?: string; note?: string; gate?: string }
@@ -120,7 +143,13 @@ export function AiAssistantOverlay({
   const [agentHistory, setAgentHistory] = useState<any[]>(persisted?.history as unknown[] ?? [])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([])
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const speechSupported = typeof window !== 'undefined' && !!getSpeechRecognitionCtor()
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -163,18 +192,97 @@ export function AiAssistantOverlay({
 
   if (!isOpen) return null
 
+  async function addImagesFromFiles(files: FileList | File[]) {
+    setAttachError(null)
+    const arr = Array.from(files)
+    const added: ImageAttachment[] = []
+    for (const f of arr) {
+      if (!f.type.startsWith('image/')) continue
+      if (f.size > MAX_IMAGE_BYTES) {
+        setAttachError(`«${f.name}» больше 5 МБ — пропущен`)
+        continue
+      }
+      try {
+        const dataUrl = await fileToDataUrl(f)
+        added.push({ dataUrl })
+      } catch {
+        setAttachError('Не удалось прочитать картинку')
+      }
+    }
+    if (added.length) setAttachments(prev => [...prev, ...added])
+  }
+
+  function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const images: File[] = []
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile()
+        if (f) images.push(f)
+      }
+    }
+    if (images.length) {
+      e.preventDefault()
+      void addImagesFromFiles(images)
+    }
+  }
+
+  function toggleListening() {
+    if (listening) {
+      try { recognitionRef.current?.stop() } catch { /* ignore */ }
+      setListening(false)
+      return
+    }
+    const SR = getSpeechRecognitionCtor()
+    if (!SR) {
+      setAttachError('Голосовой ввод не поддерживается в этом браузере — попробуй Chrome или Safari')
+      return
+    }
+    try {
+      const r = new SR()
+      r.lang = 'ru-RU'
+      r.continuous = false
+      r.interimResults = true
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      r.onresult = (event: any) => {
+        let transcript = ''
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript
+        }
+        setInput(transcript.trim())
+      }
+      r.onend = () => setListening(false)
+      r.onerror = () => setListening(false)
+      r.start()
+      recognitionRef.current = r
+      setListening(true)
+    } catch {
+      setListening(false)
+      setAttachError('Не удалось запустить микрофон')
+    }
+  }
+
   async function send() {
     const question = input.trim()
-    if (!question || loading) return
-    setEntries(prev => [...prev, { kind: 'user', text: question }])
+    const images = attachments.map(a => a.dataUrl)
+    if ((!question && images.length === 0) || loading) return
+    // Если распознавание активно — остановим перед отправкой
+    if (listening) {
+      try { recognitionRef.current?.stop() } catch { /* ignore */ }
+      setListening(false)
+    }
+    setEntries(prev => [...prev, { kind: 'user', text: question, images: images.length ? images : undefined }])
     setInput('')
+    setAttachments([])
     setLoading(true)
     try {
       if (agent) {
         const res = await fetch(agent.endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...agent.payload, history: agentHistory, userMessage: question }),
+          body: JSON.stringify({ ...agent.payload, history: agentHistory, userMessage: question, attachments: images.length ? images : undefined }),
         })
         // Если Vercel обрезал функцию по таймауту — ответ приходит не JSON,
         // а plain-text ("An error occurred..."). Обрабатываем мягко, не теряя переписку.
@@ -197,7 +305,7 @@ export function AiAssistantOverlay({
         const res = await fetch('/api/ai/assistant', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question, context }),
+          body: JSON.stringify({ question, context, attachments: images.length ? images : undefined }),
         })
         const json = await res.json()
         const text = json.error
@@ -237,8 +345,20 @@ export function AiAssistantOverlay({
               if (entry.kind === 'user') {
                 return (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[70%] rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#6A55F8] text-white rounded-br-none whitespace-pre-wrap">
-                      {entry.text}
+                    <div className="max-w-[70%] flex flex-col gap-1.5 items-end">
+                      {entry.images && entry.images.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 justify-end">
+                          {entry.images.map((src, idx) => (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={idx} src={src} alt={`attachment-${idx}`} className="max-w-[220px] max-h-[220px] rounded-lg border border-gray-200 object-cover" />
+                          ))}
+                        </div>
+                      )}
+                      {entry.text && (
+                        <div className="rounded-xl px-4 py-3 text-sm leading-relaxed bg-[#6A55F8] text-white rounded-br-none whitespace-pre-wrap">
+                          {entry.text}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
@@ -316,23 +436,79 @@ export function AiAssistantOverlay({
               </div>
             )}
           </div>
-          <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
-            <input
-              type="text"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && send()}
-              placeholder={placeholder}
-              disabled={loading}
-              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 disabled:bg-gray-50"
-            />
-            <button
-              onClick={send}
-              disabled={loading || !input.trim()}
-              className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? '...' : 'Отправить'}
-            </button>
+          <div className="px-5 pt-3 pb-4 border-t border-gray-100 flex flex-col gap-2">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {attachments.map((a, idx) => (
+                  <div key={idx} className="relative group">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={a.dataUrl} alt={`preview-${idx}`} className="w-16 h-16 rounded-lg border border-gray-200 object-cover" />
+                    <button
+                      onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-900 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Удалить"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {attachError && (
+              <div className="text-xs text-red-500">{attachError}</div>
+            )}
+            <div className="flex gap-2 items-center">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={e => {
+                  if (e.target.files?.length) void addImagesFromFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                title="Прикрепить картинку (или Cmd+V из буфера)"
+                className="w-11 h-11 flex-shrink-0 rounded-xl border border-gray-200 text-gray-500 hover:text-[#6A55F8] hover:border-[#6A55F8]/30 transition-colors disabled:opacity-50"
+              >
+                📎
+              </button>
+              <button
+                type="button"
+                onClick={toggleListening}
+                disabled={loading || !speechSupported}
+                title={speechSupported ? (listening ? 'Остановить запись' : 'Надиктовать голосом') : 'Недоступно в этом браузере'}
+                className={`w-11 h-11 flex-shrink-0 rounded-xl border transition-colors disabled:opacity-50 ${
+                  listening
+                    ? 'bg-red-500 border-red-500 text-white animate-pulse'
+                    : 'border-gray-200 text-gray-500 hover:text-[#6A55F8] hover:border-[#6A55F8]/30'
+                }`}
+              >
+                {listening ? '⏺' : '🎤'}
+              </button>
+              <input
+                type="text"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && send()}
+                onPaste={handlePaste}
+                placeholder={listening ? 'Говори...' : placeholder}
+                disabled={loading}
+                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 disabled:bg-gray-50"
+              />
+              <button
+                onClick={send}
+                disabled={loading || (!input.trim() && attachments.length === 0)}
+                className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-5 py-3 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? '...' : 'Отправить'}
+              </button>
+            </div>
           </div>
         </div>
       </div>

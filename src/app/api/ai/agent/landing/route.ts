@@ -8,9 +8,9 @@ export const maxDuration = 60
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { landingId, projectId, history, userMessage } = body
+    const { landingId, projectId, history, userMessage, attachments } = body
 
-    if (!landingId || !projectId || !userMessage) {
+    if (!landingId || !projectId || (!userMessage && (!Array.isArray(attachments) || attachments.length === 0))) {
       return NextResponse.json({ error: 'landingId, projectId, userMessage required' }, { status: 400 })
     }
 
@@ -33,7 +33,8 @@ export async function POST(request: NextRequest) {
       landingId,
       projectId,
       history: Array.isArray(history) ? history : [],
-      userMessage,
+      userMessage: userMessage ?? '',
+      attachments: Array.isArray(attachments) ? attachments : undefined,
       supabase,
     })
 
