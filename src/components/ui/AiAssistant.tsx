@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, ClipboardEvent } from 'react'
+import { useState, useRef, useEffect, ClipboardEvent, KeyboardEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 type ToolCallInfo = { name: string; summary: string; ok: boolean }
@@ -148,8 +148,18 @@ export function AiAssistantOverlay({
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const speechSupported = typeof window !== 'undefined' && !!getSpeechRecognitionCtor()
+
+  // Авторесайз textarea: высота подстраивается под содержимое (от 1 строки до ~8)
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    const next = Math.min(ta.scrollHeight, 200)  // cap ~8 строк
+    ta.style.height = next + 'px'
+  }, [input])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
@@ -212,7 +222,7 @@ export function AiAssistantOverlay({
     if (added.length) setAttachments(prev => [...prev, ...added])
   }
 
-  function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
+  function handlePaste(e: ClipboardEvent<HTMLTextAreaElement>) {
     const items = e.clipboardData?.items
     if (!items) return
     const images: File[] = []
@@ -457,7 +467,7 @@ export function AiAssistantOverlay({
             {attachError && (
               <div className="text-xs text-red-500">{attachError}</div>
             )}
-            <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-end">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -491,15 +501,22 @@ export function AiAssistantOverlay({
               >
                 {listening ? '⏺' : '🎤'}
               </button>
-              <input
-                type="text"
+              <textarea
+                ref={textareaRef}
+                rows={1}
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && send()}
+                onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    void send()
+                  }
+                }}
                 onPaste={handlePaste}
                 placeholder={listening ? 'Говори...' : placeholder}
                 disabled={loading}
-                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 disabled:bg-gray-50"
+                className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 disabled:bg-gray-50 resize-none leading-relaxed"
+                style={{ minHeight: '44px', maxHeight: '200px' }}
               />
               <button
                 onClick={send}
