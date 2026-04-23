@@ -39,8 +39,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [editingHtmlBlockId, setEditingHtmlBlockId] = useState<string | null>(null)
-  const [hasSelection, setHasSelection] = useState(false)
   const [iframeHeight, setIframeHeight] = useState(600)
+  const [fullscreen, setFullscreen] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
   // НЕ state — чтобы не триггерить ре-рендер iframe. Снимаем отсюда при save.
@@ -206,49 +206,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     })
   }
 
-  // ─── Inline-форматирование в iframe ────────────────────────────────────
-  // ВАЖНО: НЕ вызываем setBlocks после execCommand — иначе React перемонтирует
-  // iframe и слетит выделение. Изменения остаются в живом DOM iframe, мы только
-  // отмечаем блок как dirty. Реальная синхронизация — при save или open HTML-модалки.
-  function applyFormat(command: string, value?: string) {
-    const doc = iframeRef.current?.contentDocument
-    const win = iframeRef.current?.contentWindow
-    if (!doc || !win) return
-    win.focus()
-    try { doc.execCommand(command, false, value) } catch { /* ignore */ }
-    markActiveBlockDirty()
-  }
-
-  function applyFontSize(px: number) {
-    const doc = iframeRef.current?.contentDocument
-    const win = iframeRef.current?.contentWindow
-    if (!doc || !win) return
-    const sel = doc.getSelection()
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
-    const range = sel.getRangeAt(0)
-    const span = doc.createElement('span')
-    span.style.fontSize = `${px}px`
-    try {
-      win.focus()
-      range.surroundContents(span)
-      markActiveBlockDirty()
-    } catch { /* ignore */ }
-  }
-
-  /** Отмечает блок где сейчас каретка как dirty (без чтения DOM — чтоб не ремонтить iframe) */
-  function markActiveBlockDirty() {
-    const doc = iframeRef.current?.contentDocument
-    if (!doc) return
-    const sel = doc.getSelection()
-    if (!sel || sel.rangeCount === 0) return
-    const anchor = sel.anchorNode
-    if (!anchor) return
-    const parent = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement
-    const section = parent?.closest('[data-block-id]')
-    const bId = section?.getAttribute('data-block-id')
-    if (bId) markDirty(bId)
-  }
-
   /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
   function collectLiveHtml() {
     const doc = iframeRef.current?.contentDocument
@@ -272,9 +229,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (!src || e.source !== src) return
       const data = e.data
       if (!data || typeof data !== 'object') return
-      if (data.type === 'stud-selection') {
-        setHasSelection(Boolean(data.has))
-      } else if (data.type === 'stud-input' && typeof data.blockId === 'string') {
+      if (data.type === 'stud-input' && typeof data.blockId === 'string') {
         // Пометить блок как dirty без чтения DOM (иначе ремонт iframe → теряется выделение)
         markDirty(data.blockId)
       } else if (data.type === 'stud-edit-html' && typeof data.blockId === 'string') {
@@ -364,14 +319,38 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   .stud-overlay .stud-h-s  { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
   .stud-overlay .stud-h-sw { bottom: -7px; left: -7px; cursor: sw-resize; }
   .stud-overlay .stud-h-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; }
-  .stud-overlay .stud-hint {
-    position: absolute; top: -28px; left: 0;
-    background: #6A55F8; color: #fff; font-size: 10px; font-weight: 600;
-    padding: 3px 8px; border-radius: 4px; font-family: system-ui, sans-serif;
-    pointer-events: none; white-space: nowrap;
-  }
   body.stud-dragging { user-select: none !important; }
   body.stud-dragging * { cursor: inherit !important; }
+
+  /* Floating toolbar форматирования — появляется рядом с выделенным текстом */
+  .stud-float-toolbar {
+    position: absolute; z-index: 10001;
+    display: none; align-items: center; gap: 2px;
+    background: rgba(17,24,39,0.96); color: #fff;
+    padding: 4px; border-radius: 8px; font-family: system-ui, sans-serif;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    white-space: nowrap;
+  }
+  .stud-float-toolbar.stud-visible { display: inline-flex; }
+  .stud-float-toolbar button {
+    background: transparent; color: #fff; border: none;
+    width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
+    font-size: 13px; font-family: inherit; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .stud-float-toolbar button:hover { background: rgba(255,255,255,0.15); }
+  .stud-float-toolbar select {
+    background: rgba(255,255,255,0.1); color: #fff; border: none;
+    padding: 4px 6px; border-radius: 4px; font-size: 11px; font-family: inherit;
+    height: 28px;
+  }
+  .stud-float-toolbar input[type="color"] {
+    width: 24px; height: 24px; border: none; border-radius: 4px;
+    padding: 0; cursor: pointer; background: transparent;
+  }
+  .stud-float-toolbar .stud-divider {
+    width: 1px; height: 18px; background: rgba(255,255,255,0.2); margin: 0 2px;
+  }
 </style>
 <script data-stud-editor-inject>
   (function() {
@@ -417,12 +396,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     });
     document.body.appendChild(addBtn);
 
-    // Selection → parent
-    document.addEventListener('selectionchange', function() {
-      var sel = document.getSelection();
-      var has = !!(sel && sel.rangeCount > 0 && !sel.isCollapsed);
-      parent.postMessage({ type: 'stud-selection', has: has }, '*');
-    });
     // Input → parent (с blockId — чтобы отметить именно его как dirty)
     document.addEventListener('input', function(e) {
       var target = e.target;
@@ -473,6 +446,38 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     var editingEl = null;  // элемент который сейчас в contenteditable
     var EDITABLE_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','IMG','DIV','LI','BLOCKQUOTE','FIGCAPTION','LABEL'];
 
+    // ─── Undo stack: хранит innerHTML блоков перед каждым значимым действием ───
+    var undoStack = [];  // {blockId, html}
+    var lastPushTime = 0, lastPushBlockId = null;
+    function pushUndo(blockId, force) {
+      if (!blockId) return;
+      var now = Date.now();
+      // Дебаунс для печати: если подряд пишем в одном блоке — не засоряем стек
+      if (!force && lastPushBlockId === blockId && now - lastPushTime < 500) return;
+      var section = document.querySelector('[data-block-id="' + blockId + '"]');
+      if (!section) return;
+      var inner = section.querySelector(':scope > .block-inner');
+      if (!inner) return;
+      undoStack.push({ blockId: blockId, html: inner.innerHTML });
+      if (undoStack.length > 80) undoStack.shift();
+      lastPushTime = now;
+      lastPushBlockId = blockId;
+    }
+    function doUndo() {
+      var item = undoStack.pop();
+      if (!item) return;
+      var section = document.querySelector('[data-block-id="' + item.blockId + '"]');
+      if (!section) return;
+      var inner = section.querySelector(':scope > .block-inner');
+      if (!inner) return;
+      inner.innerHTML = item.html;
+      // Сбрасываем выделение/editing
+      exitEditMode();
+      removeOverlay();
+      parent.postMessage({ type: 'stud-input', blockId: item.blockId }, '*');
+      hideFloatToolbar();
+    }
+
     function removeOverlay() {
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       overlay = null;
@@ -495,7 +500,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       overlay.className = 'stud-overlay';
       overlay.setAttribute('data-stud-editor-inject', 'true');
       overlay.innerHTML = [
-        '<div class="stud-hint">Тащи — двигает. За уголок — меняет размер. 2× клик — редактировать текст</div>',
         '<div class="stud-drag-zone" data-handle="move"></div>',
         '<div class="stud-handle stud-h-nw" data-handle="nw"></div>',
         '<div class="stud-handle stud-h-n"  data-handle="n"></div>',
@@ -533,6 +537,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       e.preventDefault();
       e.stopPropagation();
       if (!selectedEl) return;
+      // Снимок состояния блока в undo-stack перед операцией
+      var section = selectedEl.closest('[data-block-id]');
+      if (section) pushUndo(section.getAttribute('data-block-id'), true);
       var startX = e.clientX, startY = e.clientY;
       var r = selectedEl.getBoundingClientRect();
       var origW = r.width, origH = r.height;
@@ -621,17 +628,172 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
     });
 
-    // Esc → выйти из edit / снять выделение
+    // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') {
         exitEditMode();
         removeOverlay();
+        hideFloatToolbar();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        // Если сейчас в edit-mode и есть нативный undo для текста — пусть сработает.
+        // Наш undo работает на уровне блока как fallback если нативный стек пуст.
+        if (editingEl) {
+          // Пробуем нативный
+          try {
+            if (document.queryCommandSupported && document.queryCommandSupported('undo')) {
+              var hadEffect = document.execCommand('undo');
+              if (hadEffect) return;
+            }
+          } catch (_) {}
+        }
+        e.preventDefault();
+        doUndo();
       }
     });
 
-    // При скролле / ресайзе окна — обновляем позицию overlay
-    window.addEventListener('scroll', positionOverlay, true);
-    window.addEventListener('resize', positionOverlay);
+    // При печати текста — фиксируем состояние блока (с дебаунсом)
+    document.addEventListener('beforeinput', function(e) {
+      var section = e.target && e.target.closest ? e.target.closest('[data-block-id]') : null;
+      if (section) pushUndo(section.getAttribute('data-block-id'));
+    });
+
+    // При скролле / ресайзе окна — обновляем позицию overlay + toolbar
+    window.addEventListener('scroll', function() {
+      positionOverlay();
+      positionFloatToolbar();
+    }, true);
+    window.addEventListener('resize', function() {
+      positionOverlay();
+      positionFloatToolbar();
+    });
+
+    // ───────────────────────────────────────────────────────────────
+    // Floating toolbar форматирования — при выделении текста в edit-mode
+    // ───────────────────────────────────────────────────────────────
+    var floatToolbar = null;
+    var lastSelRect = null;
+
+    function buildFloatToolbar() {
+      if (floatToolbar) return floatToolbar;
+      floatToolbar = document.createElement('div');
+      floatToolbar.className = 'stud-float-toolbar';
+      floatToolbar.setAttribute('data-stud-editor-inject', 'true');
+      floatToolbar.setAttribute('contenteditable', 'false');
+      var sizes = [12,14,16,18,20,24,28,32,36,40,48,56,64,72,84,96];
+      var sizeOpts = '<option value="">Размер</option>' + sizes.map(function(s){ return '<option value="'+s+'">'+s+'px</option>'; }).join('');
+      floatToolbar.innerHTML = [
+        '<button data-cmd="bold" title="Жирный"><b>B</b></button>',
+        '<button data-cmd="italic" title="Курсив"><i>I</i></button>',
+        '<button data-cmd="underline" title="Подчёркнутый"><u>U</u></button>',
+        '<div class="stud-divider"></div>',
+        '<select data-cmd="fontSize">' + sizeOpts + '</select>',
+        '<input type="color" data-cmd="foreColor" value="#ffffff" title="Цвет текста">',
+        '<div class="stud-divider"></div>',
+        '<button data-cmd="justifyLeft" title="По левому">⬅</button>',
+        '<button data-cmd="justifyCenter" title="По центру">↔</button>',
+        '<button data-cmd="justifyRight" title="По правому">➡</button>',
+      ].join('');
+      document.body.appendChild(floatToolbar);
+
+      // mousedown preventDefault — не теряем selection при клике по тулбару
+      floatToolbar.addEventListener('mousedown', function(e) {
+        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') e.preventDefault();
+      });
+      floatToolbar.addEventListener('click', function(e) {
+        var btn = e.target.closest('button');
+        if (!btn) return;
+        var cmd = btn.getAttribute('data-cmd');
+        if (!cmd) return;
+        // Снимок до форматирования
+        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
+        if (section) pushUndo(section.getAttribute('data-block-id'), true);
+        document.execCommand(cmd, false, undefined);
+        notifyBlockDirty(section);
+      });
+      // Font-size select
+      floatToolbar.querySelector('select[data-cmd="fontSize"]').addEventListener('change', function(e) {
+        if (!e.target.value) return;
+        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
+        if (section) pushUndo(section.getAttribute('data-block-id'), true);
+        // execCommand('fontSize') принимает 1..7, поэтому обёртка через span
+        applyFontSizeToSelection(parseInt(e.target.value, 10));
+        e.target.value = '';
+        notifyBlockDirty(section);
+      });
+      // Color picker
+      floatToolbar.querySelector('input[data-cmd="foreColor"]').addEventListener('input', function(e) {
+        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
+        if (section) pushUndo(section.getAttribute('data-block-id'), true);
+        document.execCommand('foreColor', false, e.target.value);
+        notifyBlockDirty(section);
+      });
+      return floatToolbar;
+    }
+
+    function applyFontSizeToSelection(px) {
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+      var range = sel.getRangeAt(0);
+      var span = document.createElement('span');
+      span.style.fontSize = px + 'px';
+      try { range.surroundContents(span); }
+      catch (_) {
+        document.execCommand('fontSize', false, '7');
+        document.querySelectorAll('font[size="7"]').forEach(function(f) {
+          var s = document.createElement('span');
+          s.style.fontSize = px + 'px';
+          while (f.firstChild) s.appendChild(f.firstChild);
+          f.parentNode.replaceChild(s, f);
+        });
+      }
+    }
+
+    function notifyBlockDirty(section) {
+      if (!section) return;
+      parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
+    }
+
+    function showFloatToolbar() {
+      buildFloatToolbar();
+      floatToolbar.classList.add('stud-visible');
+      positionFloatToolbar();
+    }
+    function hideFloatToolbar() {
+      if (floatToolbar) floatToolbar.classList.remove('stud-visible');
+      lastSelRect = null;
+    }
+    function positionFloatToolbar() {
+      if (!floatToolbar || !lastSelRect) return;
+      var tbRect = floatToolbar.getBoundingClientRect();
+      var top = window.scrollY + lastSelRect.top - tbRect.height - 8;
+      if (top < window.scrollY + 4) {
+        top = window.scrollY + lastSelRect.bottom + 8;  // если сверху нет места — снизу
+      }
+      var left = window.scrollX + lastSelRect.left;
+      // Ограничим справа чтобы не вылезло за окно
+      var maxLeft = window.innerWidth + window.scrollX - tbRect.width - 8;
+      if (left > maxLeft) left = maxLeft;
+      if (left < window.scrollX + 4) left = window.scrollX + 4;
+      floatToolbar.style.left = left + 'px';
+      floatToolbar.style.top = top + 'px';
+    }
+
+    document.addEventListener('selectionchange', function() {
+      var sel = window.getSelection();
+      var has = !!(sel && sel.rangeCount > 0 && !sel.isCollapsed);
+      parent.postMessage({ type: 'stud-selection', has: has }, '*');
+      // Показываем toolbar только когда выделение внутри edit-mode элемента
+      if (!has || !editingEl) { hideFloatToolbar(); return; }
+      var anchor = sel.anchorNode;
+      if (!anchor || !editingEl.contains(anchor)) { hideFloatToolbar(); return; }
+      var range = sel.getRangeAt(0);
+      var rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) { hideFloatToolbar(); return; }
+      lastSelRect = rect;
+      showFloatToolbar();
+    });
   })();
 </script>`
 
@@ -658,9 +820,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className={fullscreen ? 'fixed inset-0 z-40 bg-gray-50 overflow-auto p-3 space-y-3' : 'space-y-3'}>
       {/* ── Toolbar ── */}
-      <div className="bg-white rounded-xl border border-gray-100 px-3 py-2 flex items-center gap-3 flex-wrap">
+      <div className={`bg-white rounded-xl border border-gray-100 px-3 py-2 flex items-center gap-3 flex-wrap ${fullscreen ? 'sticky top-0 z-10 shadow-sm' : ''}`}>
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
           <button onClick={() => setViewport('desktop')}
             className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'desktop' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
@@ -671,12 +833,15 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             📱 Mobile
           </button>
         </div>
-        <div className="w-px h-5 bg-gray-200" />
-        <FormatButtons hasSelection={hasSelection} onFormat={applyFormat} onFontSize={applyFontSize} />
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-gray-400">
             {blocks.length} {blocks.length === 1 ? 'блок' : blocks.length < 5 ? 'блока' : 'блоков'}
           </span>
+          <button onClick={() => setFullscreen(v => !v)}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50"
+            title={fullscreen ? 'Свернуть' : 'На весь экран'}>
+            {fullscreen ? '✕ Свернуть' : '⛶ На весь экран'}
+          </button>
           <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
             className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 ${
               dirty.size > 0
@@ -725,51 +890,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           }}
         />
       )}
-    </div>
-  )
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-function FormatButtons({
-  hasSelection, onFormat, onFontSize,
-}: {
-  hasSelection: boolean
-  onFormat: (cmd: string, val?: string) => void
-  onFontSize: (px: number) => void
-}) {
-  const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 56, 64, 72]
-  const COLORS = ['#111827', '#FFFFFF', '#6A55F8', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#EC4899']
-  return (
-    <div className={`flex items-center gap-0.5 ${hasSelection ? 'opacity-100' : 'opacity-50'}`}>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('bold') }} disabled={!hasSelection}
-        className="w-8 h-8 rounded text-sm font-bold hover:bg-gray-100 disabled:opacity-40">B</button>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('italic') }} disabled={!hasSelection}
-        className="w-8 h-8 rounded text-sm italic hover:bg-gray-100 disabled:opacity-40">I</button>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('underline') }} disabled={!hasSelection}
-        className="w-8 h-8 rounded text-sm underline hover:bg-gray-100 disabled:opacity-40">U</button>
-      <select
-        onMouseDown={e => e.preventDefault()}
-        onChange={e => { if (e.target.value) { onFontSize(Number(e.target.value)); e.target.value = '' } }}
-        disabled={!hasSelection}
-        className="ml-1 px-2 py-1 text-xs border border-gray-200 rounded disabled:opacity-40"
-        defaultValue=""
-      >
-        <option value="">Размер</option>
-        {SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
-      </select>
-      <div className="flex items-center gap-0.5 ml-1">
-        {COLORS.map(c => (
-          <button key={c} onMouseDown={e => { e.preventDefault(); onFormat('foreColor', c) }} disabled={!hasSelection}
-            title={c} className="w-5 h-5 rounded border border-gray-300 disabled:opacity-40" style={{ background: c }} />
-        ))}
-      </div>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('justifyLeft') }} disabled={!hasSelection}
-        className="ml-1 w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По левому краю">⬅</button>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('justifyCenter') }} disabled={!hasSelection}
-        className="w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По центру">↔</button>
-      <button onMouseDown={e => { e.preventDefault(); onFormat('justifyRight') }} disabled={!hasSelection}
-        className="w-8 h-8 rounded text-xs hover:bg-gray-100 disabled:opacity-40" title="По правому краю">➡</button>
     </div>
   )
 }
