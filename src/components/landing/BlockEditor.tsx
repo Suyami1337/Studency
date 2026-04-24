@@ -50,13 +50,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [textEditActive, setTextEditActive] = useState(false)
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
-  const [selectedInfo, setSelectedInfo] = useState<null | {
-    tagName: string
-    blockId: string | null
-    text: string
-    href: string
-    zIndex: string
-  }>(null)
+  const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null)
+  const [layers, setLayers] = useState<LayerNode[]>([])
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
@@ -289,9 +285,22 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           text: data.text || '',
           href: data.href || '',
           zIndex: data.zIndex || 'auto',
+          fontSize: data.fontSize,
+          color: data.color,
+          background: data.background,
+          width: data.width,
+          height: data.height,
+          padding: data.padding,
+          margin: data.margin,
+          borderRadius: data.borderRadius,
+          opacity: data.opacity,
         })
+        if (typeof data.path === 'string') setSelectedPath(data.path)
       } else if (data.type === 'stud-element-deselected') {
         setSelectedInfo(null)
+        setSelectedPath(null)
+      } else if (data.type === 'stud-layers' && Array.isArray(data.layers)) {
+        setLayers(data.layers)
       } else if (data.type === 'stud-add-element-menu' && typeof data.blockId === 'string') {
         // Координаты приходят относительно окна iframe — переведём в координаты окна parent'а
         const iframeRect = iframeRef.current?.getBoundingClientRect()
@@ -492,6 +501,47 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     var overlay = null;
     var selectedEl = null;
     var editingEl = null;
+    // Строит DOM-путь элемента от блока для обратной адресации ('block:{id}/children/2/0')
+    function buildDomPath(el) {
+      var section = el.closest('[data-block-id]');
+      if (!section) return '';
+      var parts = [];
+      var cur = el;
+      while (cur && cur !== section) {
+        var p = cur.parentElement;
+        if (!p) break;
+        var idx = Array.prototype.indexOf.call(p.children, cur);
+        parts.unshift(String(idx));
+        cur = p;
+      }
+      return section.getAttribute('data-block-id') + ':' + parts.join('/');
+    }
+
+    function elementByPath(path) {
+      if (!path) return null;
+      var parts = path.split(':');
+      var blockId = parts[0];
+      var idxPath = parts[1] || '';
+      var section = document.querySelector('[data-block-id="' + blockId + '"]');
+      if (!section) return null;
+      var el = section;
+      if (idxPath === '') return null;
+      var indices = idxPath.split('/').map(Number);
+      for (var i = 0; i < indices.length; i++) {
+        el = el && el.children[indices[i]];
+      }
+      return el || null;
+    }
+
+    function rgbToHex(rgb) {
+      if (!rgb) return '';
+      if (/^#/.test(rgb)) return rgb.toLowerCase();
+      var m = /^rgba?\\((\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(rgb);
+      if (!m) return rgb;
+      function h(n) { var s = parseInt(n,10).toString(16); return s.length === 1 ? '0'+s : s; }
+      return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+    }
+
     function isTextual(el) {
       if (!el || !el.tagName) return false;
       // Редактировать можно текстовые блоки, кнопки и листовые div с текстом
@@ -606,6 +656,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         text: textPreview,
         href: href,
         zIndex: el.style.zIndex || cs.zIndex || 'auto',
+        path: buildDomPath(el),
+        fontSize: el.style.fontSize || cs.fontSize,
+        color: rgbToHex(el.style.color || cs.color),
+        background: rgbToHex(el.style.backgroundColor || cs.backgroundColor),
+        width: el.style.width || '',
+        height: el.style.height || '',
+        padding: el.style.padding || '',
+        margin: el.style.margin || '',
+        borderRadius: el.style.borderRadius || cs.borderRadius,
+        opacity: el.style.opacity || cs.opacity || '1',
       }, '*');
 
       overlay = document.createElement('div');
@@ -826,9 +886,95 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
     }
 
+    // Периодически отправляем parent'у дерево слоёв (все selectable элементы)
+    function collectLayers() {
+      var out = [];
+      document.querySelectorAll('[data-block-id]').forEach(function(section, blockIdx) {
+        var bid = section.getAttribute('data-block-id');
+        var inner = section.querySelector(':scope > .block-inner');
+        if (!inner) return;
+        // Заголовок блока
+        out.push({
+          path: bid + ':',
+          tag: 'BLOCK',
+          label: 'Блок ' + (blockIdx + 1),
+          blockId: bid,
+          depth: 0,
+          isBlock: true,
+        });
+        // Обходим детей .block-inner рекурсивно, собираем selectable
+        function walk(el, depth) {
+          for (var i = 0; i < el.children.length; i++) {
+            var c = el.children[i];
+            if (c.getAttribute && c.getAttribute('data-stud-editor-inject')) continue;
+            var path = buildDomPath(c);
+            var label;
+            var tag = c.tagName;
+            if (TEXT_BLOCK_TAGS.indexOf(tag) !== -1 || tag === 'BUTTON' || tag === 'A') {
+              var txt = (c.textContent || '').trim().slice(0, 30);
+              label = txt || tag;
+            } else if (tag === 'IMG') {
+              label = '🖼 ' + ((c.getAttribute('alt') || c.getAttribute('src') || '').slice(0, 26));
+            } else if (tag === 'VIDEO' || tag === 'IFRAME') {
+              label = '▶ ' + tag.toLowerCase();
+            } else {
+              label = tag.toLowerCase();
+              if (c.className && typeof c.className === 'string') {
+                var firstClass = c.className.split(' ')[0];
+                if (firstClass) label += '.' + firstClass;
+              }
+            }
+            out.push({
+              path: path,
+              tag: tag,
+              label: label,
+              blockId: bid,
+              depth: depth,
+            });
+            // Рекурсия только если есть выделяемые потомки (не слишком глубоко)
+            if (depth < 5 && c.children.length > 0 && c.children.length < 50) {
+              // Не опускаемся в inline-элементы (они не выделяются отдельно)
+              if (INLINE_TAGS.indexOf(tag) === -1) walk(c, depth + 1);
+            }
+          }
+        }
+        walk(inner, 1);
+      });
+      parent.postMessage({ type: 'stud-layers', layers: out }, '*');
+    }
+
+    // Debounced collect — чтобы не спамить при каждой правке
+    var collectTimer = null;
+    function scheduleCollect() {
+      if (collectTimer) clearTimeout(collectTimer);
+      collectTimer = setTimeout(collectLayers, 300);
+    }
+    collectLayers();
+    // MutationObserver на весь document.body — любое изменение DOM → обновить слои
+    try {
+      var mo = new MutationObserver(scheduleCollect);
+      mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style','class'] });
+    } catch (_) {}
+
     window.addEventListener('message', function(e) {
       var data = e.data;
       if (!data || typeof data !== 'object') return;
+      if (data.type === 'stud-select-path') {
+        var el = elementByPath(data.path);
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el) buildElementOverlay(el);
+        return;
+      }
+      if (data.type === 'stud-style-update' && selectedEl && data.prop) {
+        var sec = selectedEl.closest('[data-block-id]');
+        var bid = sec ? sec.getAttribute('data-block-id') : null;
+        if (bid) pushUndo(bid, true);
+        // CSS property name: может прийти в camelCase (fontSize) → применяем как style.fontSize
+        selectedEl.style[data.prop] = data.value;
+        positionOverlay();
+        if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+        return;
+      }
       if (data.type === 'stud-format') {
         if (!editingEl) return;
         var section = editingEl.closest('[data-block-id]');
@@ -994,22 +1140,24 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   // ══ Tilda-подобный fullscreen редактор ════════════════════════════════
   return (
     <div className="fixed inset-0 z-40 bg-gray-200 flex flex-col">
-      {/* ── Top bar ── */}
-      <div className="h-14 bg-white border-b border-gray-200 flex items-center px-3 gap-2 flex-shrink-0">
-        {/* + Add */}
-        <button
-          onClick={() => {
-            const firstBlockId = blocks[0]?.id
-            if (!firstBlockId) { void handleAddBlock(); return }
-            setAddMenu({ blockId: firstBlockId, x: 80, y: 70 })
-          }}
-          className="w-10 h-10 rounded-full bg-orange-500 hover:bg-orange-600 text-white flex items-center justify-center text-xl flex-shrink-0"
-          title="Добавить элемент"
-        >+</button>
+      {/* ── Top bar — grid 3 зоны, центр точно по центру окна ── */}
+      <div className="h-14 bg-white border-b border-gray-200 relative flex-shrink-0">
+        {/* Left: + Add */}
+        <div className="absolute left-3 top-0 h-full flex items-center">
+          <button
+            onClick={() => {
+              const firstBlockId = blocks[0]?.id
+              if (!firstBlockId) { void handleAddBlock(); return }
+              setAddMenu({ blockId: firstBlockId, x: 80, y: 64 })
+            }}
+            className="w-10 h-10 rounded-full bg-orange-500 hover:bg-orange-600 text-white flex items-center justify-center text-xl"
+            title="Добавить элемент"
+          >+</button>
+        </div>
 
-        {/* Center: viewport switcher */}
-        <div className="flex-1 flex items-center justify-center gap-2">
-          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1">
+        {/* Center: viewport switcher — строго по центру окна */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1 pointer-events-auto">
             <ViewportBtn label="Мобильный" active={viewport === 'mobile'} onClick={() => setViewport('mobile')}>
               <svg width="14" height="18" viewBox="0 0 14 18" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="1" width="12" height="16" rx="2"/><circle cx="7" cy="14" r="0.5" fill="currentColor"/></svg>
             </ViewportBtn>
@@ -1026,35 +1174,39 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         </div>
 
         {/* Right: save / close / help */}
-        <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
-          className={`px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide transition-colors disabled:opacity-60 ${
-            dirty.size > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-500'
-          }`}>
-          {saving ? '...' : 'Сохранить'}
-        </button>
-        <button onClick={() => setFullscreen(false)}
-          className="px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide border border-gray-300 text-gray-700 hover:bg-gray-50">
-          Закрыть
-        </button>
-        <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Справка">?</button>
-        <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Ещё">⋯</button>
+        <div className="absolute right-3 top-0 h-full flex items-center gap-2">
+          <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
+            className={`px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide transition-colors disabled:opacity-60 ${
+              dirty.size > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-500'
+            }`}>
+            {saving ? '...' : 'Сохранить'}
+          </button>
+          <button onClick={() => setFullscreen(false)}
+            className="px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide border border-gray-300 text-gray-700 hover:bg-gray-50">
+            Закрыть
+          </button>
+          <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Справка">?</button>
+          <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Ещё">⋯</button>
+        </div>
       </div>
 
       {/* ── Main area: left panel / canvas / right panel ── */}
       <div className="flex-1 flex min-h-0 relative">
-        {/* Left panel: Layers / Blocks */}
+        {/* Left panel: Слои */}
         {leftPanelOpen && (
           <LayersPanel
-            blocks={blocks}
+            layers={layers}
+            selectedPath={selectedPath}
+            onPick={(path) => iframeRef.current?.contentWindow?.postMessage({ type: 'stud-select-path', path }, '*')}
             onClose={() => setLeftPanelOpen(false)}
           />
         )}
 
-        {/* Center canvas */}
-        <div className="flex-1 overflow-auto bg-gray-200 flex items-start justify-center p-6">
+        {/* Center canvas — в desktop нет padding, лендинг занимает всю ширину. В мобильных есть рамка-эмуляция */}
+        <div className={`flex-1 overflow-auto bg-gray-200 flex items-start justify-center ${isMobileLike ? 'p-6' : ''}`}>
           <div
-            className={`bg-white shadow-lg transition-all ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden' : 'rounded-lg'}`}
-            style={{ width: viewportWidth ?? '100%', maxWidth: '100%' }}
+            className={`bg-white transition-all ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-lg' : 'w-full'}`}
+            style={isMobileLike ? { width: viewportWidth ?? '100%' } : undefined}
           >
             <iframe
               ref={iframeRef}
@@ -1074,6 +1226,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
             onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
             onClose={() => setRightPanelOpen(false)}
+            onStyle={(prop, value) => {
+              setSelectedInfo(i => i ? { ...i, [prop]: value } : i)
+              sendElementUpdate({ type: 'stud-style-update', prop, value })
+            }}
           />
         )}
 
@@ -1167,48 +1323,80 @@ function QuickAddBtn({ title, active, children }: { title: string; active?: bool
   )
 }
 
-function LayersPanel({ blocks, onClose }: { blocks: LandingBlock[]; onClose: () => void }) {
-  const [tab, setTab] = useState<'layers' | 'blocks'>('blocks')
+type LayerNode = { path: string; tag: string; label: string; blockId: string; depth: number }
+
+function LayersPanel({
+  layers, selectedPath, onPick, onClose,
+}: {
+  layers: LayerNode[]
+  selectedPath: string | null
+  onPick: (path: string) => void
+  onClose: () => void
+}) {
   return (
     <aside className="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-10">
-      <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-3">
-        <button onClick={() => setTab('layers')}
-          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400'}`}>СЛОИ</button>
-        <button onClick={() => setTab('blocks')}
-          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'blocks' ? 'text-gray-900' : 'text-gray-400'}`}>БЛОКИ</button>
-        <div className="ml-auto flex items-center gap-1">
-          <button className="w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Фильтр">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h10M4 7h6M6 11h2"/></svg>
-          </button>
-          <button onClick={onClose} className="w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
-        </div>
+      <div className="h-12 border-b border-gray-200 flex items-center px-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-900">Слои</span>
+        <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
-        {tab === 'blocks' ? (
-          blocks.length === 0 ? (
-            <p className="p-3 text-xs text-gray-400 text-center">Нет блоков</p>
-          ) : (
-            blocks.map((b, i) => (
-              <div key={b.id} className="px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer flex items-center gap-2">
-                <span className="text-gray-400 text-[10px] w-4">{i + 1}</span>
-                <span className="text-sm text-gray-700 truncate flex-1">{b.name || `Блок ${i + 1}`}</span>
-              </div>
-            ))
-          )
+      <div className="flex-1 overflow-y-auto p-1">
+        {layers.length === 0 ? (
+          <p className="p-3 text-xs text-gray-400 text-center">На странице пока нет элементов</p>
         ) : (
-          <p className="p-3 text-xs text-gray-400 text-center">Выбери элемент в превью — его слои появятся здесь</p>
+          layers.map((l) => {
+            const active = l.path === selectedPath
+            return (
+              <button key={l.path} onClick={() => onPick(l.path)}
+                className={`w-full text-left px-2 py-1.5 rounded transition-colors flex items-center gap-2 text-xs ${active ? 'bg-[#F0EDFF] text-[#6A55F8]' : 'hover:bg-gray-50 text-gray-700'}`}
+                style={{ paddingLeft: 8 + l.depth * 12 }}
+              >
+                <span className="text-gray-400 text-[10px] font-mono uppercase w-8 flex-shrink-0">{layerIconFor(l.tag)}</span>
+                <span className="truncate flex-1">{l.label}</span>
+              </button>
+            )
+          })
         )}
       </div>
     </aside>
   )
 }
 
-function PropertiesPanel({ info, onChangeLink, onLayer, onDelete, onClose }: {
-  info: null | { tagName: string; blockId: string | null; text: string; href: string; zIndex: string }
+function layerIconFor(tag: string): string {
+  if (/^H[1-6]$/.test(tag)) return 'H'
+  if (tag === 'P' || tag === 'LI') return '¶'
+  if (tag === 'IMG') return '🖼'
+  if (tag === 'VIDEO' || tag === 'IFRAME') return '▶'
+  if (tag === 'A' || tag === 'BUTTON') return '⬢'
+  if (tag === 'HR') return '―'
+  return '▭'
+}
+
+type SelectedInfo = {
+  tagName: string
+  blockId: string | null
+  text: string
+  href: string
+  zIndex: string
+  fontSize?: string
+  color?: string
+  background?: string
+  width?: string
+  height?: string
+  padding?: string
+  margin?: string
+  borderRadius?: string
+  opacity?: string
+}
+
+function PropertiesPanel({
+  info, onChangeLink, onLayer, onDelete, onClose, onStyle,
+}: {
+  info: SelectedInfo | null
   onChangeLink: (href: string) => void
   onLayer: (direction: 'front' | 'back' | 'top' | 'bottom') => void
   onDelete: () => void
   onClose: () => void
+  onStyle: (prop: string, value: string) => void
 }) {
   return (
     <aside className="w-72 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 z-10">
@@ -1216,7 +1404,7 @@ function PropertiesPanel({ info, onChangeLink, onLayer, onDelete, onClose }: {
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {!info ? (
           <p className="text-xs text-gray-400 text-center py-6">Выбери элемент в превью — настройки появятся здесь</p>
         ) : (
@@ -1224,25 +1412,90 @@ function PropertiesPanel({ info, onChangeLink, onLayer, onDelete, onClose }: {
             <div className="text-[11px] text-gray-500">
               {info.tagName}{info.text ? ` — «${info.text}»` : ''}
             </div>
+
             {(info.tagName === 'A' || info.tagName === 'BUTTON') && (
-              <div>
-                <label className="block text-[11px] font-medium text-gray-600 mb-1">Ссылка</label>
+              <Field label="Ссылка">
                 <input type="text" value={info.href} onChange={e => onChangeLink(e.target.value)}
                   placeholder="https://..."
-                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]"
-                />
-              </div>
+                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]" />
+              </Field>
             )}
-            <div>
-              <label className="block text-[11px] font-medium text-gray-600 mb-1">Слой</label>
+
+            {/* Размер и положение */}
+            <Section title="Размер">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Ширина">
+                  <CssInput value={info.width || ''} placeholder="авто"
+                    onChange={v => onStyle('width', v)} />
+                </Field>
+                <Field label="Высота">
+                  <CssInput value={info.height || ''} placeholder="авто"
+                    onChange={v => onStyle('height', v)} />
+                </Field>
+              </div>
+            </Section>
+
+            {/* Текст */}
+            <Section title="Текст">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Размер">
+                  <CssInput value={info.fontSize || ''} placeholder={info.fontSize || ''}
+                    onChange={v => onStyle('fontSize', v)} />
+                </Field>
+                <Field label="Цвет">
+                  <ColorInput value={info.color || '#000000'}
+                    onChange={v => onStyle('color', v)} />
+                </Field>
+              </div>
+            </Section>
+
+            {/* Фон */}
+            <Section title="Фон">
+              <Field label="Цвет фона">
+                <ColorInput value={info.background || '#ffffff'}
+                  onChange={v => onStyle('background', v)} />
+              </Field>
+            </Section>
+
+            {/* Отступы */}
+            <Section title="Отступы">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Внутри (padding)">
+                  <CssInput value={info.padding || ''} placeholder="0"
+                    onChange={v => onStyle('padding', v)} />
+                </Field>
+                <Field label="Снаружи (margin)">
+                  <CssInput value={info.margin || ''} placeholder="0"
+                    onChange={v => onStyle('margin', v)} />
+                </Field>
+              </div>
+            </Section>
+
+            {/* Форма */}
+            <Section title="Форма">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Скругление">
+                  <CssInput value={info.borderRadius || ''} placeholder="0"
+                    onChange={v => onStyle('borderRadius', v)} />
+                </Field>
+                <Field label="Прозрачность">
+                  <input type="range" min={0} max={100}
+                    value={Math.round(parseFloat(info.opacity || '1') * 100)}
+                    onChange={e => onStyle('opacity', String(Number(e.target.value) / 100))}
+                    className="w-full" />
+                </Field>
+              </div>
+            </Section>
+
+            <Section title="Слой">
               <div className="grid grid-cols-2 gap-1.5">
                 <button onClick={() => onLayer('top')}    className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇱ Поверх всех</button>
                 <button onClick={() => onLayer('front')}  className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↑ Вперёд</button>
                 <button onClick={() => onLayer('back')}   className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↓ Назад</button>
                 <button onClick={() => onLayer('bottom')} className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇲ За всеми</button>
               </div>
-              <p className="text-[10px] text-gray-400 mt-1">z-index: {info.zIndex}</p>
-            </div>
+            </Section>
+
             <div className="pt-3 border-t border-gray-100">
               <button onClick={onDelete}
                 className="w-full px-3 py-1.5 text-xs text-red-600 rounded-lg border border-red-200 hover:bg-red-50">
@@ -1255,6 +1508,51 @@ function PropertiesPanel({ info, onChangeLink, onLayer, onDelete, onClose }: {
       </div>
     </aside>
   )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">{title}</div>
+      {children}
+    </div>
+  )
+}
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <label className="block text-[11px] font-medium text-gray-600 mb-1">{label}</label>
+      {children}
+    </div>
+  )
+}
+function CssInput({ value, placeholder, onChange }: { value: string; placeholder?: string; onChange: (v: string) => void }) {
+  return (
+    <input type="text" value={value} placeholder={placeholder}
+      onChange={e => onChange(e.target.value)}
+      onBlur={e => onChange(e.target.value)}
+      className="w-full px-2 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8]" />
+  )
+}
+function ColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <input type="color" value={cssColorToHex(value)} onChange={e => onChange(e.target.value)}
+        className="w-8 h-7 rounded border border-gray-200 cursor-pointer bg-transparent" />
+      <input type="text" value={value} onChange={e => onChange(e.target.value)}
+        className="flex-1 px-2 py-1.5 rounded border border-gray-200 text-xs font-mono focus:outline-none focus:border-[#6A55F8]" />
+    </div>
+  )
+}
+
+function cssColorToHex(v: string): string {
+  // Возвращаем hex если уже hex, иначе временно '#000000' (color-picker требует #rrggbb)
+  if (/^#[0-9a-f]{6}$/i.test(v)) return v
+  if (/^#[0-9a-f]{3}$/i.test(v)) {
+    const r = v[1], g = v[2], b = v[3]
+    return `#${r}${r}${g}${g}${b}${b}`
+  }
+  return '#000000'
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1285,7 +1583,11 @@ function AddElementMenu({
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
         className="fixed z-50 bg-white rounded-xl border border-gray-200 shadow-lg p-2 grid grid-cols-3 gap-1"
-        style={{ left: Math.min(x - 120, window.innerWidth - 250), top: y, width: 240 }}
+        style={{
+          left: Math.max(8, Math.min(x - 120, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 248)),
+          top: Math.max(8, y),
+          width: 240,
+        }}
       >
         {items.map(it => (
           <button
