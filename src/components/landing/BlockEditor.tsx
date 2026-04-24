@@ -300,6 +300,17 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     position: absolute; pointer-events: none; z-index: 10000;
     border: 2px solid #6A55F8; box-sizing: border-box;
   }
+  .stud-overlay .stud-drag-btn {
+    position: absolute; top: -30px; left: 0;
+    pointer-events: auto; cursor: move;
+    background: #6A55F8; color: #fff;
+    width: 28px; height: 24px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    user-select: none;
+  }
+  .stud-overlay .stud-drag-btn:hover { background: #5845e0; }
   .stud-overlay .stud-handle {
     position: absolute; pointer-events: auto;
     width: 12px; height: 12px; background: #6A55F8;
@@ -375,37 +386,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       section.appendChild(toolbar);
     });
 
-    // Сбросить старые translate у блоков — если пользователь раньше «перетаскивал»
-    // блоки поверх друг друга, теперь они встанут по своим позициям в потоке.
+    // Сбросить старые translate у блоков (если пользователь успел таскать блоки ранее)
     document.querySelectorAll('[data-block-id]').forEach(function(section) {
       var t = section.style.transform || '';
       if (/translate\\(/.test(t)) {
         section.style.transform = t.replace(/translate\\([^)]*\\)\\s*/g, '').trim();
       }
     });
-
-    // Авто-contenteditable на все текстовые элементы: клик → сразу редактируется,
-    // выделение мышью работает нативно, floating toolbar всплывает при selection.
-    // Drag/resize — на уровне ВСЕГО блока (не отдельного элемента), через overlay
-    // который появляется при клике на блок в зоне вне текста (фон, padding).
-    document.querySelectorAll('[data-block-id] .block-inner').forEach(function(inner) {
-      var BLOCK_SEL = 'h1, h2, h3, h4, h5, h6, p, li, td, th, label, blockquote, figcaption';
-      inner.querySelectorAll(BLOCK_SEL).forEach(function(el) {
-        if (el.textContent.trim()) el.setAttribute('contenteditable', 'true');
-      });
-      var INLINE_SEL = 'a, button, span, b, i, em, strong';
-      inner.querySelectorAll(INLINE_SEL).forEach(function(el) {
-        if (!el.textContent.trim()) return;
-        if (el.closest('[contenteditable="true"]')) return;
-        el.setAttribute('contenteditable', 'true');
-      });
-      inner.querySelectorAll('div').forEach(function(el) {
-        if (el.children.length > 0) return;
-        if (!el.textContent.trim()) return;
-        if (el.closest('[contenteditable="true"]')) return;
-        el.setAttribute('contenteditable', 'true');
-      });
-    });
+    // Авто-contenteditable НЕ ставим. Элементы становятся редактируемыми только
+    // после ВТОРОГО клика на уже выделенный элемент. Первый клик — выделение
+    // (рамка + drag/resize), второй — вход в редактирование текста.
 
     // Кнопка «+ Добавить блок» в конце body
     var addBtn = document.createElement('button');
@@ -456,16 +446,43 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     setTimeout(reportHeight, 3000);
 
     // ───────────────────────────────────────────────────────────────
-    // Tilda-like selection БЛОКА (не отдельного элемента):
-    //  - Клик на текст → редактируется напрямую (contenteditable)
-    //  - Клик на блок в зоне вне текста (фон/padding) → overlay вокруг секции
-    //  - Drag по центру overlay → перемещает весь блок (translate)
-    //  - Drag за ручки → меняет padding блока (визуальные отступы)
-    //  - Esc / клик вне → снять выделение
+    // Tilda-like element-level selection:
+    //  - Первый клик на любой элемент → overlay с рамкой + 8 resize-ручек + drag-кнопкой
+    //  - Drag за ✥ — перемещает элемент (transform: translate)
+    //  - Drag за уголок — resize (width/height; inline → inline-block автоматом)
+    //  - Второй клик на уже выделенный текстовый элемент → режим редактирования,
+    //    каретка ставится в точку клика
+    //  - Esc / клик вне → снять
     // ───────────────────────────────────────────────────────────────
     var overlay = null;
-    var selectedBlock = null;  // section[data-block-id]
-    var editingEl = null;      // для совместимости с floating toolbar — элемент с текущим выделением
+    var selectedEl = null;
+    var editingEl = null;
+    var TEXTUAL_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','LI','BLOCKQUOTE','FIGCAPTION','LABEL','B','I','EM','STRONG','TD','TH','DT','DD'];
+
+    function isTextual(el) {
+      if (!el || !el.tagName) return false;
+      if (TEXTUAL_TAGS.indexOf(el.tagName) !== -1) return true;
+      // div с текстом и без детей-элементов — тоже редактируется
+      if (el.tagName === 'DIV' && el.children.length === 0 && el.textContent.trim()) return true;
+      return false;
+    }
+
+    /** Найти ближайший подходящий для выделения элемент, поднимаясь от target. */
+    function findSelectable(target) {
+      var el = target;
+      if (el && el.nodeType !== 1) el = el.parentElement;
+      while (el && el !== document.body) {
+        // Пропускаем служебные
+        if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return null;
+        // Сама секция блока и .block-inner — не выделяем (блок целиком не двигается)
+        if (el.hasAttribute && el.hasAttribute('data-block-id')) return null;
+        if (el.classList && el.classList.contains('block-inner')) return null;
+        // Элемент должен быть внутри блока
+        if (el.closest && el.closest('[data-block-id]')) return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
 
     // ─── Undo stack: хранит innerHTML блоков перед каждым значимым действием ───
     var undoStack = [];  // {blockId, html}
@@ -502,28 +519,28 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function removeOverlay() {
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       overlay = null;
-      selectedBlock = null;
+      selectedEl = null;
     }
 
     function exitEditMode() {
-      // Мы больше не оставляем отдельный edit-mode через двойной клик —
-      // все текстовые элементы auto-contenteditable. Функция оставлена для совместимости
-      // (используется в undo-stack / обработке Esc).
-      editingEl = null;
+      if (editingEl) {
+        editingEl.removeAttribute('contenteditable');
+        editingEl = null;
+      }
+      hideFloatToolbar();
     }
 
-    function buildBlockOverlay(section) {
+    function buildElementOverlay(el) {
       removeOverlay();
-      selectedBlock = section;
+      selectedEl = el;
 
       overlay = document.createElement('div');
       overlay.className = 'stud-overlay';
       overlay.setAttribute('data-stud-editor-inject', 'true');
-      // Блок сам НЕ двигается мышью — иначе можно перетащить его поверх других блоков
-      // и получить мешанину. Перемещение блока вверх/вниз — через стрелки ⬆⬇ в его
-      // toolbar (тем самым порядок блоков всегда остаётся линейным).
-      // Ручки по сторонам — только для resize (меняют padding блока).
+      // Overlay прозрачен для кликов (pointer-events: none) — клик в текст проходит
+      // сквозь него. Интерактивны только drag-button сверху и 8 ручек по углам.
       overlay.innerHTML = [
+        '<div class="stud-drag-btn" data-handle="move" title="Перетащить">✥</div>',
         '<div class="stud-handle stud-h-nw" data-handle="nw"></div>',
         '<div class="stud-handle stud-h-n"  data-handle="n"></div>',
         '<div class="stud-handle stud-h-ne" data-handle="ne"></div>',
@@ -539,8 +556,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
 
     function positionOverlay() {
-      if (!overlay || !selectedBlock) return;
-      var r = selectedBlock.getBoundingClientRect();
+      if (!overlay || !selectedEl) return;
+      var r = selectedEl.getBoundingClientRect();
       overlay.style.left = (window.scrollX + r.left) + 'px';
       overlay.style.top = (window.scrollY + r.top) + 'px';
       overlay.style.width = r.width + 'px';
@@ -559,51 +576,105 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function startDrag(mode, e) {
       e.preventDefault();
       e.stopPropagation();
-      if (!selectedBlock) return;
-      var blockId = selectedBlock.getAttribute('data-block-id');
-      pushUndo(blockId, true);
+      if (!selectedEl) return;
+      var section = selectedEl.closest('[data-block-id]');
+      var blockId = section ? section.getAttribute('data-block-id') : null;
+      if (blockId) pushUndo(blockId, true);
 
       var startX = e.clientX, startY = e.clientY;
-      // Текущие padding блока (парсим из inline или computed)
-      var cs = window.getComputedStyle(selectedBlock);
-      var origPt = parseFloat(selectedBlock.style.paddingTop) || parseFloat(cs.paddingTop) || 0;
-      var origPb = parseFloat(selectedBlock.style.paddingBottom) || parseFloat(cs.paddingBottom) || 0;
-      var origPl = parseFloat(selectedBlock.style.paddingLeft) || parseFloat(cs.paddingLeft) || 0;
-      var origPr = parseFloat(selectedBlock.style.paddingRight) || parseFloat(cs.paddingRight) || 0;
+      var r = selectedEl.getBoundingClientRect();
+      var origW = r.width, origH = r.height;
+      // Текущий translate если уже был
+      var curTx = 0, curTy = 0;
+      var m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(selectedEl.style.transform || '');
+      if (m) { curTx = parseFloat(m[1]); curTy = parseFloat(m[2]); }
+
+      // Для resize inline-элементов (span, a, b, i) принудительно inline-block,
+      // иначе width/height не применяется
+      if (mode !== 'move') {
+        var disp = window.getComputedStyle(selectedEl).display;
+        if (disp === 'inline') selectedEl.style.display = 'inline-block';
+      }
 
       document.body.classList.add('stud-dragging');
 
       function onMove(ev) {
         var dx = ev.clientX - startX;
         var dy = ev.clientY - startY;
-        // Resize = меняем padding блока. Сам блок при этом остаётся на своём месте
-        // в вертикальном потоке, перекрытие с соседними блоками невозможно.
-        var pt = origPt, pb = origPb, pl = origPl, pr = origPr;
-        if (mode.indexOf('n') !== -1) pt = Math.max(0, origPt - dy);
-        if (mode.indexOf('s') !== -1) pb = Math.max(0, origPb + dy);
-        if (mode.indexOf('w') !== -1) pl = Math.max(0, origPl - dx);
-        if (mode.indexOf('e') !== -1) pr = Math.max(0, origPr + dx);
-        selectedBlock.style.paddingTop = pt + 'px';
-        selectedBlock.style.paddingBottom = pb + 'px';
-        selectedBlock.style.paddingLeft = pl + 'px';
-        selectedBlock.style.paddingRight = pr + 'px';
+        if (mode === 'move') {
+          // Перемещение через transform: элемент не выдёргивается из flow, соседей не ломает
+          selectedEl.style.transform = 'translate(' + (curTx + dx) + 'px, ' + (curTy + dy) + 'px)';
+        } else {
+          // Resize элемента. С запада/севера дополнительно смещаем translate,
+          // чтобы элемент «тянулся» от противоположной стороны — визуально естественно.
+          var w = origW, h = origH, tx = curTx, ty = curTy;
+          if (mode.indexOf('e') !== -1) w = origW + dx;
+          if (mode.indexOf('w') !== -1) { w = origW - dx; tx = curTx + dx; }
+          if (mode.indexOf('s') !== -1) h = origH + dy;
+          if (mode.indexOf('n') !== -1) { h = origH - dy; ty = curTy + dy; }
+          if (w < 20) w = 20;
+          if (h < 20) h = 20;
+          selectedEl.style.width = w + 'px';
+          selectedEl.style.height = h + 'px';
+          if (mode.indexOf('w') !== -1 || mode.indexOf('n') !== -1) {
+            selectedEl.style.transform = 'translate(' + tx + 'px, ' + ty + 'px)';
+          }
+        }
         positionOverlay();
       }
       function onUp() {
         document.body.classList.remove('stud-dragging');
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
-        parent.postMessage({ type: 'stud-input', blockId: blockId }, '*');
+        if (blockId) parent.postMessage({ type: 'stud-input', blockId: blockId }, '*');
       }
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     }
 
-    // Клик по блоку больше не выделяет его. Редактирование — только текста
-    // (нативный contenteditable). Если какой-то overlay остался — убираем.
+    // Двухшаговая логика кликов (Tilda-like):
+    //  1-й клик на элемент → selection (overlay + ручки + drag-кнопка)
+    //  2-й клик на уже выделенный текстовый → вход в edit mode (каретка в точку клика)
+    //  Клик в edit-mode внутри редактируемого → пропускаем (нативный caret)
+    //  Клик вне любого элемента → снимаем всё
     document.addEventListener('click', function(e) {
+      // Служебное UI — игнорируем
       if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn') || e.target.closest('.stud-float-toolbar'))) return;
-      removeOverlay();
+      // Клик внутри редактируемого — пропускаем (нативный caret перемещается)
+      if (editingEl && editingEl.contains(e.target)) return;
+
+      var el = findSelectable(e.target);
+      if (!el) {
+        exitEditMode();
+        removeOverlay();
+        return;
+      }
+
+      // Выходим из edit-mode если в нём были
+      exitEditMode();
+
+      // Второй клик на уже выделенном текстовом → вход в редактирование
+      if (selectedEl === el && isTextual(el)) {
+        removeOverlay();
+        editingEl = el;
+        el.setAttribute('contenteditable', 'true');
+        el.focus();
+        // Ставим каретку в точку клика (если браузер поддерживает)
+        try {
+          var range = document.caretRangeFromPoint
+            ? document.caretRangeFromPoint(e.clientX, e.clientY)
+            : null;
+          if (range) {
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        } catch (_) {}
+        return;
+      }
+
+      // Иначе — селектим элемент (или переключаем с другого)
+      buildElementOverlay(el);
     });
 
     // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo
