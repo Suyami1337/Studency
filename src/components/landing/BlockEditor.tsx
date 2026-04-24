@@ -1211,7 +1211,7 @@ function HtmlBlockModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl max-w-5xl w-full h-[92vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h3 className="text-base font-semibold text-gray-900">HTML-код блока</h3>
@@ -1219,11 +1219,11 @@ function HtmlBlockModal({
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
-        <div className="flex-1 overflow-hidden p-4">
+        <div className="flex-1 min-h-0 p-4">
           <textarea
             value={html}
             onChange={e => setHtml(e.target.value)}
-            className="w-full h-full px-3 py-2 text-xs font-mono text-gray-800 border border-gray-200 rounded-lg focus:outline-none focus:border-[#6A55F8] resize-none"
+            className="w-full h-full px-3 py-2 text-sm font-mono text-gray-800 border border-gray-200 rounded-lg focus:outline-none focus:border-[#6A55F8] resize-none leading-relaxed"
             placeholder="<section>...</section>"
             spellCheck={false}
           />
