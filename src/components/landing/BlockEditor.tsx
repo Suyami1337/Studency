@@ -51,6 +51,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null)
+  const [selectionCount, setSelectionCount] = useState(0)
   const [layers, setLayers] = useState<LayerNode[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [activeLayerBlock, setActiveLayerBlock] = useState<string | null>(null)
@@ -330,6 +331,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           margin: data.margin,
           borderRadius: data.borderRadius,
           opacity: data.opacity,
+          isGroup: Boolean(data.isGroup),
         })
         if (typeof data.path === 'string') setSelectedPath(data.path)
         // Автопереключаем слои на блок, в котором выделенный элемент
@@ -340,6 +342,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       } else if (data.type === 'stud-element-deselected') {
         setSelectedInfo(null)
         setSelectedPath(null)
+        setSelectionCount(0)
+      } else if (data.type === 'stud-selection-count' && typeof data.count === 'number') {
+        setSelectionCount(data.count)
       } else if (data.type === 'stud-layers' && Array.isArray(data.layers)) {
         setLayers(data.layers)
       } else if (data.type === 'stud-add-element-menu' && typeof data.blockId === 'string') {
@@ -423,6 +428,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   .stud-overlay .stud-h-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; }
   body.stud-dragging { user-select: none !important; }
   body.stud-dragging * { cursor: inherit !important; }
+
+  /* Box-select rectangle */
+  .stud-box-select {
+    position: absolute; z-index: 9999;
+    background: rgba(106,85,248,0.1);
+    border: 1.5px dashed #6A55F8;
+    pointer-events: none;
+  }
 </style>
 <script data-stud-editor-inject>
   (function() {
@@ -540,7 +553,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     //  - Esc / клик вне → снять
     // ───────────────────────────────────────────────────────────────
     var overlay = null;
-    var selectedEl = null;
+    var selectedEl = null;        // primary (последний кликнутый) — для drag/resize
+    var selectedEls = [];         // массив всех выделенных для Multi-select
+    var secondaryOutlines = [];   // отдельные рамки-подсветки у не-primary selected
     var editingEl = null;
     // Строит DOM-путь элемента от блока для обратной адресации ('block:{id}/children/2/0')
     function buildDomPath(el) {
@@ -663,11 +678,35 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       parent.postMessage({ type: 'stud-input', blockId: item.blockId }, '*');
     }
 
+    function clearSecondaryOutlines() {
+      secondaryOutlines.forEach(function(o) { if (o.parentNode) o.parentNode.removeChild(o); });
+      secondaryOutlines = [];
+    }
     function removeOverlay() {
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       overlay = null;
       selectedEl = null;
+      selectedEls = [];
+      clearSecondaryOutlines();
       parent.postMessage({ type: 'stud-element-deselected' }, '*');
+    }
+
+    function redrawSecondaryOutlines() {
+      clearSecondaryOutlines();
+      selectedEls.forEach(function(el) {
+        if (el === selectedEl) return;  // primary уже обведён overlay'ем
+        var r = el.getBoundingClientRect();
+        var o = document.createElement('div');
+        o.className = 'stud-overlay';
+        o.setAttribute('data-stud-editor-inject', 'true');
+        o.style.left = (window.scrollX + r.left) + 'px';
+        o.style.top = (window.scrollY + r.top) + 'px';
+        o.style.width = r.width + 'px';
+        o.style.height = r.height + 'px';
+        // Только рамка, без ручек и drag-зон
+        document.body.appendChild(o);
+        secondaryOutlines.push(o);
+      });
     }
 
     function exitEditMode() {
@@ -679,9 +718,33 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       parent.postMessage({ type: 'stud-edit-off' }, '*');
     }
 
+    function setSelection(els) {
+      // els может быть массивом или одним элементом
+      var arr = Array.isArray(els) ? els.filter(Boolean) : (els ? [els] : []);
+      if (arr.length === 0) { removeOverlay(); return; }
+      selectedEls = arr;
+      buildElementOverlay(arr[arr.length - 1]);
+      redrawSecondaryOutlines();
+      parent.postMessage({ type: 'stud-selection-count', count: arr.length }, '*');
+    }
+
+    function toggleInSelection(el) {
+      var idx = selectedEls.indexOf(el);
+      if (idx !== -1) {
+        var next = selectedEls.slice();
+        next.splice(idx, 1);
+        setSelection(next);
+      } else {
+        setSelection(selectedEls.concat([el]));
+      }
+    }
+
     function buildElementOverlay(el) {
-      removeOverlay();
+      // primary-overlay с ручками
+      if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      overlay = null;
       selectedEl = el;
+      if (selectedEls.indexOf(el) === -1) selectedEls = [el];
 
       // Уведомляем parent — откроется правая панель настроек
       var section = el.closest('[data-block-id]');
@@ -707,6 +770,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         margin: el.style.margin || '',
         borderRadius: el.style.borderRadius || cs.borderRadius,
         opacity: el.style.opacity || cs.opacity || '1',
+        isGroup: el.hasAttribute && el.hasAttribute('data-stud-group'),
       }, '*');
 
       overlay = document.createElement('div');
@@ -812,15 +876,126 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       document.addEventListener('mouseup', onUp);
     }
 
-    // Двухшаговая логика кликов (Tilda-like):
-    //  1-й клик на элемент → selection (overlay + ручки + drag-кнопка)
-    //  2-й клик на уже выделенный текстовый → вход в edit mode (каретка в точку клика)
-    //  Клик в edit-mode внутри редактируемого → пропускаем (нативный caret)
-    //  Клик вне любого элемента → снимаем всё
+    // Группировка: оборачиваем все selectedEls в <div data-stud-group>,
+    // сохраняя порядок в DOM. Возможна только если у всех один родитель.
+    function groupSelected() {
+      if (selectedEls.length < 2) return;
+      var parent0 = selectedEls[0].parentElement;
+      if (!parent0) return;
+      for (var i = 0; i < selectedEls.length; i++) {
+        if (selectedEls[i].parentElement !== parent0) {
+          // Разные родители — пока не поддерживаем
+          return;
+        }
+      }
+      var section = parent0.closest('[data-block-id]');
+      var bid = section ? section.getAttribute('data-block-id') : null;
+      if (bid) pushUndo(bid, true);
+      // Сортируем по позиции в DOM
+      var sorted = selectedEls.slice().sort(function(a, b) {
+        // eslint-disable-next-line no-bitwise
+        return (a.compareDocumentPosition(b) & 4) ? -1 : 1;
+      });
+      var group = document.createElement('div');
+      group.setAttribute('data-stud-group', '1');
+      group.style.display = 'inline-block';
+      parent0.insertBefore(group, sorted[0]);
+      sorted.forEach(function(el) { group.appendChild(el); });
+      setSelection([group]);
+      if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+    }
+
+    function ungroupSelected() {
+      var el = selectedEls[0];
+      if (!el || !el.hasAttribute('data-stud-group')) return;
+      var p = el.parentElement;
+      if (!p) return;
+      var section = p.closest('[data-block-id]');
+      var bid = section ? section.getAttribute('data-block-id') : null;
+      if (bid) pushUndo(bid, true);
+      var childrenArr = Array.prototype.slice.call(el.children);
+      childrenArr.forEach(function(c) { p.insertBefore(c, el); });
+      if (el.parentNode) el.parentNode.removeChild(el);
+      setSelection(childrenArr);
+      if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+    }
+
+    // Box-select: ЛКМ drag в пустой зоне → рисуем прямоугольник,
+    // по mouseup выделяем все элементы, чьи rect пересекаются с рамкой
+    var boxSelState = null;
+    document.addEventListener('mousedown', function(e) {
+      if (e.button !== 0) return;
+      // Игнорируем если клик на selectable / editing / служебном UI
+      if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
+      if (editingEl && editingEl.contains(e.target)) return;
+      if (findSelectable(e.target)) return;
+      // Должно быть внутри блока — чтобы не рисовать box-select на пустом body вне лендинга
+      var target = e.target.closest && e.target.closest('[data-block-id]');
+      if (!target) return;
+
+      var startX = e.clientX + window.scrollX;
+      var startY = e.clientY + window.scrollY;
+      var box = document.createElement('div');
+      box.className = 'stud-box-select';
+      box.setAttribute('data-stud-editor-inject', 'true');
+      box.style.left = startX + 'px';
+      box.style.top = startY + 'px';
+      box.style.width = '0';
+      box.style.height = '0';
+      document.body.appendChild(box);
+      boxSelState = { startX: startX, startY: startY, box: box, moved: false };
+
+      function onMove(ev) {
+        if (!boxSelState) return;
+        boxSelState.moved = true;
+        var x = ev.clientX + window.scrollX;
+        var y = ev.clientY + window.scrollY;
+        var l = Math.min(boxSelState.startX, x);
+        var t = Math.min(boxSelState.startY, y);
+        var w = Math.abs(x - boxSelState.startX);
+        var h = Math.abs(y - boxSelState.startY);
+        boxSelState.box.style.left = l + 'px';
+        boxSelState.box.style.top = t + 'px';
+        boxSelState.box.style.width = w + 'px';
+        boxSelState.box.style.height = h + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (!boxSelState) return;
+        var moved = boxSelState.moved;
+        var boxRect = boxSelState.box.getBoundingClientRect();
+        boxSelState.box.parentNode && boxSelState.box.parentNode.removeChild(boxSelState.box);
+        boxSelState = null;
+        if (!moved) return;
+        // Искать элементы, чьи rect пересекают boxRect
+        var sections = document.querySelectorAll('[data-block-id]');
+        var found = [];
+        sections.forEach(function(sec) {
+          var all = sec.querySelectorAll('*');
+          all.forEach(function(el) {
+            if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return;
+            if (findSelectable(el) !== el) return;
+            var r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) return;
+            // Intersection
+            if (r.right < boxRect.left || r.left > boxRect.right) return;
+            if (r.bottom < boxRect.top || r.top > boxRect.bottom) return;
+            found.push(el);
+          });
+        });
+        if (found.length > 0) setSelection(found);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // Клики:
+    //  - Обычный клик на элемент → одиночный select
+    //  - Shift+клик → toggle в multi-selection
+    //  - 2-й клик на уже одиночно выделенном текстовом → edit mode
     document.addEventListener('click', function(e) {
-      // Служебное UI — игнорируем
-      if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn'))) return;
-      // Клик внутри редактируемого — пропускаем (нативный caret перемещается)
+      if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn') || e.target.closest('.stud-box-select'))) return;
       if (editingEl && editingEl.contains(e.target)) return;
 
       var el = findSelectable(e.target);
@@ -829,23 +1004,22 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         removeOverlay();
         return;
       }
-
-      // Выходим из edit-mode если в нём были
       exitEditMode();
 
-      // Второй клик на уже выделенном текстовом → вход в редактирование
-      if (selectedEl === el && isTextual(el)) {
+      if (e.shiftKey) {
+        toggleInSelection(el);
+        return;
+      }
+
+      // Второй клик на уже ОДИНОЧНО выделенном текстовом → редактирование
+      if (selectedEls.length === 1 && selectedEls[0] === el && isTextual(el)) {
         removeOverlay();
         editingEl = el;
         el.setAttribute('contenteditable', 'true');
         el.focus();
-        // Уведомить parent — fixed format-toolbar должен показаться
         parent.postMessage({ type: 'stud-edit-on' }, '*');
-        // Ставим каретку в точку клика (если браузер поддерживает)
         try {
-          var range = document.caretRangeFromPoint
-            ? document.caretRangeFromPoint(e.clientX, e.clientY)
-            : null;
+          var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
           if (range) {
             var sel = window.getSelection();
             sel.removeAllRanges();
@@ -855,8 +1029,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         return;
       }
 
-      // Иначе — селектим элемент (или переключаем с другого)
-      buildElementOverlay(el);
+      setSelection([el]);
     });
 
     // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo
@@ -866,15 +1039,38 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         removeOverlay();
         return;
       }
-      // Delete / Backspace удаляют выбранный элемент (но НЕ в режиме редактирования текста)
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEl && !editingEl) {
+      // Delete / Backspace — удаляет все выделенные (если не в edit-mode)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEls.length > 0 && !editingEl) {
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
         e.preventDefault();
-        var section = selectedEl.closest('[data-block-id]');
-        var bid = section ? section.getAttribute('data-block-id') : null;
-        if (bid) pushUndo(bid, true);
-        selectedEl.remove();
+        var bidsToNotify = {};
+        selectedEls.forEach(function(sel) {
+          var section = sel.closest('[data-block-id]');
+          if (section) {
+            var bid = section.getAttribute('data-block-id');
+            if (bid && !bidsToNotify[bid]) { pushUndo(bid, true); bidsToNotify[bid] = true; }
+          }
+          if (sel.parentNode) sel.parentNode.removeChild(sel);
+        });
         removeOverlay();
-        if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+        Object.keys(bidsToNotify).forEach(function(bid) {
+          parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+        });
+        return;
+      }
+      // Cmd+G / Ctrl+G — группировка выделенных
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g' && !e.shiftKey) {
+        if (selectedEls.length < 2) return;
+        e.preventDefault();
+        groupSelected();
+        return;
+      }
+      // Cmd+Shift+G / Ctrl+Shift+G — разгруппировка
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
+        if (selectedEls.length !== 1) return;
+        e.preventDefault();
+        ungroupSelected();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
@@ -1075,13 +1271,22 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         }
         positionOverlay();
         if (bid2) parent.postMessage({ type: 'stud-input', blockId: bid2 }, '*');
-      } else if (data.type === 'stud-element-delete' && selectedEl) {
-        var sec3 = selectedEl.closest('[data-block-id]');
-        var bid3 = sec3 ? sec3.getAttribute('data-block-id') : null;
-        if (bid3) pushUndo(bid3, true);
-        selectedEl.remove();
+      } else if (data.type === 'stud-element-delete' && selectedEls.length > 0) {
+        var bidsDel = {};
+        selectedEls.forEach(function(sel) {
+          var s3 = sel.closest('[data-block-id]');
+          if (s3) {
+            var b3 = s3.getAttribute('data-block-id');
+            if (b3 && !bidsDel[b3]) { pushUndo(b3, true); bidsDel[b3] = true; }
+          }
+          if (sel.parentNode) sel.parentNode.removeChild(sel);
+        });
         removeOverlay();
-        if (bid3) parent.postMessage({ type: 'stud-input', blockId: bid3 }, '*');
+        Object.keys(bidsDel).forEach(function(b) { parent.postMessage({ type: 'stud-input', blockId: b }, '*'); });
+      } else if (data.type === 'stud-group-selection') {
+        groupSelected();
+      } else if (data.type === 'stud-ungroup-selection') {
+        ungroupSelected();
       } else if (data.type === 'stud-add-element' && data.blockId) {
         var sec4 = document.querySelector('[data-block-id="' + data.blockId + '"]');
         if (!sec4) return;
@@ -1335,9 +1540,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           <div className="absolute right-0 top-0 bottom-0 z-20 shadow-lg">
             <PropertiesPanel
               info={selectedInfo}
+              selectionCount={selectionCount}
               onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
               onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
               onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
+              onGroup={() => sendElementUpdate({ type: 'stud-group-selection' })}
+              onUngroup={() => sendElementUpdate({ type: 'stud-ungroup-selection' })}
               onClose={() => setRightPanelOpen(false)}
               onStyle={(prop, value) => {
                 setSelectedInfo(i => i ? { ...i, [prop]: value } : i)
@@ -1544,18 +1752,48 @@ type SelectedInfo = {
   margin?: string
   borderRadius?: string
   opacity?: string
+  isGroup?: boolean
 }
 
 function PropertiesPanel({
-  info, onChangeLink, onLayer, onDelete, onClose, onStyle,
+  info, selectionCount, onChangeLink, onLayer, onDelete, onClose, onStyle, onGroup, onUngroup,
 }: {
   info: SelectedInfo | null
+  selectionCount: number
   onChangeLink: (href: string) => void
   onLayer: (direction: 'front' | 'back' | 'top' | 'bottom') => void
   onDelete: () => void
   onClose: () => void
   onStyle: (prop: string, value: string) => void
+  onGroup: () => void
+  onUngroup: () => void
 }) {
+  const isGroup = Boolean(info?.isGroup)
+  // Multi-selection (2+) — показываем только группировку и удалить
+  if (selectionCount >= 2) {
+    return (
+      <aside className="w-72 h-full bg-white/95 backdrop-blur-sm border-l border-gray-200 flex flex-col">
+        <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделено: {selectionCount}</span>
+          <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <button onClick={onGroup}
+            className="w-full px-3 py-2 text-xs font-medium text-white bg-[#6A55F8] rounded-lg hover:bg-[#5845e0]">
+            ◻ Сгруппировать ({selectionCount})
+          </button>
+          <p className="text-[10px] text-gray-400 text-center">или Cmd/Ctrl + G</p>
+          <div className="pt-2 border-t border-gray-100">
+            <button onClick={onDelete}
+              className="w-full px-3 py-1.5 text-xs text-red-600 rounded-lg border border-red-200 hover:bg-red-50">
+              🗑 Удалить все ({selectionCount})
+            </button>
+            <p className="text-[10px] text-gray-400 mt-1 text-center">или Delete</p>
+          </div>
+        </div>
+      </aside>
+    )
+  }
   return (
     <aside className="w-72 h-full bg-white/95 backdrop-blur-sm border-l border-gray-200 flex flex-col">
       <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
@@ -1653,6 +1891,16 @@ function PropertiesPanel({
                 <button onClick={() => onLayer('bottom')} className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇲ За всеми</button>
               </div>
             </Section>
+
+            {isGroup && (
+              <div className="pt-3 border-t border-gray-100">
+                <button onClick={onUngroup}
+                  className="w-full px-3 py-1.5 text-xs text-[#6A55F8] rounded-lg border border-[#6A55F8]/30 hover:bg-[#F0EDFF]">
+                  ⊞ Разгруппировать
+                </button>
+                <p className="text-[10px] text-gray-400 mt-1 text-center">или Cmd/Ctrl + Shift + G</p>
+              </div>
+            )}
 
             <div className="pt-3 border-t border-gray-100">
               <button onClick={onDelete}
