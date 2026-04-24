@@ -53,6 +53,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [selectedInfo, setSelectedInfo] = useState<SelectedInfo | null>(null)
   const [layers, setLayers] = useState<LayerNode[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [activeLayerBlock, setActiveLayerBlock] = useState<string | null>(null)
+  const [leftTab, setLeftTab] = useState<'blocks' | 'layers'>('blocks')
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
@@ -296,6 +298,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           opacity: data.opacity,
         })
         if (typeof data.path === 'string') setSelectedPath(data.path)
+        // Автопереключаем слои на блок, в котором выделенный элемент
+        if (typeof data.blockId === 'string') {
+          setActiveLayerBlock(data.blockId)
+          setLeftTab('layers')
+        }
       } else if (data.type === 'stud-element-deselected') {
         setSelectedInfo(null)
         setSelectedPath(null)
@@ -886,59 +893,75 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
     }
 
-    // Периодически отправляем parent'у дерево слоёв (все selectable элементы)
+    // Периодически отправляем parent'у дерево слоёв.
+    // В слои попадают ТОЛЬКО визуально взаимодействуемые элементы — те, которые
+    // при клике реально выделятся через findSelectable. Скрипты, style, link,
+    // скрытые элементы, wrapper'ы — пропускаем.
+    var INVISIBLE_TAGS = ['SCRIPT','STYLE','LINK','META','TITLE','HEAD','NOSCRIPT','BR','TEMPLATE'];
     function collectLayers() {
       var out = [];
-      document.querySelectorAll('[data-block-id]').forEach(function(section, blockIdx) {
+      document.querySelectorAll('[data-block-id]').forEach(function(section) {
         var bid = section.getAttribute('data-block-id');
         var inner = section.querySelector(':scope > .block-inner');
         if (!inner) return;
-        // Заголовок блока
-        out.push({
-          path: bid + ':',
-          tag: 'BLOCK',
-          label: 'Блок ' + (blockIdx + 1),
-          blockId: bid,
-          depth: 0,
-          isBlock: true,
-        });
-        // Обходим детей .block-inner рекурсивно, собираем selectable
+
         function walk(el, depth) {
           for (var i = 0; i < el.children.length; i++) {
             var c = el.children[i];
+            if (!c || !c.tagName) continue;
+            // Служебные инжекты — пропускаем
             if (c.getAttribute && c.getAttribute('data-stud-editor-inject')) continue;
-            var path = buildDomPath(c);
-            var label;
+            // Невидимые/техтеги
             var tag = c.tagName;
-            if (TEXT_BLOCK_TAGS.indexOf(tag) !== -1 || tag === 'BUTTON' || tag === 'A') {
-              var txt = (c.textContent || '').trim().slice(0, 30);
-              label = txt || tag;
-            } else if (tag === 'IMG') {
-              label = '🖼 ' + ((c.getAttribute('alt') || c.getAttribute('src') || '').slice(0, 26));
-            } else if (tag === 'VIDEO' || tag === 'IFRAME') {
-              label = '▶ ' + tag.toLowerCase();
-            } else {
-              label = tag.toLowerCase();
-              if (c.className && typeof c.className === 'string') {
-                var firstClass = c.className.split(' ')[0];
-                if (firstClass) label += '.' + firstClass;
-              }
+            if (INVISIBLE_TAGS.indexOf(tag) !== -1) {
+              // Но внутрь всё равно спускаться не нужно
+              continue;
             }
-            out.push({
-              path: path,
-              tag: tag,
-              label: label,
-              blockId: bid,
-              depth: depth,
-            });
-            // Рекурсия только если есть выделяемые потомки (не слишком глубоко)
-            if (depth < 5 && c.children.length > 0 && c.children.length < 50) {
-              // Не опускаемся в inline-элементы (они не выделяются отдельно)
-              if (INLINE_TAGS.indexOf(tag) === -1) walk(c, depth + 1);
+            // Невидимые по стилям / с нулевым размером
+            var cs = window.getComputedStyle(c);
+            if (cs.display === 'none' || cs.visibility === 'hidden') {
+              // Всё равно пропускаем — пользователь их не увидит
+              continue;
+            }
+            var rect = c.getBoundingClientRect();
+            var hasSize = (rect.width > 1 && rect.height > 1);
+
+            // Селектится ли этот элемент кликом?
+            var selectable = (findSelectable(c) === c);
+
+            if (selectable && hasSize) {
+              var path = buildDomPath(c);
+              var label;
+              if (TEXT_BLOCK_TAGS.indexOf(tag) !== -1 || tag === 'BUTTON' || tag === 'A') {
+                var txt = (c.textContent || '').trim().slice(0, 30);
+                label = txt || tag;
+              } else if (tag === 'IMG') {
+                label = (c.getAttribute('alt') || c.getAttribute('src') || 'картинка').slice(0, 30);
+              } else if (tag === 'VIDEO' || tag === 'IFRAME') {
+                label = tag.toLowerCase();
+              } else {
+                label = tag.toLowerCase();
+                if (c.className && typeof c.className === 'string') {
+                  var firstClass = c.className.split(' ').filter(function(x){ return x && x.indexOf('stud-') !== 0 })[0];
+                  if (firstClass) label = firstClass;
+                }
+              }
+              out.push({
+                path: path,
+                tag: tag,
+                label: label,
+                blockId: bid,
+                depth: depth,
+              });
+            }
+
+            // Рекурсия внутрь — чтобы не пропустить вложенные фигуры
+            if (depth < 6 && c.children.length > 0 && c.children.length < 80 && INLINE_TAGS.indexOf(tag) === -1) {
+              walk(c, selectable && hasSize ? depth + 1 : depth);
             }
           }
         }
-        walk(inner, 1);
+        walk(inner, 0);
       });
       parent.postMessage({ type: 'stud-layers', layers: out }, '*');
     }
@@ -1190,20 +1213,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         </div>
       </div>
 
-      {/* ── Main area: left panel / canvas / right panel ── */}
-      <div className="flex-1 flex min-h-0 relative">
-        {/* Left panel: Слои */}
-        {leftPanelOpen && (
-          <LayersPanel
-            layers={layers}
-            selectedPath={selectedPath}
-            onPick={(path) => iframeRef.current?.contentWindow?.postMessage({ type: 'stud-select-path', path }, '*')}
-            onClose={() => setLeftPanelOpen(false)}
-          />
-        )}
-
-        {/* Center canvas — в desktop нет padding, лендинг занимает всю ширину. В мобильных есть рамка-эмуляция */}
-        <div className={`flex-1 overflow-auto bg-gray-200 flex items-start justify-center ${isMobileLike ? 'p-6' : ''}`}>
+      {/* ── Main area: canvas занимает всё пространство, панели overlay'ем ── */}
+      <div className="flex-1 relative min-h-0">
+        {/* Canvas — на всю ширину main area, под панелями */}
+        <div className={`absolute inset-0 overflow-auto bg-gray-200 flex items-start justify-center ${isMobileLike ? 'p-6' : ''}`}>
           <div
             className={`bg-white transition-all ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-lg' : 'w-full'}`}
             style={isMobileLike ? { width: viewportWidth ?? '100%' } : undefined}
@@ -1218,19 +1231,38 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           </div>
         </div>
 
-        {/* Right panel: Properties */}
+        {/* Left panel — overlay, поверх canvas */}
+        {leftPanelOpen && (
+          <div className="absolute left-0 top-0 bottom-0 z-20 shadow-lg">
+            <LayersPanel
+              blocks={blocks}
+              layers={layers}
+              activeBlockId={activeLayerBlock}
+              selectedPath={selectedPath}
+              tab={leftTab}
+              onTabChange={setLeftTab}
+              onPickBlock={(bid) => { setActiveLayerBlock(bid); setLeftTab('layers') }}
+              onPickLayer={(path) => iframeRef.current?.contentWindow?.postMessage({ type: 'stud-select-path', path }, '*')}
+              onClose={() => setLeftPanelOpen(false)}
+            />
+          </div>
+        )}
+
+        {/* Right panel — overlay, поверх canvas */}
         {rightPanelOpen && (
-          <PropertiesPanel
-            info={selectedInfo}
-            onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
-            onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
-            onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
-            onClose={() => setRightPanelOpen(false)}
-            onStyle={(prop, value) => {
-              setSelectedInfo(i => i ? { ...i, [prop]: value } : i)
-              sendElementUpdate({ type: 'stud-style-update', prop, value })
-            }}
-          />
+          <div className="absolute right-0 top-0 bottom-0 z-20 shadow-lg">
+            <PropertiesPanel
+              info={selectedInfo}
+              onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
+              onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
+              onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
+              onClose={() => setRightPanelOpen(false)}
+              onStyle={(prop, value) => {
+                setSelectedInfo(i => i ? { ...i, [prop]: value } : i)
+                sendElementUpdate({ type: 'stud-style-update', prop, value })
+              }}
+            />
+          </div>
         )}
 
         {/* Collapsed left panel → iconка внизу слева */}
@@ -1326,35 +1358,79 @@ function QuickAddBtn({ title, active, children }: { title: string; active?: bool
 type LayerNode = { path: string; tag: string; label: string; blockId: string; depth: number }
 
 function LayersPanel({
-  layers, selectedPath, onPick, onClose,
+  blocks, layers, activeBlockId, selectedPath, tab, onTabChange, onPickBlock, onPickLayer, onClose,
 }: {
+  blocks: LandingBlock[]
   layers: LayerNode[]
+  activeBlockId: string | null
   selectedPath: string | null
-  onPick: (path: string) => void
+  tab: 'blocks' | 'layers'
+  onTabChange: (t: 'blocks' | 'layers') => void
+  onPickBlock: (blockId: string) => void
+  onPickLayer: (path: string) => void
   onClose: () => void
 }) {
+  const blockLayers = activeBlockId ? layers.filter(l => l.blockId === activeBlockId) : []
+  const activeBlockIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : -1
   return (
-    <aside className="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-10">
-      <div className="h-12 border-b border-gray-200 flex items-center px-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-900">Слои</span>
+    <aside className="w-64 h-full bg-white border-r border-gray-200 flex flex-col">
+      <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-3 flex-shrink-0">
+        <button onClick={() => onTabChange('layers')}
+          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>
+          Слои
+        </button>
+        <button onClick={() => onTabChange('blocks')}
+          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'blocks' ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>
+          Блоки
+        </button>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
       <div className="flex-1 overflow-y-auto p-1">
-        {layers.length === 0 ? (
-          <p className="p-3 text-xs text-gray-400 text-center">На странице пока нет элементов</p>
+        {tab === 'blocks' ? (
+          blocks.length === 0 ? (
+            <p className="p-3 text-xs text-gray-400 text-center">Нет блоков</p>
+          ) : (
+            blocks.map((b, i) => {
+              const active = b.id === activeBlockId
+              return (
+                <button key={b.id} onClick={() => onPickBlock(b.id)}
+                  className={`w-full text-left px-3 py-2 rounded transition-colors flex items-center gap-2 ${active ? 'bg-[#F0EDFF] text-[#6A55F8]' : 'hover:bg-gray-50 text-gray-700'}`}>
+                  <span className="text-[10px] font-mono opacity-70 w-5">{i + 1}</span>
+                  <span className="text-sm truncate flex-1">{b.name || `Блок ${i + 1}`}</span>
+                  <span className="text-[9px] opacity-50">›</span>
+                </button>
+              )
+            })
+          )
+        ) : !activeBlockId ? (
+          <p className="p-3 text-xs text-gray-400 text-center">
+            Выбери блок во вкладке «Блоки» — появятся его слои.
+            <br/>Или кликни на элемент в превью.
+          </p>
         ) : (
-          layers.map((l) => {
-            const active = l.path === selectedPath
-            return (
-              <button key={l.path} onClick={() => onPick(l.path)}
-                className={`w-full text-left px-2 py-1.5 rounded transition-colors flex items-center gap-2 text-xs ${active ? 'bg-[#F0EDFF] text-[#6A55F8]' : 'hover:bg-gray-50 text-gray-700'}`}
-                style={{ paddingLeft: 8 + l.depth * 12 }}
-              >
-                <span className="text-gray-400 text-[10px] font-mono uppercase w-8 flex-shrink-0">{layerIconFor(l.tag)}</span>
-                <span className="truncate flex-1">{l.label}</span>
-              </button>
-            )
-          })
+          <>
+            <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-2">
+              <button onClick={() => onTabChange('blocks')} className="hover:text-[#6A55F8]" title="К списку блоков">‹ Блоки</button>
+              <span>/</span>
+              <span className="truncate">{blocks[activeBlockIdx]?.name || `Блок ${activeBlockIdx + 1}`}</span>
+            </div>
+            {blockLayers.length === 0 ? (
+              <p className="p-3 text-xs text-gray-400 text-center">В этом блоке пока нет элементов</p>
+            ) : (
+              blockLayers.map(l => {
+                const active = l.path === selectedPath
+                return (
+                  <button key={l.path} onClick={() => onPickLayer(l.path)}
+                    className={`w-full text-left px-2 py-1.5 rounded transition-colors flex items-center gap-2 text-xs ${active ? 'bg-[#F0EDFF] text-[#6A55F8]' : 'hover:bg-gray-50 text-gray-700'}`}
+                    style={{ paddingLeft: 8 + l.depth * 12 }}
+                  >
+                    <span className="text-gray-400 text-[10px] w-5 flex-shrink-0">{layerIconFor(l.tag)}</span>
+                    <span className="truncate flex-1">{l.label}</span>
+                  </button>
+                )
+              })
+            )}
+          </>
         )}
       </div>
     </aside>
@@ -1399,8 +1475,8 @@ function PropertiesPanel({
   onStyle: (prop: string, value: string) => void
 }) {
   return (
-    <aside className="w-72 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 z-10">
-      <div className="h-12 border-b border-gray-200 flex items-center px-3">
+    <aside className="w-72 h-full bg-white border-l border-gray-200 flex flex-col">
+      <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
