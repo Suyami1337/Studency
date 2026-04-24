@@ -250,13 +250,18 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     // Превращаем в координаты canvas-space (для отрисовки)
     const toCanvas = (cx: number, cy: number) => ({ x: cx - canvasRect.left, y: cy - canvasRect.top })
     const start = toCanvas(startClientX, startClientY)
-    setBoxRect({ x: start.x, y: start.y, w: 0, h: 0 })
     // stud-panning отключает pointer-events iframe → mousemove доходит до parent
     document.body.classList.add('stud-panning')
     let lastEnd = start
+    let dragStarted = false
     function onMove(ev: MouseEvent) {
       const end = toCanvas(ev.clientX, ev.clientY)
       lastEnd = end
+      // Рисуем рамку только после реального движения > 4px — простой клик не должен мигать рамкой
+      if (!dragStarted) {
+        if (Math.abs(end.x - start.x) < 4 && Math.abs(end.y - start.y) < 4) return
+        dragStarted = true
+      }
       setBoxRect({
         x: Math.min(start.x, end.x),
         y: Math.min(start.y, end.y),
@@ -270,7 +275,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       window.removeEventListener('mouseup', onUp)
       setBoxRect(null)
       // Если не двигали — просто click, не box
-      if (Math.abs(lastEnd.x - start.x) < 4 && Math.abs(lastEnd.y - start.y) < 4) return
+      if (!dragStarted) return
       // Финальный box в client-coords (global)
       const boxGlobal = {
         left: Math.min(startClientX, startClientX + (lastEnd.x - start.x)),
@@ -307,25 +312,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedInfo])
 
-  // Wheel над canvas-space: Alt → zoom, без Alt → прокрутка (panY)
-  useEffect(() => {
-    const node = canvasSpaceRef.current
-    if (!node) return
-    function onWheel(e: WheelEvent) {
-      e.preventDefault()
-      if (e.altKey) {
-        setScale(s => {
-          const delta = e.deltaY > 0 ? 0.9 : 1.1
-          return Math.max(0.25, Math.min(2, s * delta))
-        })
-      } else {
-        // Обычная прокрутка: двигает сайт вертикально. Shift → горизонтально.
-        if (e.shiftKey) setPanX(x => x - e.deltaY - e.deltaX)
-        else setPanY(y => y - e.deltaY)
-      }
+  // Wheel над canvas-space обработан JSX onWheel (см. ниже). Через addEventListener
+  // ловить ненадёжно — ref может появиться позже useEffect mount, а deps от fullscreen
+  // не покрывают все edge-cases (закрытие/повторное открытие fullscreen, hot-reload).
+  // JSX onWheel React сам пере-биндит при ремаунте.
+
+  // Применить wheel из любого источника (canvas-space или iframe-postMessage)
+  const applyWheel = useCallback((deltaX: number, deltaY: number, altKey: boolean, shiftKey: boolean) => {
+    if (altKey) {
+      setScale(s => Math.max(0.25, Math.min(2, s * (deltaY > 0 ? 0.9 : 1.1))))
+    } else if (shiftKey) {
+      setPanX(x => x - deltaY - deltaX)
+    } else {
+      setPanY(y => y - deltaY)
+      setPanX(x => x - deltaX)
     }
-    node.addEventListener('wheel', onWheel, { passive: false })
-    return () => node.removeEventListener('wheel', onWheel)
   }, [])
 
   // Ctrl/Cmd + Z → undo через iframe (в parent keydown, чтобы ловить когда фокус не в iframe)
@@ -387,14 +388,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         void handleAddBlock()
       } else if (data.type === 'stud-wheel') {
         // Колесо над iframe → применяем к canvas-space (pan или zoom)
-        if (data.altKey) {
-          setScale(s => Math.max(0.25, Math.min(2, s * (data.deltaY > 0 ? 0.9 : 1.1))))
-        } else if (data.shiftKey) {
-          setPanX(x => x - (data.deltaY || 0) - (data.deltaX || 0))
-        } else {
-          setPanY(y => y - (data.deltaY || 0))
-          setPanX(x => x - (data.deltaX || 0))
-        }
+        applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.altKey, !!data.shiftKey)
       } else if (data.type === 'stud-box-start') {
         const iframeRect = iframeRef.current?.getBoundingClientRect()
         const clientX = (iframeRect?.left ?? 0) + data.clientX
@@ -1042,15 +1036,28 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
 
     // Box-select обрабатывается в PARENT (см. canvasSpaceRef.onMouseDown).
-    // Здесь только ретрансляция mousedown из iframe, если клик попал в фон
-    // (ни в selectable, ни в UI, ни в editingEl). Parent начнёт box-select.
+    // Здесь — отслеживаем mousedown в фоне iframe и отправляем parent'у box-start
+    // ТОЛЬКО когда пользователь реально начал drag (сместился > 5px). Простой клик
+    // без удержания не должен запускать выделение.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 0) return;
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
       if (findSelectable(e.target)) return;
-      // Пустое место внутри iframe → шлём parent'у, он нарисует box в canvas-space
-      parent.postMessage({ type: 'stud-box-start', clientX: e.clientX, clientY: e.clientY }, '*');
+      var sx = e.clientX, sy = e.clientY;
+      var THRESH = 5;
+      function onMove(ev) {
+        if (Math.abs(ev.clientX - sx) < THRESH && Math.abs(ev.clientY - sy) < THRESH) return;
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        parent.postMessage({ type: 'stud-box-start', clientX: sx, clientY: sy }, '*');
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+      }
+      document.addEventListener('mousemove', onMove, true);
+      document.addEventListener('mouseup', onUp, true);
     });
 
     // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
@@ -1566,6 +1573,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           className="absolute inset-0 overflow-hidden select-none"
           style={{
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
+          }}
+          onWheel={(e) => {
+            // React onWheel — passive, preventDefault не работает, но body fixed,
+            // так что страница и так не скроллится. Тут только панорамим/зумим.
+            applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
           }}
           onMouseDown={(e) => {
             // Middle click (button=1) → пан
