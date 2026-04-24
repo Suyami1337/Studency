@@ -20,10 +20,16 @@
  * он умеет работать по блокам, правки одного блока не трогают соседние.
  */
 
-import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 
-type Viewport = 'desktop' | 'mobile'
+type Viewport = 'mobile' | 'phone-large' | 'tablet' | 'desktop'
+const VIEWPORT_WIDTH: Record<Viewport, number | null> = {
+  mobile: 375,
+  'phone-large': 430,
+  tablet: 768,
+  desktop: null,  // full width
+}
 
 type Props = {
   landingId: string
@@ -42,6 +48,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [iframeHeight, setIframeHeight] = useState(600)
   const [fullscreen, setFullscreen] = useState(false)
   const [textEditActive, setTextEditActive] = useState(false)
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true)
+  const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [selectedInfo, setSelectedInfo] = useState<null | {
     tagName: string
     blockId: string | null
@@ -942,110 +950,310 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     )
   }
 
-  return (
-    <div className={fullscreen ? 'fixed inset-0 z-40 bg-gray-50 overflow-auto p-3 space-y-3' : 'space-y-3'}>
-      {/* ── Toolbar ── */}
-      <div className={`bg-white rounded-xl border border-gray-100 px-3 py-2 flex items-center gap-3 flex-wrap ${fullscreen ? 'sticky top-0 z-10 shadow-sm' : ''}`}>
-        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-          <button onClick={() => setViewport('desktop')}
-            className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'desktop' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-            🖥 Desktop
-          </button>
-          <button onClick={() => setViewport('mobile')}
-            className={`px-2.5 py-1 rounded-md text-xs font-medium ${viewport === 'mobile' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
-            📱 Mobile
-          </button>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
+  const viewportWidth = VIEWPORT_WIDTH[viewport]
+  const isMobileLike = viewport === 'mobile' || viewport === 'phone-large'
+
+  if (!fullscreen) {
+    // Компактный режим — как раньше, простая кнопка «На весь экран» для перехода в Tilda-UI
+    return (
+      <div className="space-y-3">
+        <div className="bg-white rounded-xl border border-gray-100 px-3 py-2 flex items-center justify-between">
           <span className="text-xs text-gray-400">
             {blocks.length} {blocks.length === 1 ? 'блок' : blocks.length < 5 ? 'блока' : 'блоков'}
           </span>
-          <button onClick={() => setFullscreen(v => !v)}
-            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50"
-            title={fullscreen ? 'Свернуть' : 'На весь экран'}>
-            {fullscreen ? '✕ Свернуть' : '⛶ На весь экран'}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setFullscreen(true)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#6A55F8] text-white hover:bg-[#5845e0]">
+              ⛶ Открыть редактор
+            </button>
+            <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
+              className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 ${
+                dirty.size > 0 ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-gray-100 text-gray-500'
+              }`}>
+              {saving ? 'Сохранение...' : dirty.size > 0 ? `● Сохранить (${dirty.size})` : '✓ Сохранено'}
+            </button>
+          </div>
+        </div>
+        <iframe
+          ref={iframeRef}
+          srcDoc={previewDoc}
+          className="w-full border-0 rounded-lg bg-white shadow-sm"
+          style={{ height: Math.min(iframeHeight, 800) }}
+          sandbox="allow-scripts allow-same-origin"
+        />
+        {activeHtmlBlock && (
+          <HtmlBlockModal key={activeHtmlBlock.id} block={activeHtmlBlock}
+            onClose={() => setEditingHtmlBlockId(null)}
+            onSave={(newHtml) => { updateBlockLocal(activeHtmlBlock.id, { html_content: newHtml }); setEditingHtmlBlockId(null) }}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // ══ Tilda-подобный fullscreen редактор ════════════════════════════════
+  return (
+    <div className="fixed inset-0 z-40 bg-gray-200 flex flex-col">
+      {/* ── Top bar ── */}
+      <div className="h-14 bg-white border-b border-gray-200 flex items-center px-3 gap-2 flex-shrink-0">
+        {/* + Add */}
+        <button
+          onClick={() => {
+            const firstBlockId = blocks[0]?.id
+            if (!firstBlockId) { void handleAddBlock(); return }
+            setAddMenu({ blockId: firstBlockId, x: 80, y: 70 })
+          }}
+          className="w-10 h-10 rounded-full bg-orange-500 hover:bg-orange-600 text-white flex items-center justify-center text-xl flex-shrink-0"
+          title="Добавить элемент"
+        >+</button>
+
+        {/* Center: viewport switcher */}
+        <div className="flex-1 flex items-center justify-center gap-2">
+          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-1">
+            <ViewportBtn label="Мобильный" active={viewport === 'mobile'} onClick={() => setViewport('mobile')}>
+              <svg width="14" height="18" viewBox="0 0 14 18" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="1" width="12" height="16" rx="2"/><circle cx="7" cy="14" r="0.5" fill="currentColor"/></svg>
+            </ViewportBtn>
+            <ViewportBtn label="Большой телефон" active={viewport === 'phone-large'} onClick={() => setViewport('phone-large')}>
+              <svg width="16" height="20" viewBox="0 0 16 20" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="1" width="14" height="18" rx="2"/></svg>
+            </ViewportBtn>
+            <ViewportBtn label="Планшет" active={viewport === 'tablet'} onClick={() => setViewport('tablet')}>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="2" width="16" height="14" rx="2"/></svg>
+            </ViewportBtn>
+            <ViewportBtn label="Десктоп" active={viewport === 'desktop'} onClick={() => setViewport('desktop')}>
+              <svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="1" width="18" height="12" rx="1.5"/><path d="M7 15h6"/></svg>
+            </ViewportBtn>
+          </div>
+        </div>
+
+        {/* Right: save / close / help */}
+        <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
+          className={`px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide transition-colors disabled:opacity-60 ${
+            dirty.size > 0 ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-500'
+          }`}>
+          {saving ? '...' : 'Сохранить'}
+        </button>
+        <button onClick={() => setFullscreen(false)}
+          className="px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-wide border border-gray-300 text-gray-700 hover:bg-gray-50">
+          Закрыть
+        </button>
+        <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Справка">?</button>
+        <button className="w-10 h-10 rounded-full border border-gray-300 text-gray-500 flex items-center justify-center hover:bg-gray-50" title="Ещё">⋯</button>
+      </div>
+
+      {/* ── Main area: left panel / canvas / right panel ── */}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Left panel: Layers / Blocks */}
+        {leftPanelOpen && (
+          <LayersPanel
+            blocks={blocks}
+            onClose={() => setLeftPanelOpen(false)}
+          />
+        )}
+
+        {/* Center canvas */}
+        <div className="flex-1 overflow-auto bg-gray-200 flex items-start justify-center p-6">
+          <div
+            className={`bg-white shadow-lg transition-all ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden' : 'rounded-lg'}`}
+            style={{ width: viewportWidth ?? '100%', maxWidth: '100%' }}
+          >
+            <iframe
+              ref={iframeRef}
+              srcDoc={previewDoc}
+              className="w-full border-0 block"
+              style={{ height: isMobileLike ? Math.min(iframeHeight, 800) : iframeHeight }}
+              sandbox="allow-scripts allow-same-origin"
+            />
+          </div>
+        </div>
+
+        {/* Right panel: Properties */}
+        {rightPanelOpen && (
+          <PropertiesPanel
+            info={selectedInfo}
+            onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
+            onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
+            onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
+            onClose={() => setRightPanelOpen(false)}
+          />
+        )}
+
+        {/* Collapsed left panel → iconка внизу слева */}
+        {!leftPanelOpen && (
+          <button onClick={() => setLeftPanelOpen(true)}
+            className="absolute bottom-6 left-4 w-10 h-10 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center hover:bg-gray-50"
+            title="Показать слои">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 1.5L1.5 5.5 9 9.5l7.5-4L9 1.5Z"/><path d="M1.5 9l7.5 4 7.5-4"/><path d="M1.5 12.5l7.5 4 7.5-4"/></svg>
           </button>
-          <button onClick={() => void handleSaveAll()} disabled={saving || dirty.size === 0}
-            className={`px-4 py-1.5 text-sm font-semibold rounded-lg transition-colors disabled:opacity-60 ${
-              dirty.size > 0
-                ? 'bg-[#6A55F8] text-white hover:bg-[#5845e0]'
-                : 'bg-gray-100 text-gray-500'
-            }`}>
-            {saving ? 'Сохранение...' : dirty.size > 0 ? `● Сохранить (${dirty.size})` : '✓ Сохранено'}
+        )}
+        {/* Collapsed right panel → иконка внизу справа */}
+        {!rightPanelOpen && (
+          <button onClick={() => setRightPanelOpen(true)}
+            className="absolute bottom-6 right-4 w-28 h-10 bg-white rounded-lg shadow-lg border border-gray-200 flex items-center justify-center gap-1.5 hover:bg-gray-50 text-xs font-medium text-gray-600"
+            title="Настройки">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="7" cy="7" r="2"/><path d="M7 1v2M7 11v2M13 7h-2M3 7H1M11.24 2.76l-1.42 1.42M4.18 9.82l-1.42 1.42M11.24 11.24l-1.42-1.42M4.18 4.18 2.76 2.76"/></svg>
+            Настройки
+          </button>
+        )}
+
+        {/* Bottom quick-add toolbar (центр) */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white rounded-full shadow-lg border border-gray-200 flex items-center gap-0.5 p-1">
+          <QuickAddBtn title="Курсор" active><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 2l10 5-4 1-1 4L2 2Z"/></svg></QuickAddBtn>
+          <button onClick={() => blocks[0] && iframeRef.current?.contentWindow?.postMessage({ type: 'stud-add-element', blockId: blocks[0].id, kind: 'text' }, '*')}
+            className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-700 font-bold" title="Текст">T</button>
+          <button onClick={() => {
+              const url = prompt('URL картинки:'); if (!url || !blocks[0]) return
+              iframeRef.current?.contentWindow?.postMessage({ type: 'stud-add-element', blockId: blocks[0].id, kind: 'image', src: url }, '*')
+            }}
+            className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-700" title="Картинка">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="2" width="14" height="12" rx="1.5"/><circle cx="5" cy="6" r="1.5"/><path d="M1 11l4-4 4 4 3-3 3 3"/></svg>
+          </button>
+          <button onClick={() => blocks[0] && iframeRef.current?.contentWindow?.postMessage({ type: 'stud-add-element', blockId: blocks[0].id, kind: 'shape' }, '*')}
+            className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-700" title="Фигура">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="2" width="12" height="12" rx="1.5"/></svg>
+          </button>
+          <button onClick={() => blocks[0] && iframeRef.current?.contentWindow?.postMessage({ type: 'stud-add-element', blockId: blocks[0].id, kind: 'button' }, '*')}
+            className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-700" title="Кнопка">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="5" width="14" height="6" rx="3"/></svg>
           </button>
         </div>
       </div>
 
-      {/* ── Fixed text-format toolbar: появляется когда редактируешь текст, следует за скроллом ── */}
+      {/* ── Floating text-format toolbar (sticky top) при edit-mode ── */}
       {textEditActive && <TextFormatToolbar onFormat={sendFormat} />}
 
-      {/* ── Popup-меню «+ Элемент» ── */}
+      {/* ── Legacy «+ Элемент» popup (из block-toolbar) ── */}
       {addMenu && (
         <AddElementMenu
           x={addMenu.x}
           y={addMenu.y}
           onClose={() => setAddMenu(null)}
           onPick={(kind, extra) => {
-            iframeRef.current?.contentWindow?.postMessage({
-              type: 'stud-add-element',
-              blockId: addMenu.blockId,
-              kind,
-              ...extra,
-            }, '*')
+            iframeRef.current?.contentWindow?.postMessage({ type: 'stud-add-element', blockId: addMenu.blockId, kind, ...extra }, '*')
             setAddMenu(null)
           }}
         />
       )}
 
-      {/* ── Правая панель настроек выделенного элемента ── */}
-      {selectedInfo && (
-        <ElementSettingsPanel
-          info={selectedInfo}
-          onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
-          onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
-          onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
-          onClose={() => setSelectedInfo(null)}
-        />
-      )}
-
-      {/* ── Превью ── */}
-      {viewport === 'mobile' ? (
-        /* В mobile-режиме эмулируем телефон — рамка + фиксированная ширина */
-        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex justify-center">
-          <div className="bg-white rounded-[2rem] border-[8px] border-gray-800 overflow-hidden">
-            <iframe
-              ref={iframeRef}
-              srcDoc={previewDoc}
-              className="border-0 w-[390px]"
-              style={{ height: Math.min(iframeHeight, 720) }}
-              sandbox="allow-scripts allow-same-origin"
-            />
-          </div>
-        </div>
-      ) : (
-        /* Desktop — iframe растягивается под высоту контента, скроллится сама страница */
-        <iframe
-          ref={iframeRef}
-          srcDoc={previewDoc}
-          className="w-full border-0 rounded-lg bg-white shadow-sm"
-          style={{ height: iframeHeight }}
-          sandbox="allow-scripts allow-same-origin"
-        />
-      )}
-
-      {/* ── HTML-редактор блока (modal) ── */}
+      {/* ── HTML-редактор блока ── */}
       {activeHtmlBlock && (
-        <HtmlBlockModal
-          key={activeHtmlBlock.id}
-          block={activeHtmlBlock}
+        <HtmlBlockModal key={activeHtmlBlock.id} block={activeHtmlBlock}
           onClose={() => setEditingHtmlBlockId(null)}
-          onSave={(newHtml) => {
-            updateBlockLocal(activeHtmlBlock.id, { html_content: newHtml })
-            setEditingHtmlBlockId(null)
-          }}
+          onSave={(newHtml) => { updateBlockLocal(activeHtmlBlock.id, { html_content: newHtml }); setEditingHtmlBlockId(null) }}
         />
       )}
     </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function ViewportBtn({ label, active, onClick, children }: {
+  label: string; active: boolean; onClick: () => void; children: ReactNode
+}) {
+  return (
+    <button onClick={onClick} title={label}
+      className={`w-9 h-9 rounded-md flex items-center justify-center transition-colors ${active ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+      {children}
+    </button>
+  )
+}
+
+function QuickAddBtn({ title, active, children }: { title: string; active?: boolean; children: ReactNode }) {
+  return (
+    <button title={title}
+      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-orange-500 text-white' : 'text-gray-700 hover:bg-gray-100'}`}>
+      {children}
+    </button>
+  )
+}
+
+function LayersPanel({ blocks, onClose }: { blocks: LandingBlock[]; onClose: () => void }) {
+  const [tab, setTab] = useState<'layers' | 'blocks'>('blocks')
+  return (
+    <aside className="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-10">
+      <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-3">
+        <button onClick={() => setTab('layers')}
+          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400'}`}>СЛОИ</button>
+        <button onClick={() => setTab('blocks')}
+          className={`text-xs font-semibold uppercase tracking-wide ${tab === 'blocks' ? 'text-gray-900' : 'text-gray-400'}`}>БЛОКИ</button>
+        <div className="ml-auto flex items-center gap-1">
+          <button className="w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Фильтр">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 3h10M4 7h6M6 11h2"/></svg>
+          </button>
+          <button onClick={onClose} className="w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2">
+        {tab === 'blocks' ? (
+          blocks.length === 0 ? (
+            <p className="p-3 text-xs text-gray-400 text-center">Нет блоков</p>
+          ) : (
+            blocks.map((b, i) => (
+              <div key={b.id} className="px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer flex items-center gap-2">
+                <span className="text-gray-400 text-[10px] w-4">{i + 1}</span>
+                <span className="text-sm text-gray-700 truncate flex-1">{b.name || `Блок ${i + 1}`}</span>
+              </div>
+            ))
+          )
+        ) : (
+          <p className="p-3 text-xs text-gray-400 text-center">Выбери элемент в превью — его слои появятся здесь</p>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function PropertiesPanel({ info, onChangeLink, onLayer, onDelete, onClose }: {
+  info: null | { tagName: string; blockId: string | null; text: string; href: string; zIndex: string }
+  onChangeLink: (href: string) => void
+  onLayer: (direction: 'front' | 'back' | 'top' | 'bottom') => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  return (
+    <aside className="w-72 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 z-10">
+      <div className="h-12 border-b border-gray-200 flex items-center px-3">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
+        <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {!info ? (
+          <p className="text-xs text-gray-400 text-center py-6">Выбери элемент в превью — настройки появятся здесь</p>
+        ) : (
+          <>
+            <div className="text-[11px] text-gray-500">
+              {info.tagName}{info.text ? ` — «${info.text}»` : ''}
+            </div>
+            {(info.tagName === 'A' || info.tagName === 'BUTTON') && (
+              <div>
+                <label className="block text-[11px] font-medium text-gray-600 mb-1">Ссылка</label>
+                <input type="text" value={info.href} onChange={e => onChangeLink(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-2.5 py-1.5 rounded border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8]"
+                />
+              </div>
+            )}
+            <div>
+              <label className="block text-[11px] font-medium text-gray-600 mb-1">Слой</label>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => onLayer('top')}    className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇱ Поверх всех</button>
+                <button onClick={() => onLayer('front')}  className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↑ Вперёд</button>
+                <button onClick={() => onLayer('back')}   className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↓ Назад</button>
+                <button onClick={() => onLayer('bottom')} className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇲ За всеми</button>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">z-index: {info.zIndex}</p>
+            </div>
+            <div className="pt-3 border-t border-gray-100">
+              <button onClick={onDelete}
+                className="w-full px-3 py-1.5 text-xs text-red-600 rounded-lg border border-red-200 hover:bg-red-50">
+                🗑 Удалить элемент
+              </button>
+              <p className="text-[10px] text-gray-400 mt-1 text-center">или клавиша Delete</p>
+            </div>
+          </>
+        )}
+      </div>
+    </aside>
   )
 }
 
@@ -1091,69 +1299,6 @@ function AddElementMenu({
         ))}
       </div>
     </>
-  )
-}
-
-function ElementSettingsPanel({
-  info, onChangeLink, onLayer, onDelete, onClose,
-}: {
-  info: { tagName: string; blockId: string | null; text: string; href: string; zIndex: string }
-  onChangeLink: (href: string) => void
-  onLayer: (direction: 'front' | 'back' | 'top' | 'bottom') => void
-  onDelete: () => void
-  onClose: () => void
-}) {
-  const isLink = info.tagName === 'A' || info.tagName === 'BUTTON'
-  const tagLabel: Record<string, string> = {
-    H1: 'Заголовок H1', H2: 'Заголовок H2', H3: 'Заголовок H3', H4: 'Заголовок H4', H5: 'Заголовок H5', H6: 'Заголовок H6',
-    P: 'Абзац', LI: 'Пункт списка', A: 'Ссылка', BUTTON: 'Кнопка',
-    IMG: 'Картинка', VIDEO: 'Видео', IFRAME: 'Embed',
-    DIV: 'Блок', SECTION: 'Секция',
-    BLOCKQUOTE: 'Цитата',
-  }
-  return (
-    <div className="fixed top-20 right-4 z-30 w-64 bg-white rounded-xl border border-gray-200 shadow-lg p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-gray-900">{tagLabel[info.tagName] || info.tagName}</p>
-          {info.text && <p className="text-[11px] text-gray-400 truncate mt-0.5">«{info.text}»</p>}
-        </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none" title="Закрыть">✕</button>
-      </div>
-
-      {isLink && (
-        <div>
-          <label className="block text-[11px] font-medium text-gray-600 mb-1">Ссылка</label>
-          <input type="text" value={info.href}
-            onChange={e => onChangeLink(e.target.value)}
-            placeholder="https://..."
-            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
-          />
-        </div>
-      )}
-
-      <div>
-        <label className="block text-[11px] font-medium text-gray-600 mb-1">Слой (z-index: {info.zIndex})</label>
-        <div className="grid grid-cols-2 gap-1.5">
-          <button onClick={() => onLayer('top')}
-            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇱ Поверх всех</button>
-          <button onClick={() => onLayer('front')}
-            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↑ Вперёд</button>
-          <button onClick={() => onLayer('back')}
-            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↓ Назад</button>
-          <button onClick={() => onLayer('bottom')}
-            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇲ За всеми</button>
-        </div>
-      </div>
-
-      <div className="pt-2 border-t border-gray-100">
-        <button onClick={onDelete}
-          className="w-full px-3 py-1.5 text-xs text-red-600 rounded-lg border border-red-200 hover:bg-red-50">
-          🗑 Удалить элемент
-        </button>
-        <p className="text-[10px] text-gray-400 mt-1 text-center">или клавиша Delete</p>
-      </div>
-    </div>
   )
 }
 
