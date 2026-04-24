@@ -46,7 +46,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [saving, setSaving] = useState(false)
   const [editingHtmlBlockId, setEditingHtmlBlockId] = useState<string | null>(null)
   const [iframeHeight, setIframeHeight] = useState(600)
-  const [fullscreen, setFullscreen] = useState(false)
+  const [fullscreen, setFullscreen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const v = window.localStorage.getItem('stud-editor-fullscreen')
+    return v === null ? true : v === '1'
+  })
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('stud-editor-fullscreen', fullscreen ? '1' : '0')
+  }, [fullscreen])
   const [textEditActive, setTextEditActive] = useState(false)
   const [leftPanelOpen, setLeftPanelOpen] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
@@ -60,6 +67,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [panY, setPanY] = useState(0)
   const [scale, setScale] = useState(1)
   const canvasSpaceRef = useRef<HTMLDivElement>(null)
+  const [boxRect, setBoxRect] = useState<null | { x: number; y: number; w: number; h: number }>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
@@ -234,6 +242,57 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     iframeRef.current?.contentWindow?.postMessage(msg, '*')
   }
 
+  /** Начать box-select. clientX/Y — координаты в document coords (global). */
+  function startBoxSelect(startClientX: number, startClientY: number) {
+    const canvas = canvasSpaceRef.current
+    if (!canvas) return
+    const canvasRect = canvas.getBoundingClientRect()
+    // Превращаем в координаты canvas-space (для отрисовки)
+    const toCanvas = (cx: number, cy: number) => ({ x: cx - canvasRect.left, y: cy - canvasRect.top })
+    const start = toCanvas(startClientX, startClientY)
+    setBoxRect({ x: start.x, y: start.y, w: 0, h: 0 })
+    // stud-panning отключает pointer-events iframe → mousemove доходит до parent
+    document.body.classList.add('stud-panning')
+    let lastEnd = start
+    function onMove(ev: MouseEvent) {
+      const end = toCanvas(ev.clientX, ev.clientY)
+      lastEnd = end
+      setBoxRect({
+        x: Math.min(start.x, end.x),
+        y: Math.min(start.y, end.y),
+        w: Math.abs(end.x - start.x),
+        h: Math.abs(end.y - start.y),
+      })
+    }
+    function onUp() {
+      document.body.classList.remove('stud-panning')
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setBoxRect(null)
+      // Если не двигали — просто click, не box
+      if (Math.abs(lastEnd.x - start.x) < 4 && Math.abs(lastEnd.y - start.y) < 4) return
+      // Финальный box в client-coords (global)
+      const boxGlobal = {
+        left: Math.min(startClientX, startClientX + (lastEnd.x - start.x)),
+        top: Math.min(startClientY, startClientY + (lastEnd.y - start.y)),
+        right: Math.max(startClientX, startClientX + (lastEnd.x - start.x)),
+        bottom: Math.max(startClientY, startClientY + (lastEnd.y - start.y)),
+      }
+      // Конвертируем в iframe viewport coords
+      const iframeRect = iframeRef.current?.getBoundingClientRect()
+      if (!iframeRect) return
+      const boxInIframe = {
+        left: boxGlobal.left - iframeRect.left,
+        top: boxGlobal.top - iframeRect.top,
+        right: boxGlobal.right - iframeRect.left,
+        bottom: boxGlobal.bottom - iframeRect.top,
+      }
+      iframeRef.current?.contentWindow?.postMessage({ type: 'stud-box-complete', box: boxInIframe }, '*')
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   // Delete в parent — работает когда выделен элемент даже если фокус в нашей панели/списке слоёв
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -336,19 +395,27 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           setPanY(y => y - (data.deltaY || 0))
           setPanX(x => x - (data.deltaX || 0))
         }
-      } else if (data.type === 'stud-pan-start') {
-        // Middle-click из iframe → начинаем pan в parent (координаты уже в iframe-local,
-        // но абсолютный delta всё равно работает через window-listener'ы)
+      } else if (data.type === 'stud-box-start') {
         const iframeRect = iframeRef.current?.getBoundingClientRect()
-        const startClientX = (iframeRect?.left ?? 0) + data.clientX
-        const startClientY = (iframeRect?.top ?? 0) + data.clientY
+        const clientX = (iframeRect?.left ?? 0) + data.clientX
+        const clientY = (iframeRect?.top ?? 0) + data.clientY
+        startBoxSelect(clientX, clientY)
+      } else if (data.type === 'stud-pan-start') {
+        // Middle-click из iframe → сразу отключаем pointer-events у iframe
+        // (чтобы mousemove/mouseup гарантированно доходили до parent window)
         document.body.classList.add('stud-panning')
-        const origPanX = panX, origPanY = panY
+        const iframeRect = iframeRef.current?.getBoundingClientRect()
+        let lastX = (iframeRect?.left ?? 0) + data.clientX
+        let lastY = (iframeRect?.top ?? 0) + data.clientY
         function onMove(ev: MouseEvent) {
-          setPanX(origPanX + ev.clientX - startClientX)
-          setPanY(origPanY + ev.clientY - startClientY)
+          // delta-based: двигаем на приращение — без проблем с накопленной ошибкой / transform
+          setPanX(p => p + (ev.clientX - lastX))
+          setPanY(p => p + (ev.clientY - lastY))
+          lastX = ev.clientX
+          lastY = ev.clientY
         }
-        function onUp() {
+        function onUp(ev: MouseEvent) {
+          if (ev.button !== 1 && ev.button !== undefined && ev.button !== 0) return
           document.body.classList.remove('stud-panning')
           window.removeEventListener('mousemove', onMove)
           window.removeEventListener('mouseup', onUp)
@@ -974,75 +1041,36 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
     }
 
-    // Box-select: ЛКМ drag в пустой зоне → рисуем прямоугольник,
-    // по mouseup выделяем все элементы, чьи rect пересекаются с рамкой
-    var boxSelState = null;
+    // Box-select обрабатывается в PARENT (см. canvasSpaceRef.onMouseDown).
+    // Здесь только ретрансляция mousedown из iframe, если клик попал в фон
+    // (ни в selectable, ни в UI, ни в editingEl). Parent начнёт box-select.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 0) return;
-      // Игнорируем если клик на selectable / editing / служебном UI
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
       if (findSelectable(e.target)) return;
-      // Должно быть внутри блока — чтобы не рисовать box-select на пустом body вне лендинга
-      var target = e.target.closest && e.target.closest('[data-block-id]');
-      if (!target) return;
-
-      var startX = e.clientX + window.scrollX;
-      var startY = e.clientY + window.scrollY;
-      var box = document.createElement('div');
-      box.className = 'stud-box-select';
-      box.setAttribute('data-stud-editor-inject', 'true');
-      box.style.left = startX + 'px';
-      box.style.top = startY + 'px';
-      box.style.width = '0';
-      box.style.height = '0';
-      document.body.appendChild(box);
-      boxSelState = { startX: startX, startY: startY, box: box, moved: false };
-
-      function onMove(ev) {
-        if (!boxSelState) return;
-        boxSelState.moved = true;
-        var x = ev.clientX + window.scrollX;
-        var y = ev.clientY + window.scrollY;
-        var l = Math.min(boxSelState.startX, x);
-        var t = Math.min(boxSelState.startY, y);
-        var w = Math.abs(x - boxSelState.startX);
-        var h = Math.abs(y - boxSelState.startY);
-        boxSelState.box.style.left = l + 'px';
-        boxSelState.box.style.top = t + 'px';
-        boxSelState.box.style.width = w + 'px';
-        boxSelState.box.style.height = h + 'px';
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        if (!boxSelState) return;
-        var moved = boxSelState.moved;
-        var boxRect = boxSelState.box.getBoundingClientRect();
-        boxSelState.box.parentNode && boxSelState.box.parentNode.removeChild(boxSelState.box);
-        boxSelState = null;
-        if (!moved) return;
-        // Искать элементы, чьи rect пересекают boxRect
-        var sections = document.querySelectorAll('[data-block-id]');
-        var found = [];
-        sections.forEach(function(sec) {
-          var all = sec.querySelectorAll('*');
-          all.forEach(function(el) {
-            if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return;
-            if (findSelectable(el) !== el) return;
-            var r = el.getBoundingClientRect();
-            if (r.width < 1 || r.height < 1) return;
-            // Intersection
-            if (r.right < boxRect.left || r.left > boxRect.right) return;
-            if (r.bottom < boxRect.top || r.top > boxRect.bottom) return;
-            found.push(el);
-          });
-        });
-        if (found.length > 0) setSelection(found);
-      }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      // Пустое место внутри iframe → шлём parent'у, он нарисует box в canvas-space
+      parent.postMessage({ type: 'stud-box-start', clientX: e.clientX, clientY: e.clientY }, '*');
     });
+
+    // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
+    // iframe-viewport coords — ищет все selectable-элементы внутри и выделяет.
+    window.__studBoxComplete = function(box) {
+      var found = [];
+      document.querySelectorAll('[data-block-id]').forEach(function(sec) {
+        var all = sec.querySelectorAll('*');
+        all.forEach(function(el) {
+          if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return;
+          if (findSelectable(el) !== el) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return;
+          if (r.right < box.left || r.left > box.right) return;
+          if (r.bottom < box.top || r.top > box.bottom) return;
+          found.push(el);
+        });
+      });
+      if (found.length > 0) setSelection(found);
+    };
 
     // Клики:
     //  - Обычный клик на элемент → одиночный select
@@ -1285,10 +1313,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       var data = e.data;
       if (!data || typeof data !== 'object') return;
       if (data.type === 'stud-undo') { doUndo(); return; }
+      if (data.type === 'stud-box-complete' && data.box && window.__studBoxComplete) {
+        window.__studBoxComplete(data.box);
+        return;
+      }
       if (data.type === 'stud-select-path') {
         var el = elementByPath(data.path);
         if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        if (el) buildElementOverlay(el);
+        if (el) setSelection([el]);
         return;
       }
       if (data.type === 'stud-style-update' && selectedEl && data.prop) {
@@ -1536,23 +1568,31 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
           }}
           onMouseDown={(e) => {
-            // Middle click (button=1) → пан.
-            if (e.button !== 1) return
-            e.preventDefault()
-            document.body.classList.add('stud-panning')
-            const startX = e.clientX, startY = e.clientY
-            const origPanX = panX, origPanY = panY
-            function onMove(ev: MouseEvent) {
-              setPanX(origPanX + ev.clientX - startX)
-              setPanY(origPanY + ev.clientY - startY)
+            // Middle click (button=1) → пан
+            if (e.button === 1) {
+              e.preventDefault()
+              document.body.classList.add('stud-panning')
+              let lastX = e.clientX, lastY = e.clientY
+              function onMove(ev: MouseEvent) {
+                setPanX(p => p + (ev.clientX - lastX))
+                setPanY(p => p + (ev.clientY - lastY))
+                lastX = ev.clientX
+                lastY = ev.clientY
+              }
+              function onUp() {
+                document.body.classList.remove('stud-panning')
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+              }
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+              return
             }
-            function onUp() {
-              document.body.classList.remove('stud-panning')
-              window.removeEventListener('mousemove', onMove)
-              window.removeEventListener('mouseup', onUp)
+            // LMB на пустом фоне canvas-space → box-select
+            if (e.button === 0 && e.target === e.currentTarget) {
+              e.preventDefault()
+              startBoxSelect(e.clientX, e.clientY)
             }
-            window.addEventListener('mousemove', onMove)
-            window.addEventListener('mouseup', onUp)
           }}
         >
           <div
@@ -1579,6 +1619,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
               />
             </div>
           </div>
+
+          {/* Box-select рамка (при drag) */}
+          {boxRect && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: boxRect.x,
+                top: boxRect.y,
+                width: boxRect.w,
+                height: boxRect.h,
+                background: 'rgba(106,85,248,0.1)',
+                border: '1.5px dashed #6A55F8',
+              }}
+            />
+          )}
 
           {/* Мини-индикатор зума внизу по центру (рядом с quick-add) */}
           <div className="absolute bottom-6 right-[calc(50%+160px)] bg-white/90 rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 pointer-events-none">
