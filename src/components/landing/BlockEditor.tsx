@@ -42,6 +42,13 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [iframeHeight, setIframeHeight] = useState(600)
   const [fullscreen, setFullscreen] = useState(false)
   const [textEditActive, setTextEditActive] = useState(false)
+  const [selectedInfo, setSelectedInfo] = useState<null | {
+    tagName: string
+    blockId: string | null
+    text: string
+    href: string
+    zIndex: string
+  }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
   // НЕ state — чтобы не триггерить ре-рендер iframe. Снимаем отсюда при save.
@@ -211,6 +218,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     iframeRef.current?.contentWindow?.postMessage({ type: 'stud-format', cmd, value }, '*')
   }
 
+  function sendElementUpdate(msg: Record<string, unknown>) {
+    iframeRef.current?.contentWindow?.postMessage(msg, '*')
+  }
+
   /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
   function collectLiveHtml() {
     const doc = iframeRef.current?.contentDocument
@@ -262,6 +273,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         setTextEditActive(true)
       } else if (data.type === 'stud-edit-off') {
         setTextEditActive(false)
+      } else if (data.type === 'stud-element-selected') {
+        setSelectedInfo({
+          tagName: data.tagName,
+          blockId: data.blockId,
+          text: data.text || '',
+          href: data.href || '',
+          zIndex: data.zIndex || 'auto',
+        })
+      } else if (data.type === 'stud-element-deselected') {
+        setSelectedInfo(null)
       }
     }
     window.addEventListener('message', onMessage)
@@ -442,28 +463,59 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     var overlay = null;
     var selectedEl = null;
     var editingEl = null;
-    var TEXTUAL_TAGS = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','LI','BLOCKQUOTE','FIGCAPTION','LABEL','B','I','EM','STRONG','TD','TH','DT','DD'];
-
     function isTextual(el) {
       if (!el || !el.tagName) return false;
-      if (TEXTUAL_TAGS.indexOf(el.tagName) !== -1) return true;
-      // div с текстом и без детей-элементов — тоже редактируется
+      // Редактировать можно текстовые блоки, кнопки и листовые div с текстом
+      if (TEXT_BLOCK_TAGS.indexOf(el.tagName) !== -1) return true;
+      if (el.tagName === 'BUTTON') return true;
       if (el.tagName === 'DIV' && el.children.length === 0 && el.textContent.trim()) return true;
       return false;
     }
 
-    /** Найти ближайший подходящий для выделения элемент, поднимаясь от target. */
+    var TEXT_BLOCK_TAGS = ['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','FIGCAPTION','DT','DD'];
+    var INLINE_TAGS = ['SPAN','B','I','EM','STRONG','A','MARK','CODE','SMALL','SUB','SUP'];
+    var MEDIA_TAGS = ['IMG','VIDEO','IFRAME','PICTURE','SVG','AUDIO','CANVAS'];
+
+    function isLeafish(el) {
+      if (!el || !el.tagName) return false;
+      if (MEDIA_TAGS.indexOf(el.tagName) !== -1) return true;
+      if (TEXT_BLOCK_TAGS.indexOf(el.tagName) !== -1) return true;
+      if (el.tagName === 'BUTTON') return true;
+      // div/section без потомков-элементов — фигура / placeholder
+      if (['DIV','SECTION','ARTICLE','ASIDE'].indexOf(el.tagName) !== -1 && el.children.length === 0) return true;
+      return false;
+    }
+
+    /** Найти ближайший подходящий для выделения элемент, поднимаясь от target.
+     *  Правила:
+     *  - клик на inline-тег (span/b/i/em/strong/a) внутри текст-блока → вернуть текст-блок
+     *  - клик на «листовой» элемент (h1/p/img/button/пустой div-фигуру) → вернуть его
+     *  - клик на контейнер (div с детьми) / wrapper / .block-inner / секцию → null (ничего не селектим) */
     function findSelectable(target) {
       var el = target;
       if (el && el.nodeType !== 1) el = el.parentElement;
-      while (el && el !== document.body) {
-        // Пропускаем служебные
-        if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return null;
-        // Сама секция блока и .block-inner — не выделяем (блок целиком не двигается)
-        if (el.hasAttribute && el.hasAttribute('data-block-id')) return null;
+      if (!el) return null;
+      // Сразу отсекаем служебное UI и клики вне блоков
+      if (el.closest && el.closest('[data-stud-editor-inject]')) return null;
+      var blockSection = el.closest && el.closest('[data-block-id]');
+      if (!blockSection) return null;
+
+      // Поднимаемся до первого подходящего элемента.
+      // Если по пути встречаем inline-тег внутри text-block — возвращаем text-block целиком.
+      while (el && el !== blockSection) {
+        // Остановка на .block-inner — wrapper не селектим
         if (el.classList && el.classList.contains('block-inner')) return null;
-        // Элемент должен быть внутри блока
-        if (el.closest && el.closest('[data-block-id]')) return el;
+
+        // inline внутри текст-блока → выделить текст-блок
+        if (INLINE_TAGS.indexOf(el.tagName) !== -1) {
+          var p = el.parentElement;
+          while (p && p !== blockSection && !(p.classList && p.classList.contains('block-inner'))) {
+            if (TEXT_BLOCK_TAGS.indexOf(p.tagName) !== -1) return p;
+            p = p.parentElement;
+          }
+        }
+
+        if (isLeafish(el)) return el;
         el = el.parentElement;
       }
       return null;
@@ -504,6 +556,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
       overlay = null;
       selectedEl = null;
+      parent.postMessage({ type: 'stud-element-deselected' }, '*');
     }
 
     function exitEditMode() {
@@ -518,6 +571,22 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function buildElementOverlay(el) {
       removeOverlay();
       selectedEl = el;
+
+      // Уведомляем parent — откроется правая панель настроек
+      var section = el.closest('[data-block-id]');
+      var href = '';
+      if (el.tagName === 'A') href = el.getAttribute('href') || '';
+      else if (el.tagName === 'BUTTON') href = el.getAttribute('data-href') || '';
+      var textPreview = (el.textContent || '').trim().slice(0, 40);
+      var cs = window.getComputedStyle(el);
+      parent.postMessage({
+        type: 'stud-element-selected',
+        tagName: el.tagName,
+        blockId: section ? section.getAttribute('data-block-id') : null,
+        text: textPreview,
+        href: href,
+        zIndex: el.style.zIndex || cs.zIndex || 'auto',
+      }, '*');
 
       overlay = document.createElement('div');
       overlay.className = 'stud-overlay';
@@ -676,6 +745,17 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         removeOverlay();
         return;
       }
+      // Delete / Backspace удаляют выбранный элемент (но НЕ в режиме редактирования текста)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEl && !editingEl) {
+        e.preventDefault();
+        var section = selectedEl.closest('[data-block-id]');
+        var bid = section ? section.getAttribute('data-block-id') : null;
+        if (bid) pushUndo(bid, true);
+        selectedEl.remove();
+        removeOverlay();
+        if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
         // Если сейчас в edit-mode и есть нативный undo для текста — пусть сработает.
         // Наш undo работает на уровне блока как fallback если нативный стек пуст.
@@ -750,6 +830,35 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         pushUndo(data.blockId, true);
         inner.style.textAlign = data.align;
         parent.postMessage({ type: 'stud-input', blockId: data.blockId }, '*');
+      } else if (data.type === 'stud-element-update-link' && selectedEl) {
+        var sec = selectedEl.closest('[data-block-id]');
+        var bid = sec ? sec.getAttribute('data-block-id') : null;
+        if (bid) pushUndo(bid, true);
+        if (selectedEl.tagName === 'A') selectedEl.setAttribute('href', data.href || '#');
+        else selectedEl.setAttribute('data-href', data.href || '');
+        if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
+      } else if (data.type === 'stud-element-layer' && selectedEl) {
+        var sec2 = selectedEl.closest('[data-block-id]');
+        var bid2 = sec2 ? sec2.getAttribute('data-block-id') : null;
+        if (bid2) pushUndo(bid2, true);
+        var cur = parseInt(selectedEl.style.zIndex || '0', 10) || 0;
+        if (data.direction === 'front')       selectedEl.style.zIndex = String(cur + 1);
+        else if (data.direction === 'back')   selectedEl.style.zIndex = String(cur - 1);
+        else if (data.direction === 'top')    selectedEl.style.zIndex = '999';
+        else if (data.direction === 'bottom') selectedEl.style.zIndex = '-1';
+        // Position: relative нужен чтобы z-index работал
+        if (window.getComputedStyle(selectedEl).position === 'static') {
+          selectedEl.style.position = 'relative';
+        }
+        positionOverlay();
+        if (bid2) parent.postMessage({ type: 'stud-input', blockId: bid2 }, '*');
+      } else if (data.type === 'stud-element-delete' && selectedEl) {
+        var sec3 = selectedEl.closest('[data-block-id]');
+        var bid3 = sec3 ? sec3.getAttribute('data-block-id') : null;
+        if (bid3) pushUndo(bid3, true);
+        selectedEl.remove();
+        removeOverlay();
+        if (bid3) parent.postMessage({ type: 'stud-input', blockId: bid3 }, '*');
       }
     });
 
@@ -820,6 +929,17 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       {/* ── Fixed text-format toolbar: появляется когда редактируешь текст, следует за скроллом ── */}
       {textEditActive && <TextFormatToolbar onFormat={sendFormat} />}
 
+      {/* ── Правая панель настроек выделенного элемента ── */}
+      {selectedInfo && (
+        <ElementSettingsPanel
+          info={selectedInfo}
+          onChangeLink={(href) => { setSelectedInfo(i => i ? { ...i, href } : i); sendElementUpdate({ type: 'stud-element-update-link', href }) }}
+          onLayer={(direction) => sendElementUpdate({ type: 'stud-element-layer', direction })}
+          onDelete={() => sendElementUpdate({ type: 'stud-element-delete' })}
+          onClose={() => setSelectedInfo(null)}
+        />
+      )}
+
       {/* ── Превью ── */}
       {viewport === 'mobile' ? (
         /* В mobile-режиме эмулируем телефон — рамка + фиксированная ширина */
@@ -862,6 +982,69 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+
+function ElementSettingsPanel({
+  info, onChangeLink, onLayer, onDelete, onClose,
+}: {
+  info: { tagName: string; blockId: string | null; text: string; href: string; zIndex: string }
+  onChangeLink: (href: string) => void
+  onLayer: (direction: 'front' | 'back' | 'top' | 'bottom') => void
+  onDelete: () => void
+  onClose: () => void
+}) {
+  const isLink = info.tagName === 'A' || info.tagName === 'BUTTON'
+  const tagLabel: Record<string, string> = {
+    H1: 'Заголовок H1', H2: 'Заголовок H2', H3: 'Заголовок H3', H4: 'Заголовок H4', H5: 'Заголовок H5', H6: 'Заголовок H6',
+    P: 'Абзац', LI: 'Пункт списка', A: 'Ссылка', BUTTON: 'Кнопка',
+    IMG: 'Картинка', VIDEO: 'Видео', IFRAME: 'Embed',
+    DIV: 'Блок', SECTION: 'Секция',
+    BLOCKQUOTE: 'Цитата',
+  }
+  return (
+    <div className="fixed top-20 right-4 z-30 w-64 bg-white rounded-xl border border-gray-200 shadow-lg p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">{tagLabel[info.tagName] || info.tagName}</p>
+          {info.text && <p className="text-[11px] text-gray-400 truncate mt-0.5">«{info.text}»</p>}
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none" title="Закрыть">✕</button>
+      </div>
+
+      {isLink && (
+        <div>
+          <label className="block text-[11px] font-medium text-gray-600 mb-1">Ссылка</label>
+          <input type="text" value={info.href}
+            onChange={e => onChangeLink(e.target.value)}
+            placeholder="https://..."
+            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
+          />
+        </div>
+      )}
+
+      <div>
+        <label className="block text-[11px] font-medium text-gray-600 mb-1">Слой (z-index: {info.zIndex})</label>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button onClick={() => onLayer('top')}
+            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇱ Поверх всех</button>
+          <button onClick={() => onLayer('front')}
+            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↑ Вперёд</button>
+          <button onClick={() => onLayer('back')}
+            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">↓ Назад</button>
+          <button onClick={() => onLayer('bottom')}
+            className="px-2 py-1.5 text-[11px] rounded border border-gray-200 hover:bg-gray-50">⇲ За всеми</button>
+        </div>
+      </div>
+
+      <div className="pt-2 border-t border-gray-100">
+        <button onClick={onDelete}
+          className="w-full px-3 py-1.5 text-xs text-red-600 rounded-lg border border-red-200 hover:bg-red-50">
+          🗑 Удалить элемент
+        </button>
+        <p className="text-[10px] text-gray-400 mt-1 text-center">или клавиша Delete</p>
+      </div>
+    </div>
+  )
+}
 
 function TextFormatToolbar({ onFormat }: { onFormat: (cmd: string, value?: string) => void }) {
   const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 84, 96]
