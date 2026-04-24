@@ -55,6 +55,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [activeLayerBlock, setActiveLayerBlock] = useState<string | null>(null)
   const [leftTab, setLeftTab] = useState<'blocks' | 'layers'>('blocks')
+  const [panX, setPanX] = useState(0)
+  const [panY, setPanY] = useState(0)
+  const [scale, setScale] = useState(1)
+  const canvasSpaceRef = useRef<HTMLDivElement>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
@@ -228,6 +232,36 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   function sendElementUpdate(msg: Record<string, unknown>) {
     iframeRef.current?.contentWindow?.postMessage(msg, '*')
   }
+
+  // Delete в parent — работает когда выделен элемент даже если фокус в нашей панели/списке слоёв
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (!selectedInfo) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      e.preventDefault()
+      sendElementUpdate({ type: 'stud-element-delete' })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedInfo])
+
+  // Alt+scroll → zoom canvas. Native wheel listener с passive: false чтобы preventDefault работал
+  useEffect(() => {
+    const node = canvasSpaceRef.current
+    if (!node) return
+    function onWheel(e: WheelEvent) {
+      if (!e.altKey) return
+      e.preventDefault()
+      setScale(s => {
+        const delta = e.deltaY > 0 ? 0.9 : 1.1
+        return Math.max(0.25, Math.min(2, s * delta))
+      })
+    }
+    node.addEventListener('wheel', onWheel, { passive: false })
+    return () => node.removeEventListener('wheel', onWheel)
+  }, [])
 
   /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
   function collectLiveHtml() {
@@ -1213,22 +1247,70 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         </div>
       </div>
 
-      {/* ── Main area: canvas занимает всё пространство, панели overlay'ем ── */}
+      {/* ── Main area: canvas-space + overlay-панели ── */}
       <div className="flex-1 relative min-h-0">
-        {/* Canvas — на всю ширину main area, под панелями */}
-        <div className={`absolute inset-0 overflow-auto bg-gray-200 flex items-start justify-center ${isMobileLike ? 'p-6' : ''}`}>
+        {/* Canvas-space — вокруг сайта есть пустое пространство серого цвета.
+            Middle-click drag панорамирует, Alt+wheel зумирует. */}
+        <div
+          ref={canvasSpaceRef}
+          className="absolute inset-0 overflow-hidden"
+          style={{
+            background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
+          }}
+          onMouseDown={(e) => {
+            // Middle click (button=1) → пан. Или пробел+drag (не делаем пока).
+            if (e.button !== 1) return
+            e.preventDefault()
+            const startX = e.clientX, startY = e.clientY
+            const origPanX = panX, origPanY = panY
+            function onMove(ev: MouseEvent) {
+              setPanX(origPanX + ev.clientX - startX)
+              setPanY(origPanY + ev.clientY - startY)
+            }
+            function onUp() {
+              window.removeEventListener('mousemove', onMove)
+              window.removeEventListener('mouseup', onUp)
+            }
+            window.addEventListener('mousemove', onMove)
+            window.addEventListener('mouseup', onUp)
+          }}
+        >
           <div
-            className={`bg-white transition-all ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-lg' : 'w-full'}`}
-            style={isMobileLike ? { width: viewportWidth ?? '100%' } : undefined}
+            className="absolute top-0 left-0"
+            style={{
+              transform: `translate(${panX}px, ${panY}px) scale(${scale})`,
+              transformOrigin: '0 0',
+              padding: 40,
+              display: 'flex',
+              justifyContent: 'center',
+              minWidth: '100%',
+            }}
           >
-            <iframe
-              ref={iframeRef}
-              srcDoc={previewDoc}
-              className="w-full border-0 block"
-              style={{ height: isMobileLike ? Math.min(iframeHeight, 800) : iframeHeight }}
-              sandbox="allow-scripts allow-same-origin"
-            />
+            <div
+              className={`bg-white transition-shadow ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-2xl' : 'rounded-lg shadow-2xl'}`}
+              style={isMobileLike ? { width: viewportWidth ?? '100%' } : { width: viewportWidth ?? 1280 }}
+            >
+              <iframe
+                ref={iframeRef}
+                srcDoc={previewDoc}
+                className="w-full border-0 block"
+                style={{ height: isMobileLike ? Math.min(iframeHeight, 800) : iframeHeight }}
+                sandbox="allow-scripts allow-same-origin"
+              />
+            </div>
           </div>
+
+          {/* Мини-индикатор зума внизу по центру (рядом с quick-add) */}
+          <div className="absolute bottom-6 right-[calc(50%+160px)] bg-white/90 backdrop-blur-sm rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 pointer-events-none">
+            {Math.round(scale * 100)}%
+          </div>
+          <button
+            onClick={() => { setScale(1); setPanX(0); setPanY(0) }}
+            className="absolute bottom-6 left-[calc(50%+160px)] bg-white/90 backdrop-blur-sm rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 hover:bg-white"
+            title="Сбросить зум и смещение"
+          >
+            ⟳ 100%
+          </button>
         </div>
 
         {/* Left panel — overlay, поверх canvas */}
@@ -1373,7 +1455,7 @@ function LayersPanel({
   const blockLayers = activeBlockId ? layers.filter(l => l.blockId === activeBlockId) : []
   const activeBlockIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : -1
   return (
-    <aside className="w-64 h-full bg-white border-r border-gray-200 flex flex-col">
+    <aside className="w-64 h-full bg-white/95 backdrop-blur-sm border-r border-gray-200 flex flex-col">
       <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-3 flex-shrink-0">
         <button onClick={() => onTabChange('layers')}
           className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>
@@ -1475,7 +1557,7 @@ function PropertiesPanel({
   onStyle: (prop: string, value: string) => void
 }) {
   return (
-    <aside className="w-72 h-full bg-white border-l border-gray-200 flex flex-col">
+    <aside className="w-72 h-full bg-white/95 backdrop-blur-sm border-l border-gray-200 flex flex-col">
       <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
