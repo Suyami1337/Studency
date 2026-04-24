@@ -25,3 +25,8 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+
+/* Во время pan редактора лендинга — iframe не перехватывает события,
+   mousemove всегда доходит до parent (иначе pan прерывается над iframe) */
+body.stud-panning { cursor: grabbing !important; }
+body.stud-panning iframe { pointer-events: none !important; }

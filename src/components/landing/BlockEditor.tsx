@@ -248,20 +248,39 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedInfo])
 
-  // Alt+scroll → zoom canvas. Native wheel listener с passive: false чтобы preventDefault работал
+  // Wheel над canvas-space: Alt → zoom, без Alt → прокрутка (panY)
   useEffect(() => {
     const node = canvasSpaceRef.current
     if (!node) return
     function onWheel(e: WheelEvent) {
-      if (!e.altKey) return
       e.preventDefault()
-      setScale(s => {
-        const delta = e.deltaY > 0 ? 0.9 : 1.1
-        return Math.max(0.25, Math.min(2, s * delta))
-      })
+      if (e.altKey) {
+        setScale(s => {
+          const delta = e.deltaY > 0 ? 0.9 : 1.1
+          return Math.max(0.25, Math.min(2, s * delta))
+        })
+      } else {
+        // Обычная прокрутка: двигает сайт вертикально. Shift → горизонтально.
+        if (e.shiftKey) setPanX(x => x - e.deltaY - e.deltaX)
+        else setPanY(y => y - e.deltaY)
+      }
     }
     node.addEventListener('wheel', onWheel, { passive: false })
     return () => node.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // Ctrl/Cmd + Z → undo через iframe (в parent keydown, чтобы ловить когда фокус не в iframe)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const target = e.target as HTMLElement | null
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+        e.preventDefault()
+        iframeRef.current?.contentWindow?.postMessage({ type: 'stud-undo' }, '*')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
@@ -307,6 +326,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       } else if (data.type === 'stud-add-block') {
         collectLiveHtml()
         void handleAddBlock()
+      } else if (data.type === 'stud-wheel') {
+        // Колесо над iframe → применяем к canvas-space (pan или zoom)
+        if (data.altKey) {
+          setScale(s => Math.max(0.25, Math.min(2, s * (data.deltaY > 0 ? 0.9 : 1.1))))
+        } else if (data.shiftKey) {
+          setPanX(x => x - (data.deltaY || 0) - (data.deltaX || 0))
+        } else {
+          setPanY(y => y - (data.deltaY || 0))
+          setPanX(x => x - (data.deltaX || 0))
+        }
       } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
         // Cap защищает от патологических случаев когда шаблон растёт бесконечно
         const safeHeight = Math.min(Math.max(400, data.height), 30000)
@@ -1209,9 +1238,22 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style','class'] });
     } catch (_) {}
 
+    // Пересылаем wheel в parent — чтобы pan/zoom работали когда курсор над сайтом
+    window.addEventListener('wheel', function(e) {
+      // Если пользователь scroll'ит внутри contenteditable — не трогаем (текст)
+      if (editingEl && editingEl.contains(e.target)) return;
+      e.preventDefault();
+      parent.postMessage({
+        type: 'stud-wheel',
+        deltaX: e.deltaX, deltaY: e.deltaY,
+        altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey,
+      }, '*');
+    }, { passive: false });
+
     window.addEventListener('message', function(e) {
       var data = e.data;
       if (!data || typeof data !== 'object') return;
+      if (data.type === 'stud-undo') { doUndo(); return; }
       if (data.type === 'stud-select-path') {
         var el = elementByPath(data.path);
         if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1463,9 +1505,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
           }}
           onMouseDown={(e) => {
-            // Middle click (button=1) → пан. Или пробел+drag (не делаем пока).
+            // Middle click (button=1) → пан.
             if (e.button !== 1) return
             e.preventDefault()
+            document.body.classList.add('stud-panning')
             const startX = e.clientX, startY = e.clientY
             const origPanX = panX, origPanY = panY
             function onMove(ev: MouseEvent) {
@@ -1473,6 +1516,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
               setPanY(origPanY + ev.clientY - startY)
             }
             function onUp() {
+              document.body.classList.remove('stud-panning')
               window.removeEventListener('mousemove', onMove)
               window.removeEventListener('mouseup', onUp)
             }
@@ -1518,9 +1562,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           </button>
         </div>
 
-        {/* Left panel — overlay, поверх canvas */}
+        {/* Left panel — оторванный прямоугольник с отступами */}
         {leftPanelOpen && (
-          <div className="absolute left-0 top-0 bottom-0 z-20 shadow-lg">
+          <div className="absolute left-3 top-3 bottom-3 z-20">
             <LayersPanel
               blocks={blocks}
               layers={layers}
@@ -1535,9 +1579,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           </div>
         )}
 
-        {/* Right panel — overlay, поверх canvas */}
+        {/* Right panel — оторванный прямоугольник */}
         {rightPanelOpen && (
-          <div className="absolute right-0 top-0 bottom-0 z-20 shadow-lg">
+          <div className="absolute right-3 top-3 bottom-3 z-20">
             <PropertiesPanel
               info={selectedInfo}
               selectionCount={selectionCount}
@@ -1663,8 +1707,8 @@ function LayersPanel({
   const blockLayers = activeBlockId ? layers.filter(l => l.blockId === activeBlockId) : []
   const activeBlockIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : -1
   return (
-    <aside className="w-64 h-full bg-white/95 backdrop-blur-sm border-r border-gray-200 flex flex-col">
-      <div className="h-12 border-b border-gray-200 flex items-center px-3 gap-3 flex-shrink-0">
+    <aside className="w-60 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+      <div className="h-11 flex items-center px-3 gap-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
         <button onClick={() => onTabChange('layers')}
           className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>
           Слои
@@ -1772,8 +1816,8 @@ function PropertiesPanel({
   // Multi-selection (2+) — показываем только группировку и удалить
   if (selectionCount >= 2) {
     return (
-      <aside className="w-72 h-full bg-white/95 backdrop-blur-sm border-l border-gray-200 flex flex-col">
-        <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
+      <aside className="w-72 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+        <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделено: {selectionCount}</span>
           <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
         </div>
@@ -1795,8 +1839,8 @@ function PropertiesPanel({
     )
   }
   return (
-    <aside className="w-72 h-full bg-white/95 backdrop-blur-sm border-l border-gray-200 flex flex-col">
-      <div className="h-12 border-b border-gray-200 flex items-center px-3 flex-shrink-0">
+    <aside className="w-72 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+      <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
