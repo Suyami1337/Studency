@@ -301,10 +301,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     position: absolute; pointer-events: none; z-index: 10000;
     border: 2px solid #6A55F8; box-sizing: border-box;
   }
-  .stud-overlay .stud-drag-zone {
-    position: absolute; inset: 0; pointer-events: auto; cursor: move;
-    background: rgba(106,85,248,0.03);
-  }
   .stud-overlay .stud-handle {
     position: absolute; pointer-events: auto;
     width: 12px; height: 12px; background: #6A55F8;
@@ -378,6 +374,15 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         else if (act === 'del') parent.postMessage({ type: 'stud-delete-block', blockId: blockId }, '*');
       });
       section.appendChild(toolbar);
+    });
+
+    // Сбросить старые translate у блоков — если пользователь раньше «перетаскивал»
+    // блоки поверх друг друга, теперь они встанут по своим позициям в потоке.
+    document.querySelectorAll('[data-block-id]').forEach(function(section) {
+      var t = section.style.transform || '';
+      if (/translate\\(/.test(t)) {
+        section.style.transform = t.replace(/translate\\([^)]*\\)\\s*/g, '').trim();
+      }
     });
 
     // Авто-contenteditable на все текстовые элементы: клик → сразу редактируется,
@@ -515,8 +520,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       overlay = document.createElement('div');
       overlay.className = 'stud-overlay';
       overlay.setAttribute('data-stud-editor-inject', 'true');
+      // Блок сам НЕ двигается мышью — иначе можно перетащить его поверх других блоков
+      // и получить мешанину. Перемещение блока вверх/вниз — через стрелки ⬆⬇ в его
+      // toolbar (тем самым порядок блоков всегда остаётся линейным).
+      // Ручки по сторонам — только для resize (меняют padding блока).
       overlay.innerHTML = [
-        '<div class="stud-drag-zone" data-handle="move"></div>',
         '<div class="stud-handle stud-h-nw" data-handle="nw"></div>',
         '<div class="stud-handle stud-h-n"  data-handle="n"></div>',
         '<div class="stud-handle stud-h-ne" data-handle="ne"></div>',
@@ -557,10 +565,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       pushUndo(blockId, true);
 
       var startX = e.clientX, startY = e.clientY;
-      // Текущий translate блока (если был)
-      var curTx = 0, curTy = 0;
-      var m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(selectedBlock.style.transform || '');
-      if (m) { curTx = parseFloat(m[1]); curTy = parseFloat(m[2]); }
       // Текущие padding блока (парсим из inline или computed)
       var cs = window.getComputedStyle(selectedBlock);
       var origPt = parseFloat(selectedBlock.style.paddingTop) || parseFloat(cs.paddingTop) || 0;
@@ -573,22 +577,17 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       function onMove(ev) {
         var dx = ev.clientX - startX;
         var dy = ev.clientY - startY;
-        if (mode === 'move') {
-          // Сдвиг всей секции через transform — не ломает flow соседей
-          selectedBlock.style.transform = 'translate(' + (curTx + dx) + 'px, ' + (curTy + dy) + 'px)';
-        } else {
-          // Resize = меняем padding блока. Это удобно для лендингов: добавляешь
-          // вертикальное пространство (padding-top/bottom) или горизонтальные поля.
-          var pt = origPt, pb = origPb, pl = origPl, pr = origPr;
-          if (mode.indexOf('n') !== -1) pt = Math.max(0, origPt - dy);
-          if (mode.indexOf('s') !== -1) pb = Math.max(0, origPb + dy);
-          if (mode.indexOf('w') !== -1) pl = Math.max(0, origPl - dx);
-          if (mode.indexOf('e') !== -1) pr = Math.max(0, origPr + dx);
-          selectedBlock.style.paddingTop = pt + 'px';
-          selectedBlock.style.paddingBottom = pb + 'px';
-          selectedBlock.style.paddingLeft = pl + 'px';
-          selectedBlock.style.paddingRight = pr + 'px';
-        }
+        // Resize = меняем padding блока. Сам блок при этом остаётся на своём месте
+        // в вертикальном потоке, перекрытие с соседними блоками невозможно.
+        var pt = origPt, pb = origPb, pl = origPl, pr = origPr;
+        if (mode.indexOf('n') !== -1) pt = Math.max(0, origPt - dy);
+        if (mode.indexOf('s') !== -1) pb = Math.max(0, origPb + dy);
+        if (mode.indexOf('w') !== -1) pl = Math.max(0, origPl - dx);
+        if (mode.indexOf('e') !== -1) pr = Math.max(0, origPr + dx);
+        selectedBlock.style.paddingTop = pt + 'px';
+        selectedBlock.style.paddingBottom = pb + 'px';
+        selectedBlock.style.paddingLeft = pl + 'px';
+        selectedBlock.style.paddingRight = pr + 'px';
         positionOverlay();
       }
       function onUp() {
