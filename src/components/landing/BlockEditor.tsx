@@ -336,6 +336,25 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           setPanY(y => y - (data.deltaY || 0))
           setPanX(x => x - (data.deltaX || 0))
         }
+      } else if (data.type === 'stud-pan-start') {
+        // Middle-click из iframe → начинаем pan в parent (координаты уже в iframe-local,
+        // но абсолютный delta всё равно работает через window-listener'ы)
+        const iframeRect = iframeRef.current?.getBoundingClientRect()
+        const startClientX = (iframeRect?.left ?? 0) + data.clientX
+        const startClientY = (iframeRect?.top ?? 0) + data.clientY
+        document.body.classList.add('stud-panning')
+        const origPanX = panX, origPanY = panY
+        function onMove(ev: MouseEvent) {
+          setPanX(origPanX + ev.clientX - startClientX)
+          setPanY(origPanY + ev.clientY - startClientY)
+        }
+        function onUp() {
+          document.body.classList.remove('stud-panning')
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
       } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
         // Cap защищает от патологических случаев когда шаблон растёт бесконечно
         const safeHeight = Math.min(Math.max(400, data.height), 30000)
@@ -457,6 +476,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   .stud-overlay .stud-h-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; }
   body.stud-dragging { user-select: none !important; }
   body.stud-dragging * { cursor: inherit !important; }
+
+  /* Отключаем нативное выделение браузера везде внутри редактора,
+     кроме элементов сейчас в режиме редактирования текста (contenteditable=true).
+     Это убирает раздражающее «синее» выделение которое срабатывало при drag. */
+  html, body, [data-block-id] { user-select: none; -webkit-user-select: none; }
+  [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
 
   /* Box-select rectangle */
   .stud-box-select {
@@ -1240,7 +1265,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
     // Пересылаем wheel в parent — чтобы pan/zoom работали когда курсор над сайтом
     window.addEventListener('wheel', function(e) {
-      // Если пользователь scroll'ит внутри contenteditable — не трогаем (текст)
       if (editingEl && editingEl.contains(e.target)) return;
       e.preventDefault();
       parent.postMessage({
@@ -1249,6 +1273,13 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey,
       }, '*');
     }, { passive: false });
+
+    // Middle-click mousedown над iframe → parent начинает pan
+    document.addEventListener('mousedown', function(e) {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      parent.postMessage({ type: 'stud-pan-start', clientX: e.clientX, clientY: e.clientY }, '*');
+    });
 
     window.addEventListener('message', function(e) {
       var data = e.data;
@@ -1500,7 +1531,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             Middle-click drag панорамирует, Alt+wheel зумирует. */}
         <div
           ref={canvasSpaceRef}
-          className="absolute inset-0 overflow-hidden"
+          className="absolute inset-0 overflow-hidden select-none"
           style={{
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
           }}
@@ -1550,12 +1581,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           </div>
 
           {/* Мини-индикатор зума внизу по центру (рядом с quick-add) */}
-          <div className="absolute bottom-6 right-[calc(50%+160px)] bg-white/90 backdrop-blur-sm rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 pointer-events-none">
+          <div className="absolute bottom-6 right-[calc(50%+160px)] bg-white/90 rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 pointer-events-none">
             {Math.round(scale * 100)}%
           </div>
           <button
             onClick={() => { setScale(1); setPanX(0); setPanY(0) }}
-            className="absolute bottom-6 left-[calc(50%+160px)] bg-white/90 backdrop-blur-sm rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 hover:bg-white"
+            className="absolute bottom-6 left-[calc(50%+160px)] bg-white/90 rounded-full shadow border border-gray-200 px-3 py-1.5 text-[11px] text-gray-600 hover:bg-white"
             title="Сбросить зум и смещение"
           >
             ⟳ 100%
@@ -1707,8 +1738,8 @@ function LayersPanel({
   const blockLayers = activeBlockId ? layers.filter(l => l.blockId === activeBlockId) : []
   const activeBlockIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : -1
   return (
-    <aside className="w-60 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
-      <div className="h-11 flex items-center px-3 gap-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
+    <aside className="w-60 h-full bg-white/70 rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+      <div className="h-11 flex items-center px-3 gap-3 flex-shrink-0 bg-white/90 border-b border-gray-200/70">
         <button onClick={() => onTabChange('layers')}
           className={`text-xs font-semibold uppercase tracking-wide ${tab === 'layers' ? 'text-gray-900' : 'text-gray-400 hover:text-gray-600'}`}>
           Слои
@@ -1816,8 +1847,8 @@ function PropertiesPanel({
   // Multi-selection (2+) — показываем только группировку и удалить
   if (selectionCount >= 2) {
     return (
-      <aside className="w-72 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
-        <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
+      <aside className="w-72 h-full bg-white/70 rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+        <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/90 border-b border-gray-200/70">
           <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделено: {selectionCount}</span>
           <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
         </div>
@@ -1839,8 +1870,8 @@ function PropertiesPanel({
     )
   }
   return (
-    <aside className="w-72 h-full bg-white/55 backdrop-blur-md rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
-      <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/80 border-b border-gray-200/70">
+    <aside className="w-72 h-full bg-white/70 rounded-xl border border-gray-200/70 shadow-lg flex flex-col overflow-hidden">
+      <div className="h-11 flex items-center px-3 flex-shrink-0 bg-white/90 border-b border-gray-200/70">
         <span className="text-xs font-semibold uppercase tracking-wide text-gray-700">Выделенные элементы</span>
         <button onClick={onClose} className="ml-auto w-7 h-7 rounded hover:bg-gray-100 text-gray-500 flex items-center justify-center" title="Закрыть">✕</button>
       </div>
