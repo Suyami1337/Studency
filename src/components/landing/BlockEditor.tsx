@@ -20,7 +20,7 @@
  * он умеет работать по блокам, правки одного блока не трогают соседние.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 
 type Viewport = 'desktop' | 'mobile'
@@ -41,6 +41,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [editingHtmlBlockId, setEditingHtmlBlockId] = useState<string | null>(null)
   const [iframeHeight, setIframeHeight] = useState(600)
   const [fullscreen, setFullscreen] = useState(false)
+  const [textEditActive, setTextEditActive] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
   // НЕ state — чтобы не триггерить ре-рендер iframe. Снимаем отсюда при save.
@@ -206,6 +207,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     })
   }
 
+  function sendFormat(cmd: string, value?: string) {
+    iframeRef.current?.contentWindow?.postMessage({ type: 'stud-format', cmd, value }, '*')
+  }
+
   /** Читает живой DOM iframe в liveHtmlRef (без setState, не ремонтит iframe). */
   function collectLiveHtml() {
     const doc = iframeRef.current?.contentDocument
@@ -253,6 +258,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         // Cap защищает от патологических случаев когда шаблон растёт бесконечно
         const safeHeight = Math.min(Math.max(400, data.height), 30000)
         setIframeHeight(safeHeight)
+      } else if (data.type === 'stud-edit-on') {
+        setTextEditActive(true)
+      } else if (data.type === 'stud-edit-off') {
+        setTextEditActive(false)
       }
     }
     window.addEventListener('message', onMessage)
@@ -300,22 +309,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     position: absolute; pointer-events: none; z-index: 10000;
     border: 2px solid #6A55F8; box-sizing: border-box;
   }
-  .stud-overlay .stud-drag-btn {
-    position: absolute; top: -30px; left: 0;
-    pointer-events: auto; cursor: move;
-    background: #6A55F8; color: #fff;
-    width: 28px; height: 24px; border-radius: 5px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 600;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    user-select: none;
+  /* 4 drag-полосы по сторонам overlay. pointer-events: auto только у них и у ручек,
+     центр overlay прозрачен для кликов чтобы клик по тексту проходил сквозь. */
+  .stud-overlay .stud-edge {
+    position: absolute; pointer-events: auto; cursor: move;
   }
-  .stud-overlay .stud-drag-btn:hover { background: #5845e0; }
+  .stud-overlay .stud-e-top    { top: -6px; left: 0; right: 0; height: 12px; }
+  .stud-overlay .stud-e-bottom { bottom: -6px; left: 0; right: 0; height: 12px; }
+  .stud-overlay .stud-e-left   { top: 0; bottom: 0; left: -6px; width: 12px; }
+  .stud-overlay .stud-e-right  { top: 0; bottom: 0; right: -6px; width: 12px; }
   .stud-overlay .stud-handle {
     position: absolute; pointer-events: auto;
     width: 12px; height: 12px; background: #6A55F8;
     border: 2px solid #fff; border-radius: 50%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    z-index: 2;
   }
   .stud-overlay .stud-h-nw { top: -7px; left: -7px; cursor: nw-resize; }
   .stud-overlay .stud-h-n  { top: -7px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
@@ -327,36 +335,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   .stud-overlay .stud-h-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: w-resize; }
   body.stud-dragging { user-select: none !important; }
   body.stud-dragging * { cursor: inherit !important; }
-
-  /* Floating toolbar форматирования — появляется рядом с выделенным текстом */
-  .stud-float-toolbar {
-    position: absolute; z-index: 10001;
-    display: none; align-items: center; gap: 2px;
-    background: rgba(17,24,39,0.96); color: #fff;
-    padding: 4px; border-radius: 8px; font-family: system-ui, sans-serif;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    white-space: nowrap;
-  }
-  .stud-float-toolbar.stud-visible { display: inline-flex; }
-  .stud-float-toolbar button {
-    background: transparent; color: #fff; border: none;
-    width: 28px; height: 28px; border-radius: 4px; cursor: pointer;
-    font-size: 13px; font-family: inherit; padding: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .stud-float-toolbar button:hover { background: rgba(255,255,255,0.15); }
-  .stud-float-toolbar select {
-    background: rgba(255,255,255,0.1); color: #fff; border: none;
-    padding: 4px 6px; border-radius: 4px; font-size: 11px; font-family: inherit;
-    height: 28px;
-  }
-  .stud-float-toolbar input[type="color"] {
-    width: 24px; height: 24px; border: none; border-radius: 4px;
-    padding: 0; cursor: pointer; background: transparent;
-  }
-  .stud-float-toolbar .stud-divider {
-    width: 1px; height: 18px; background: rgba(255,255,255,0.2); margin: 0 2px;
-  }
 </style>
 <script data-stud-editor-inject>
   (function() {
@@ -367,6 +345,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       toolbar.className = 'stud-block-toolbar';
       toolbar.setAttribute('data-stud-editor-inject', 'true');
       toolbar.innerHTML = [
+        '<button data-act="align-left" title="Выровнять по левому">⬅</button>',
+        '<button data-act="align-center" title="Выровнять по центру">↔</button>',
+        '<button data-act="align-right" title="Выровнять по правому">➡</button>',
+        '<div style="width:1px;height:16px;background:rgba(255,255,255,0.2);margin:0 2px"></div>',
         '<button data-act="html" title="Редактировать HTML">✏ HTML</button>',
         '<button data-act="up" title="Поднять">⬆</button>',
         '<button data-act="down" title="Опустить">⬇</button>',
@@ -382,6 +364,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         else if (act === 'up') parent.postMessage({ type: 'stud-move-block', blockId: blockId, direction: -1 }, '*');
         else if (act === 'down') parent.postMessage({ type: 'stud-move-block', blockId: blockId, direction: 1 }, '*');
         else if (act === 'del') parent.postMessage({ type: 'stud-delete-block', blockId: blockId }, '*');
+        else if (act === 'align-left')   { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'left';   parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
+        else if (act === 'align-center') { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'center'; parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
+        else if (act === 'align-right')  { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'right';  parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
       });
       section.appendChild(toolbar);
     });
@@ -513,7 +498,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       exitEditMode();
       removeOverlay();
       parent.postMessage({ type: 'stud-input', blockId: item.blockId }, '*');
-      hideFloatToolbar();
     }
 
     function removeOverlay() {
@@ -527,7 +511,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         editingEl.removeAttribute('contenteditable');
         editingEl = null;
       }
-      hideFloatToolbar();
+      // Уведомить parent — fixed format-toolbar должен скрыться
+      parent.postMessage({ type: 'stud-edit-off' }, '*');
     }
 
     function buildElementOverlay(el) {
@@ -540,7 +525,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       // Overlay прозрачен для кликов (pointer-events: none) — клик в текст проходит
       // сквозь него. Интерактивны только drag-button сверху и 8 ручек по углам.
       overlay.innerHTML = [
-        '<div class="stud-drag-btn" data-handle="move" title="Перетащить">✥</div>',
+        // Drag: тяни за любую грань
+        '<div class="stud-edge stud-e-top"    data-handle="move"></div>',
+        '<div class="stud-edge stud-e-bottom" data-handle="move"></div>',
+        '<div class="stud-edge stud-e-left"   data-handle="move"></div>',
+        '<div class="stud-edge stud-e-right"  data-handle="move"></div>',
+        // Resize: 8 ручек поверх граней
         '<div class="stud-handle stud-h-nw" data-handle="nw"></div>',
         '<div class="stud-handle stud-h-n"  data-handle="n"></div>',
         '<div class="stud-handle stud-h-ne" data-handle="ne"></div>',
@@ -639,7 +629,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     //  Клик вне любого элемента → снимаем всё
     document.addEventListener('click', function(e) {
       // Служебное UI — игнорируем
-      if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn') || e.target.closest('.stud-float-toolbar'))) return;
+      if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn'))) return;
       // Клик внутри редактируемого — пропускаем (нативный caret перемещается)
       if (editingEl && editingEl.contains(e.target)) return;
 
@@ -659,6 +649,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         editingEl = el;
         el.setAttribute('contenteditable', 'true');
         el.focus();
+        // Уведомить parent — fixed format-toolbar должен показаться
+        parent.postMessage({ type: 'stud-edit-on' }, '*');
         // Ставим каретку в точку клика (если браузер поддерживает)
         try {
           var range = document.caretRangeFromPoint
@@ -682,7 +674,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (e.key === 'Escape') {
         exitEditMode();
         removeOverlay();
-        hideFloatToolbar();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
@@ -708,79 +699,15 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (section) pushUndo(section.getAttribute('data-block-id'));
     });
 
-    // При скролле / ресайзе окна — обновляем позицию overlay + toolbar
-    window.addEventListener('scroll', function() {
-      positionOverlay();
-      positionFloatToolbar();
-    }, true);
-    window.addEventListener('resize', function() {
-      positionOverlay();
-      positionFloatToolbar();
-    });
+    // При скролле / ресайзе окна — обновляем позицию overlay
+    window.addEventListener('scroll', positionOverlay, true);
+    window.addEventListener('resize', positionOverlay);
 
     // ───────────────────────────────────────────────────────────────
-    // Floating toolbar форматирования — при выделении текста в edit-mode
+    // Форматирование применяется через команды от parent'а (fixed toolbar).
+    // iframe слушает сообщения {type:'stud-format', cmd, value} и применяет
+    // их к текущему выделению через execCommand.
     // ───────────────────────────────────────────────────────────────
-    var floatToolbar = null;
-    var lastSelRect = null;
-
-    function buildFloatToolbar() {
-      if (floatToolbar) return floatToolbar;
-      floatToolbar = document.createElement('div');
-      floatToolbar.className = 'stud-float-toolbar';
-      floatToolbar.setAttribute('data-stud-editor-inject', 'true');
-      floatToolbar.setAttribute('contenteditable', 'false');
-      var sizes = [12,14,16,18,20,24,28,32,36,40,48,56,64,72,84,96];
-      var sizeOpts = '<option value="">Размер</option>' + sizes.map(function(s){ return '<option value="'+s+'">'+s+'px</option>'; }).join('');
-      floatToolbar.innerHTML = [
-        '<button data-cmd="bold" title="Жирный"><b>B</b></button>',
-        '<button data-cmd="italic" title="Курсив"><i>I</i></button>',
-        '<button data-cmd="underline" title="Подчёркнутый"><u>U</u></button>',
-        '<div class="stud-divider"></div>',
-        '<select data-cmd="fontSize">' + sizeOpts + '</select>',
-        '<input type="color" data-cmd="foreColor" value="#ffffff" title="Цвет текста">',
-        '<div class="stud-divider"></div>',
-        '<button data-cmd="justifyLeft" title="По левому">⬅</button>',
-        '<button data-cmd="justifyCenter" title="По центру">↔</button>',
-        '<button data-cmd="justifyRight" title="По правому">➡</button>',
-      ].join('');
-      document.body.appendChild(floatToolbar);
-
-      // mousedown preventDefault — не теряем selection при клике по тулбару
-      floatToolbar.addEventListener('mousedown', function(e) {
-        if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') e.preventDefault();
-      });
-      floatToolbar.addEventListener('click', function(e) {
-        var btn = e.target.closest('button');
-        if (!btn) return;
-        var cmd = btn.getAttribute('data-cmd');
-        if (!cmd) return;
-        // Снимок до форматирования
-        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
-        if (section) pushUndo(section.getAttribute('data-block-id'), true);
-        document.execCommand(cmd, false, undefined);
-        notifyBlockDirty(section);
-      });
-      // Font-size select
-      floatToolbar.querySelector('select[data-cmd="fontSize"]').addEventListener('change', function(e) {
-        if (!e.target.value) return;
-        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
-        if (section) pushUndo(section.getAttribute('data-block-id'), true);
-        // execCommand('fontSize') принимает 1..7, поэтому обёртка через span
-        applyFontSizeToSelection(parseInt(e.target.value, 10));
-        e.target.value = '';
-        notifyBlockDirty(section);
-      });
-      // Color picker
-      floatToolbar.querySelector('input[data-cmd="foreColor"]').addEventListener('input', function(e) {
-        var section = editingEl ? editingEl.closest('[data-block-id]') : null;
-        if (section) pushUndo(section.getAttribute('data-block-id'), true);
-        document.execCommand('foreColor', false, e.target.value);
-        notifyBlockDirty(section);
-      });
-      return floatToolbar;
-    }
-
     function applyFontSizeToSelection(px) {
       var sel = window.getSelection();
       if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -799,55 +726,37 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
     }
 
-    function notifyBlockDirty(section) {
-      if (!section) return;
-      parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
-    }
-
-    function showFloatToolbar() {
-      buildFloatToolbar();
-      floatToolbar.classList.add('stud-visible');
-      positionFloatToolbar();
-    }
-    function hideFloatToolbar() {
-      if (floatToolbar) floatToolbar.classList.remove('stud-visible');
-      lastSelRect = null;
-    }
-    function positionFloatToolbar() {
-      if (!floatToolbar || !lastSelRect) return;
-      var tbRect = floatToolbar.getBoundingClientRect();
-      var top = window.scrollY + lastSelRect.top - tbRect.height - 8;
-      if (top < window.scrollY + 4) {
-        top = window.scrollY + lastSelRect.bottom + 8;  // если сверху нет места — снизу
+    window.addEventListener('message', function(e) {
+      var data = e.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'stud-format') {
+        if (!editingEl) return;
+        var section = editingEl.closest('[data-block-id]');
+        if (section) pushUndo(section.getAttribute('data-block-id'), true);
+        // Возвращаем фокус и восстанавливаем выделение если оно слетело
+        editingEl.focus();
+        if (data.cmd === 'fontSize' && data.value) {
+          applyFontSizeToSelection(parseInt(data.value, 10));
+        } else {
+          document.execCommand(data.cmd, false, data.value);
+        }
+        if (section) parent.postMessage({ type: 'stud-input', blockId: section.getAttribute('data-block-id') }, '*');
+      } else if (data.type === 'stud-align-block' && data.blockId) {
+        // Выравнивание содержимого блока (text-align на .block-inner)
+        var section = document.querySelector('[data-block-id="' + data.blockId + '"]');
+        if (!section) return;
+        var inner = section.querySelector(':scope > .block-inner');
+        if (!inner) return;
+        pushUndo(data.blockId, true);
+        inner.style.textAlign = data.align;
+        parent.postMessage({ type: 'stud-input', blockId: data.blockId }, '*');
       }
-      var left = window.scrollX + lastSelRect.left;
-      // Ограничим справа чтобы не вылезло за окно
-      var maxLeft = window.innerWidth + window.scrollX - tbRect.width - 8;
-      if (left > maxLeft) left = maxLeft;
-      if (left < window.scrollX + 4) left = window.scrollX + 4;
-      floatToolbar.style.left = left + 'px';
-      floatToolbar.style.top = top + 'px';
-    }
+    });
 
     document.addEventListener('selectionchange', function() {
       var sel = window.getSelection();
       var has = !!(sel && sel.rangeCount > 0 && !sel.isCollapsed);
       parent.postMessage({ type: 'stud-selection', has: has }, '*');
-      // Показываем floating toolbar если выделение внутри любого contenteditable внутри блока
-      if (!has) { hideFloatToolbar(); return; }
-      var anchor = sel.anchorNode;
-      var parentEl = anchor && anchor.nodeType === 1 ? anchor : (anchor && anchor.parentElement);
-      if (!parentEl) { hideFloatToolbar(); return; }
-      var editable = parentEl.closest && parentEl.closest('[contenteditable="true"]');
-      var inBlock = parentEl.closest && parentEl.closest('[data-block-id]');
-      if (!editable || !inBlock) { hideFloatToolbar(); return; }
-      // Запомним редактируемый элемент — undo и формат-кнопки им пользуются для вычисления blockId
-      editingEl = editable;
-      var range = sel.getRangeAt(0);
-      var rect = range.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) { hideFloatToolbar(); return; }
-      lastSelRect = rect;
-      showFloatToolbar();
     });
   })();
 </script>`
@@ -908,6 +817,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         </div>
       </div>
 
+      {/* ── Fixed text-format toolbar: появляется когда редактируешь текст, следует за скроллом ── */}
+      {textEditActive && <TextFormatToolbar onFormat={sendFormat} />}
+
       {/* ── Превью ── */}
       {viewport === 'mobile' ? (
         /* В mobile-режиме эмулируем телефон — рамка + фиксированная ширина */
@@ -950,6 +862,47 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+
+function TextFormatToolbar({ onFormat }: { onFormat: (cmd: string, value?: string) => void }) {
+  const SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 84, 96]
+  // mousedown preventDefault — не теряем выделение в iframe при клике по кнопке
+  const mdPrevent = (e: ReactMouseEvent) => e.preventDefault()
+  return (
+    <div className="sticky top-2 z-30 mx-auto w-fit flex items-center gap-1 bg-gray-900 text-white px-2 py-1.5 rounded-xl shadow-lg"
+         onMouseDown={mdPrevent}>
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('bold')}
+        className="w-8 h-8 rounded hover:bg-white/10 font-bold">B</button>
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('italic')}
+        className="w-8 h-8 rounded hover:bg-white/10 italic">I</button>
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('underline')}
+        className="w-8 h-8 rounded hover:bg-white/10 underline">U</button>
+      <span className="w-px h-5 bg-white/20 mx-0.5" />
+      <select
+        onMouseDown={mdPrevent}
+        onChange={(e) => { if (e.target.value) { onFormat('fontSize', e.target.value); e.target.value = '' } }}
+        defaultValue=""
+        className="bg-white/10 text-white text-xs rounded px-2 py-1 border-none focus:outline-none h-8"
+      >
+        <option value="" className="text-gray-900">Размер</option>
+        {SIZES.map(s => <option key={s} value={s} className="text-gray-900">{s}px</option>)}
+      </select>
+      <input
+        type="color"
+        onMouseDown={mdPrevent}
+        onChange={(e) => onFormat('foreColor', e.target.value)}
+        className="w-8 h-7 rounded cursor-pointer bg-transparent border border-white/20"
+        title="Цвет текста"
+      />
+      <span className="w-px h-5 bg-white/20 mx-0.5" />
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('justifyLeft')}
+        className="w-8 h-8 rounded hover:bg-white/10" title="По левому">⬅</button>
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('justifyCenter')}
+        className="w-8 h-8 rounded hover:bg-white/10" title="По центру">↔</button>
+      <button onMouseDown={mdPrevent} onClick={() => onFormat('justifyRight')}
+        className="w-8 h-8 rounded hover:bg-white/10" title="По правому">➡</button>
+    </div>
+  )
+}
 
 function HtmlBlockModal({
   block, onClose, onSave,
