@@ -272,8 +272,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   [data-block-id] { min-height: 0 !important; }
   .vsl-root, .hero { min-height: auto !important; }
 
-  [data-block-id] { position: relative; transition: outline 0.1s; }
-  [data-block-id]:hover { outline: 2px dashed rgba(106,85,248,0.4); outline-offset: -2px; }
+  [data-block-id] { position: relative; }
   [data-block-id] .stud-block-toolbar {
     position: absolute; top: 8px; right: 8px; z-index: 9999;
     display: flex; gap: 4px;
@@ -600,23 +599,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       document.addEventListener('mouseup', onUp);
     }
 
-    // Клик → выделить блок (если клик не по тексту)
+    // Клик по блоку больше не выделяет его. Редактирование — только текста
+    // (нативный contenteditable). Если какой-то overlay остался — убираем.
     document.addEventListener('click', function(e) {
-      // Клик на служебное UI — игнорируем
       if (e.target.closest && (e.target.closest('.stud-overlay') || e.target.closest('.stud-block-toolbar') || e.target.closest('.stud-add-block-btn') || e.target.closest('.stud-float-toolbar'))) return;
-      // Клик на текст (любой contenteditable) — НЕ перехватываем. Пусть работает нативное редактирование.
-      // При этом снимаем overlay блока если он висел.
-      if (e.target.closest('[contenteditable="true"]')) {
-        removeOverlay();
-        return;
-      }
-      // Клик в блок, но вне текста (фон, padding, img) — выделяем сам блок
-      var section = e.target.closest('[data-block-id]');
-      if (section) {
-        buildBlockOverlay(section);
-      } else {
-        removeOverlay();
-      }
+      removeOverlay();
     });
 
     // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo
