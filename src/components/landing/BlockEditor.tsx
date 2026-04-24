@@ -49,6 +49,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     href: string
     zIndex: string
   }>(null)
+  const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Живой HTML каждого блока из iframe (обновляется постоянно по мере печати).
   // НЕ state — чтобы не триггерить ре-рендер iframe. Снимаем отсюда при save.
@@ -283,6 +284,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         })
       } else if (data.type === 'stud-element-deselected') {
         setSelectedInfo(null)
+      } else if (data.type === 'stud-add-element-menu' && typeof data.blockId === 'string') {
+        // Координаты приходят относительно окна iframe — переведём в координаты окна parent'а
+        const iframeRect = iframeRef.current?.getBoundingClientRect()
+        setAddMenu({
+          blockId: data.blockId,
+          x: (iframeRect?.left ?? 0) + data.x,
+          y: (iframeRect?.top ?? 0) + data.y,
+        })
       }
     }
     window.addEventListener('message', onMessage)
@@ -366,6 +375,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       toolbar.className = 'stud-block-toolbar';
       toolbar.setAttribute('data-stud-editor-inject', 'true');
       toolbar.innerHTML = [
+        '<button data-act="add-element" title="Добавить элемент" style="color:#c4b5fd">+ Элемент</button>',
         '<button data-act="align-left" title="Выровнять по левому">⬅</button>',
         '<button data-act="align-center" title="Выровнять по центру">↔</button>',
         '<button data-act="align-right" title="Выровнять по правому">➡</button>',
@@ -388,6 +398,17 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         else if (act === 'align-left')   { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'left';   parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
         else if (act === 'align-center') { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'center'; parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
         else if (act === 'align-right')  { var inner = section.querySelector(':scope > .block-inner'); if (inner) { pushUndo(blockId, true); inner.style.textAlign = 'right';  parent.postMessage({ type: 'stud-input', blockId: blockId }, '*'); } }
+        else if (act === 'add-element')  {
+          // Позиция кнопки — передаём в parent, он откроет popup-меню там
+          var r = btn.getBoundingClientRect();
+          var iframeRect = { left: 0, top: 0 };  // iframe.getBoundingClientRect через parent
+          parent.postMessage({
+            type: 'stud-add-element-menu',
+            blockId: blockId,
+            x: r.left + r.width / 2,
+            y: r.bottom + 4,
+          }, '*');
+        }
       });
       section.appendChild(toolbar);
     });
@@ -474,51 +495,42 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
     var TEXT_BLOCK_TAGS = ['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','FIGCAPTION','DT','DD'];
     var INLINE_TAGS = ['SPAN','B','I','EM','STRONG','A','MARK','CODE','SMALL','SUB','SUP'];
-    var MEDIA_TAGS = ['IMG','VIDEO','IFRAME','PICTURE','SVG','AUDIO','CANVAS'];
 
-    function isLeafish(el) {
-      if (!el || !el.tagName) return false;
-      if (MEDIA_TAGS.indexOf(el.tagName) !== -1) return true;
-      if (TEXT_BLOCK_TAGS.indexOf(el.tagName) !== -1) return true;
-      if (el.tagName === 'BUTTON') return true;
-      // div/section без потомков-элементов — фигура / placeholder
-      if (['DIV','SECTION','ARTICLE','ASIDE'].indexOf(el.tagName) !== -1 && el.children.length === 0) return true;
-      return false;
-    }
-
-    /** Найти ближайший подходящий для выделения элемент, поднимаясь от target.
-     *  Правила:
-     *  - клик на inline-тег (span/b/i/em/strong/a) внутри текст-блока → вернуть текст-блок
-     *  - клик на «листовой» элемент (h1/p/img/button/пустой div-фигуру) → вернуть его
-     *  - клик на контейнер (div с детьми) / wrapper / .block-inner / секцию → null (ничего не селектим) */
+    /** Найти подходящий для выделения элемент.
+     *  - inline внутри текст-блока (span в h1, b в p) → вернуть текст-блок целиком
+     *  - клик по wrapper-у всего блока (первый ребёнок .block-inner, занимающий >90% ширины) → null
+     *  - .block-inner и сама секция data-block-id → null
+     *  - всё остальное (тексты, фигуры, картинки, вложенные div) → селектим */
     function findSelectable(target) {
       var el = target;
       if (el && el.nodeType !== 1) el = el.parentElement;
       if (!el) return null;
-      // Сразу отсекаем служебное UI и клики вне блоков
       if (el.closest && el.closest('[data-stud-editor-inject]')) return null;
       var blockSection = el.closest && el.closest('[data-block-id]');
       if (!blockSection) return null;
 
-      // Поднимаемся до первого подходящего элемента.
-      // Если по пути встречаем inline-тег внутри text-block — возвращаем text-block целиком.
-      while (el && el !== blockSection) {
-        // Остановка на .block-inner — wrapper не селектим
-        if (el.classList && el.classList.contains('block-inner')) return null;
-
-        // inline внутри текст-блока → выделить текст-блок
-        if (INLINE_TAGS.indexOf(el.tagName) !== -1) {
-          var p = el.parentElement;
-          while (p && p !== blockSection && !(p.classList && p.classList.contains('block-inner'))) {
-            if (TEXT_BLOCK_TAGS.indexOf(p.tagName) !== -1) return p;
-            p = p.parentElement;
-          }
+      // inline внутри текст-блока → текст-блок
+      if (el.tagName && INLINE_TAGS.indexOf(el.tagName) !== -1) {
+        var p = el.parentElement;
+        while (p && p !== blockSection && !(p.classList && p.classList.contains('block-inner'))) {
+          if (TEXT_BLOCK_TAGS.indexOf(p.tagName) !== -1) return p;
+          p = p.parentElement;
         }
-
-        if (isLeafish(el)) return el;
-        el = el.parentElement;
       }
-      return null;
+
+      // Запрещаем выделять сам block-inner и секцию
+      if (el.classList && el.classList.contains('block-inner')) return null;
+      if (el === blockSection) return null;
+
+      // Запрещаем выделять wrapper всего блока (первый ребёнок .block-inner, занимающий всю ширину)
+      var parent = el.parentElement;
+      if (parent && parent.classList && parent.classList.contains('block-inner') && el.children.length > 0) {
+        var r = el.getBoundingClientRect();
+        var pr = parent.getBoundingClientRect();
+        if (pr.width > 0 && r.width >= pr.width * 0.9) return null;
+      }
+
+      return el;
     }
 
     // ─── Undo stack: хранит innerHTML блоков перед каждым значимым действием ───
@@ -859,6 +871,44 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         selectedEl.remove();
         removeOverlay();
         if (bid3) parent.postMessage({ type: 'stud-input', blockId: bid3 }, '*');
+      } else if (data.type === 'stud-add-element' && data.blockId) {
+        var sec4 = document.querySelector('[data-block-id="' + data.blockId + '"]');
+        if (!sec4) return;
+        var inner = sec4.querySelector(':scope > .block-inner');
+        if (!inner) return;
+        pushUndo(data.blockId, true);
+        var newEl = null;
+        if (data.kind === 'text') {
+          newEl = document.createElement('p');
+          newEl.style.cssText = 'margin:20px 0;font-size:18px;color:inherit';
+          newEl.textContent = 'Новый текст';
+        } else if (data.kind === 'heading') {
+          newEl = document.createElement('h2');
+          newEl.style.cssText = 'margin:20px 0;font-size:32px;font-weight:700;color:inherit';
+          newEl.textContent = 'Новый заголовок';
+        } else if (data.kind === 'button') {
+          newEl = document.createElement('a');
+          newEl.setAttribute('href', '#');
+          newEl.style.cssText = 'display:inline-block;padding:14px 32px;background:#6A55F8;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;margin:20px 0';
+          newEl.textContent = 'Кнопка';
+        } else if (data.kind === 'shape') {
+          newEl = document.createElement('div');
+          newEl.style.cssText = 'width:200px;height:150px;background:' + (data.color || '#6A55F8') + ';border-radius:12px;margin:20px auto;display:block';
+        } else if (data.kind === 'image' && data.src) {
+          newEl = document.createElement('img');
+          newEl.setAttribute('src', data.src);
+          newEl.setAttribute('alt', '');
+          newEl.style.cssText = 'max-width:100%;height:auto;display:block;margin:20px auto;border-radius:8px';
+        } else if (data.kind === 'divider') {
+          newEl = document.createElement('hr');
+          newEl.style.cssText = 'border:none;border-top:1px solid rgba(255,255,255,0.2);margin:30px 0';
+        }
+        if (newEl) {
+          inner.appendChild(newEl);
+          parent.postMessage({ type: 'stud-input', blockId: data.blockId }, '*');
+          // Сразу селектим только что добавленный
+          setTimeout(function() { buildElementOverlay(newEl); }, 0);
+        }
       }
     });
 
@@ -929,6 +979,24 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       {/* ── Fixed text-format toolbar: появляется когда редактируешь текст, следует за скроллом ── */}
       {textEditActive && <TextFormatToolbar onFormat={sendFormat} />}
 
+      {/* ── Popup-меню «+ Элемент» ── */}
+      {addMenu && (
+        <AddElementMenu
+          x={addMenu.x}
+          y={addMenu.y}
+          onClose={() => setAddMenu(null)}
+          onPick={(kind, extra) => {
+            iframeRef.current?.contentWindow?.postMessage({
+              type: 'stud-add-element',
+              blockId: addMenu.blockId,
+              kind,
+              ...extra,
+            }, '*')
+            setAddMenu(null)
+          }}
+        />
+      )}
+
       {/* ── Правая панель настроек выделенного элемента ── */}
       {selectedInfo && (
         <ElementSettingsPanel
@@ -982,6 +1050,49 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+
+function AddElementMenu({
+  x, y, onClose, onPick,
+}: {
+  x: number
+  y: number
+  onClose: () => void
+  onPick: (kind: string, extra?: Record<string, string>) => void
+}) {
+  const items: Array<{ kind: string; icon: string; label: string; handler?: () => void }> = [
+    { kind: 'heading', icon: 'H', label: 'Заголовок' },
+    { kind: 'text', icon: '¶', label: 'Текст' },
+    { kind: 'button', icon: '⬢', label: 'Кнопка' },
+    { kind: 'shape', icon: '▭', label: 'Фигура' },
+    { kind: 'image', icon: '🖼', label: 'Картинка', handler: () => {
+      const url = prompt('URL картинки:')
+      if (!url) return
+      onPick('image', { src: url })
+    } },
+    { kind: 'divider', icon: '―', label: 'Разделитель' },
+  ]
+  return (
+    <>
+      {/* Backdrop для закрытия по клику */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div
+        className="fixed z-50 bg-white rounded-xl border border-gray-200 shadow-lg p-2 grid grid-cols-3 gap-1"
+        style={{ left: Math.min(x - 120, window.innerWidth - 250), top: y, width: 240 }}
+      >
+        {items.map(it => (
+          <button
+            key={it.kind}
+            onClick={() => { if (it.handler) it.handler(); else onPick(it.kind) }}
+            className="flex flex-col items-center gap-1 p-3 rounded-lg hover:bg-[#F0EDFF] transition-colors"
+          >
+            <span className="text-xl">{it.icon}</span>
+            <span className="text-[11px] text-gray-700">{it.label}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  )
+}
 
 function ElementSettingsPanel({
   info, onChangeLink, onLayer, onDelete, onClose,
