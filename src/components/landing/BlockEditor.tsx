@@ -745,11 +745,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     -moz-user-select: text !important;
     -ms-user-select: text !important;
   }
-  /* Скрываем визуально selection-highlight на случай если он всё-таки прорвётся */
-  ::selection { background: transparent !important; color: inherit !important; }
-  ::-moz-selection { background: transparent !important; color: inherit !important; }
-  [contenteditable="true"] ::selection { background: rgba(106,85,248,0.3) !important; color: inherit !important; }
-
   [data-block-id] h1, [data-block-id] h2, [data-block-id] h3,
   [data-block-id] h4, [data-block-id] h5, [data-block-id] h6,
   [data-block-id] p, [data-block-id] span, [data-block-id] li,
@@ -767,20 +762,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 </style>
 <script data-stud-editor-inject>
   (function() {
-    // Жёстко глушим нативное text-selection: CSS user-select:none иногда
-    // не предотвращает selection на drag (особенно в WebKit). Capture-phase
-    // selectstart event с preventDefault — единственный надёжный способ.
-    // Исключение — режим редактирования текста (contenteditable=true).
+    // Жёстко глушим нативное text-selection кроме режима редактирования.
+    // Capture-phase selectstart с preventDefault — единственный надёжный
+    // способ. event.target часто = TEXT_NODE (nodeType 3), у него нет
+    // .closest — поднимаемся до element через parentElement.
+    function inEditable(t) {
+      if (!t) return false;
+      if (t.nodeType === 3) t = t.parentElement;
+      return t && t.closest && t.closest('[contenteditable="true"]');
+    }
     document.addEventListener('selectstart', function(e) {
-      var t = e.target;
-      if (t && t.closest && t.closest('[contenteditable="true"]')) return;
+      if (inEditable(e.target)) return;
       e.preventDefault();
     }, true);
-    // На mousedown сразу очищаем существующий selection — на случай если
-    // он остался от предыдущего действия.
     document.addEventListener('mousedown', function(e) {
-      var t = e.target;
-      if (t && t.closest && t.closest('[contenteditable="true"]')) return;
+      if (inEditable(e.target)) return;
       try {
         var sel = window.getSelection();
         if (sel && sel.rangeCount > 0) sel.removeAllRanges();
