@@ -335,19 +335,27 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
   }, [])
 
-  // Wheel-listener на window с capture-phase. Ловит wheel ВЕЗДЕ в fullscreen,
-  // включая bg, canvas-space, iframe wrapper. Исключение — панели слоёв/свойств
-  // (они со своим внутренним scroll'ом). passive: false + preventDefault даёт
-  // мгновенную реакцию без браузерных проверок «можно ли скроллить body».
+  // Единый фильтр «событие должно обработаться parent'ом» для ВСЕХ parent
+  // window-listeners (wheel, mousedown). Симметрия: одинаковый набор
+  // исключений и для wheel, и для mousedown.
+  //
+  // Архитектура: wheel/mousedown над iframe → parent видит target=iframe,
+  // НО iframe-документ имеет свои handlers и сам шлёт postMessage parent'у.
+  // Если parent тоже обработает → ДВОЙНАЯ обработка (отсюда тряска wheel
+  // и двойной box/pan-старт). Поэтому target=iframe — пропускаем.
+  function isParentArea(target: HTMLElement | null): boolean {
+    if (!target) return false
+    if (!target.closest('[data-stud-fullscreen-root]')) return false  // не наш редактор
+    if (target.closest('[data-stud-panel]')) return false              // панели — свой scroll
+    if (target.closest('[data-stud-site-wrap]')) return false          // сайт — iframe сам обрабатывает
+    return true
+  }
+
+  // Wheel-listener на window с capture-phase + passive: false + preventDefault.
   useEffect(() => {
     if (!fullscreen) return
     function onWheel(e: WheelEvent) {
-      const target = e.target as HTMLElement | null
-      if (!target) return
-      // Не из нашего fullscreen-редактора — пропускаем
-      if (!target.closest('[data-stud-fullscreen-root]')) return
-      // Над панелями — пусть скроллятся сами
-      if (target.closest('[data-stud-panel]')) return
+      if (!isParentArea(e.target as HTMLElement | null)) return
       e.preventDefault()
       applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
     }
@@ -364,10 +372,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
     function onMouseDown(e: MouseEvent) {
       const target = e.target as HTMLElement | null
-      if (!target) return
-      if (!target.closest('[data-stud-fullscreen-root]')) return
-      if (target.closest('[data-stud-panel]')) return  // панели — свои события
-      if (target.closest('[data-stud-site-wrap]')) return  // сайт — iframe обработает
+      if (!isParentArea(target)) return
       // Middle-click (зажатие колёсика) → pan. Без stud-panning класса —
       // его cursor:grabbing + pointer-events:none на iframe тормозят repaint
       // тяжелой страницы при каждом mousemove. В iframe этого эффекта нет
@@ -406,7 +411,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
       // LMB → box-select (кроме UI-кнопок)
       if (e.button === 0) {
-        if (target.closest('button, a, input, textarea, select')) return
+        if (target && target.closest('button, a, input, textarea, select')) return
         e.preventDefault()
         startBoxSelect(e.clientX, e.clientY)
       }
