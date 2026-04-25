@@ -324,8 +324,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   }, [selectedInfo])
 
   // Применить wheel из любого источника (canvas-space или iframe-postMessage)
-  const applyWheel = useCallback((deltaX: number, deltaY: number, altKey: boolean, shiftKey: boolean) => {
-    if (altKey) {
+  // zoomKey = Cmd (Mac) / Ctrl (Win/Linux) / pinch-zoom трекпада на Mac
+  // (последний эмулируется браузером как wheel + ctrlKey=true)
+  const applyWheel = useCallback((deltaX: number, deltaY: number, zoomKey: boolean, shiftKey: boolean) => {
+    if (zoomKey) {
       setScale(s => Math.max(0.25, Math.min(2, s * (deltaY > 0 ? 0.9 : 1.1))))
     } else if (shiftKey) {
       setPanX(x => x - (deltaY + deltaX) * 1.6)
@@ -357,7 +359,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function onWheel(e: WheelEvent) {
       if (!isParentArea(e.target as HTMLElement | null)) return
       e.preventDefault()
-      applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
+      applyWheel(e.deltaX, e.deltaY, e.ctrlKey || e.metaKey, e.shiftKey)
     }
     window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions)
@@ -493,7 +495,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         void handleAddBlock()
       } else if (data.type === 'stud-wheel') {
         // Колесо над iframe → применяем к canvas-space (pan или zoom)
-        applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.altKey, !!data.shiftKey)
+        applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.ctrlKey || !!data.metaKey, !!data.shiftKey)
       } else if (data.type === 'stud-box-start') {
         // iframe начал box-drag. Сохраняем стартовые координаты в обоих
         // системах: iframe-viewport (для финального box) и canvas-space
@@ -1449,7 +1451,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       parent.postMessage({
         type: 'stud-wheel',
         deltaX: e.deltaX, deltaY: e.deltaY,
-        altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey,
+        altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey,
       }, '*');
     }, { passive: false });
 
