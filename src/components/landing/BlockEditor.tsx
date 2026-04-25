@@ -321,11 +321,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedInfo])
 
-  // Wheel над canvas-space обработан JSX onWheel (см. ниже). Через addEventListener
-  // ловить ненадёжно — ref может появиться позже useEffect mount, а deps от fullscreen
-  // не покрывают все edge-cases (закрытие/повторное открытие fullscreen, hot-reload).
-  // JSX onWheel React сам пере-биндит при ремаунте.
-
   // Применить wheel из любого источника (canvas-space или iframe-postMessage)
   const applyWheel = useCallback((deltaX: number, deltaY: number, altKey: boolean, shiftKey: boolean) => {
     if (altKey) {
@@ -337,6 +332,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       setPanX(x => x - deltaX * 1.6)
     }
   }, [])
+
+  // Native wheel-listener на canvas-space с {passive: false} + preventDefault.
+  // React onWheel всегда passive — браузер тратит время на проверку «можно ли
+  // скроллить» каждое событие → лаг. Нативный + preventDefault работает мгновенно
+  // (как в iframe, где wheel идёт через нативный listener).
+  useEffect(() => {
+    const node = canvasSpaceRef.current
+    if (!node) return
+    function onWheel(e: WheelEvent) {
+      e.preventDefault()
+      applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
+    }
+    node.addEventListener('wheel', onWheel, { passive: false })
+    return () => node.removeEventListener('wheel', onWheel)
+  }, [fullscreen, applyWheel])
 
   // Ctrl/Cmd + Z → undo через iframe (в parent keydown, чтобы ловить когда фокус не в iframe)
   useEffect(() => {
@@ -1651,11 +1661,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           className="absolute inset-0 overflow-hidden select-none"
           style={{
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
-          }}
-          onWheel={(e) => {
-            // React onWheel — passive, preventDefault не работает, но body fixed,
-            // так что страница и так не скроллится. Тут только панорамим/зумим.
-            applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
           }}
           onMouseDown={(e) => {
             // Middle click (button=1) → пан
