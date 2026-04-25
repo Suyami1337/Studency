@@ -54,8 +54,8 @@ const wrapLegacyHtmlAsBlockForAgent = wrapLegacyHtmlAsBlock
 const MODEL = 'claude-haiku-4-5'
 const MAX_AGENT_ITERATIONS = 10
 const TIMEOUT_BUDGET_MS = 45000
-const MAX_HISTORY_TURNS = 12
-const MAX_OUTPUT_TOKENS = 8192  // Haiku 4.5 легко держит 8k, нужно для update_landing_html
+const MAX_HISTORY_TURNS = 40
+const MAX_OUTPUT_TOKENS = 32768  // Haiku 4.5 поддерживает до 64k output, 32k с большим запасом
 
 type ChatMessage =
   | { role: 'user'; content: string }
@@ -621,16 +621,16 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
   const rawHistory = ctx.history.map(h => ({ role: h.role, content: h.content }) as ChatMessage)
   let trimmedHistory = rawHistory
   if (rawHistory.length > MAX_HISTORY_TURNS) {
+    // Берём последнее окно MAX_HISTORY_TURNS сообщений. ОБЯЗАТЕЛЬНО первое
+    // должно быть user — иначе Anthropic API падает «messages must start with user».
+    // Раньше тут был поиск последнего «user со строкой» — это срезало контекст
+    // до «продолжай», и агент забывал ВСЕ предыдущие tool calls.
     const wantFrom = rawHistory.length - MAX_HISTORY_TURNS
-    let safeStart = -1
-    for (let i = wantFrom; i < rawHistory.length; i++) {
-      const m = rawHistory[i]
-      if (m.role === 'user' && typeof m.content === 'string') {
-        safeStart = i
-        break
-      }
+    let safeStart = wantFrom
+    while (safeStart < rawHistory.length && rawHistory[safeStart].role !== 'user') {
+      safeStart++
     }
-    if (safeStart >= 0) trimmedHistory = rawHistory.slice(safeStart)
+    if (safeStart < rawHistory.length) trimmedHistory = rawHistory.slice(safeStart)
   }
   const conversation: ChatMessage[] = [
     ...trimmedHistory,
@@ -682,8 +682,11 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
     }
 
     if (response.stop_reason === 'max_tokens') {
-      assistantText += (assistantText ? '\n\n' : '') + '✂️ Ответ обрезан — напиши «продолжай» чтобы я закончил.'
-      break
+      // Автоматически продолжаем тем же ходом — добавляем user-message
+      // «продолжи» и идём ещё одну итерацию loop. Пользователь видит
+      // результат как одно цельное сообщение.
+      conversation.push({ role: 'user', content: 'Продолжи с того места, где остановился. Тот же ход, не приветствуй заново.' })
+      continue
     }
 
     if (response.stop_reason !== 'tool_use') break
