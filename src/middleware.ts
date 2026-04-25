@@ -36,14 +36,24 @@ export async function middleware(request: NextRequest) {
   // rewrite на публичный route /_pub/[hostKind]/[hostValue]/[...path].
   // Главный домен пропускается дальше (auth + страницы лк).
   // ──────────────────────────────────────────────────────────────────────
-  if (!isRootHost(host) && !pathname.startsWith('/_next') && !pathname.startsWith('/_pub') && !pathname.startsWith('/api/')) {
+  if (!isRootHost(host)) {
+    // Эти пути работают одинаково на любом хосте — пропускаем как есть:
+    // tracking, статика, public API, favicon/robots.
+    const passThrough =
+      pathname.startsWith('/_next') ||
+      pathname.startsWith('/_pub') ||
+      pathname.startsWith('/api/') ||
+      pathname.startsWith('/go/') ||  // короткие ссылки трекинга
+      pathname === '/favicon.ico' ||
+      pathname === '/robots.txt' ||
+      pathname === '/sitemap.xml'
+    if (passThrough) return NextResponse.next()
+
     const sub = extractSubdomain(host)
     const url = request.nextUrl.clone()
     if (sub) {
-      // <sub>.studency.ru/<path> → /_pub/sub/<sub>/<path>
       url.pathname = `/_pub/sub/${sub}${pathname === '/' ? '' : pathname}`
     } else {
-      // Кастомный домен → /_pub/cust/<host>/<path>
       url.pathname = `/_pub/cust/${encodeURIComponent(host.split(':')[0])}${pathname === '/' ? '' : pathname}`
     }
     return NextResponse.rewrite(url)

@@ -24,13 +24,14 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as {
       landingSlug?: string
+      projectId?: string
       buttonText?: string
       buttonHref?: string
       eventType?: string   // 'button_click' | 'link_click' | 'form_submit'
       visitorToken?: string
     }
 
-    const { landingSlug, buttonText, visitorToken } = body
+    const { landingSlug, projectId, buttonText, visitorToken } = body
     const eventType = body.eventType || 'button_click'
 
     if (!landingSlug || !buttonText) {
@@ -39,12 +40,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabase()
 
-    // 1. Находим лендинг
-    const { data: landing } = await supabase
-      .from('landings')
-      .select('id, project_id')
-      .eq('slug', landingSlug)
-      .single()
+    // 1. Находим лендинг. Slug теперь не уникальный глобально — если есть
+    // projectId, используем его. Иначе берём первый по created_at (legacy).
+    let lq = supabase.from('landings').select('id, project_id').eq('slug', landingSlug)
+    if (projectId) lq = lq.eq('project_id', projectId)
+    const { data: landing } = await lq.order('created_at', { ascending: true }).limit(1).maybeSingle()
 
     if (!landing) {
       return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })

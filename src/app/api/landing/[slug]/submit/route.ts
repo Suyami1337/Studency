@@ -37,18 +37,21 @@ export async function POST(
       email?: string
       telegram?: string
       visitorToken?: string
+      projectId?: string
       extra?: Record<string, string>
     }
 
     const supabase = getSupabase()
 
-    // 1. Находим лендинг по slug
-    const { data: landing } = await supabase
+    // 1. Находим лендинг по (projectId, slug). Slug не уникальный глобально.
+    // Если projectId не передан — берём первый созданный (legacy fallback).
+    let lq = supabase
       .from('landings')
       .select('id, project_id, name, funnel_id, funnel_stage_id')
       .eq('slug', slug)
       .eq('status', 'published')
-      .single()
+    if (body.projectId) lq = lq.eq('project_id', body.projectId)
+    const { data: landing } = await lq.order('created_at', { ascending: true }).limit(1).maybeSingle()
 
     if (!landing) {
       return NextResponse.json({ error: 'Landing not found' }, { status: 404 })

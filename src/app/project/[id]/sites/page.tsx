@@ -364,7 +364,7 @@ function LandingDetail({
               {landing.status === 'published' ? 'Снять с публикации' : 'Опубликовать'}
             </button>
             {landing.status === 'published' && (
-              <a href={`/s/${landing.slug}`} target="_blank" rel="noopener noreferrer"
+              <a href={publicHost ? `https://${publicHost}/${landing.slug}` : `/s/${landing.slug}`} target="_blank" rel="noopener noreferrer"
                 className="px-4 py-2 text-sm rounded-lg font-medium border border-[#6A55F8]/30 text-[#6A55F8] hover:bg-[#F0EDFF] flex items-center gap-1.5">
                 Открыть сайт ↗
               </a>

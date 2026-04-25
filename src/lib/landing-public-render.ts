@@ -155,7 +155,7 @@ function buildTrackingScript(opts: {
     var action = form.getAttribute('action') || '';
     if (action && !action.startsWith('/') && !action.startsWith(BASE) && action !== '#') return;
     e.preventDefault();
-    var data = { visitorToken: VT };
+    var data = { visitorToken: VT, projectId: PROJECT_ID };
     var inputs = form.querySelectorAll('input, textarea, select');
     inputs.forEach(function(inp) {
       var fieldName = (inp.name || inp.getAttribute('data-field') || inp.placeholder || '').toLowerCase();
