@@ -325,10 +325,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     if (altKey) {
       setScale(s => Math.max(0.25, Math.min(2, s * (deltaY > 0 ? 0.9 : 1.1))))
     } else if (shiftKey) {
-      setPanX(x => x - deltaY - deltaX)
+      setPanX(x => x - (deltaY + deltaX) * 1.6)
     } else {
-      setPanY(y => y - deltaY)
-      setPanX(x => x - deltaX)
+      setPanY(y => y - deltaY * 1.6)
+      setPanX(x => x - deltaX * 1.6)
     }
   }, [])
 
@@ -341,6 +341,19 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         e.preventDefault()
         iframeRef.current?.contentWindow?.postMessage({ type: 'stud-undo' }, '*')
       }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Escape — снимает выделение (включая multi-select). В parent чтобы ловить
+  // когда фокус не в iframe (например на панели слоёв).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      iframeRef.current?.contentWindow?.postMessage({ type: 'stud-clear-selection' }, '*')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1038,14 +1051,27 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
     }
 
-    // Box-select полностью обрабатывается в PARENT. iframe только сигналит
-    // «mousedown в моём фоне, начни box». Threshold для drag-vs-click — в parent.
+    // Box-select. iframe-side threshold 6px — НЕ отправляем parent'у
+    // ничего пока пользователь реально не начал тянуть. Простой клик не
+    // должен запускать выделение. Симметрия с поведением bg-канваса.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 0) return;
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
       if (findSelectable(e.target)) return;
-      parent.postMessage({ type: 'stud-box-start', clientX: e.clientX, clientY: e.clientY }, '*');
+      var sx = e.clientX, sy = e.clientY;
+      function onMove(ev) {
+        if (Math.abs(ev.clientX - sx) < 6 && Math.abs(ev.clientY - sy) < 6) return;
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        parent.postMessage({ type: 'stud-box-start', clientX: sx, clientY: sy }, '*');
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+      }
+      document.addEventListener('mousemove', onMove, true);
+      document.addEventListener('mouseup', onUp, true);
     });
 
     // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
@@ -1297,12 +1323,20 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }, '*');
     }, { passive: false });
 
-    // Middle-click mousedown над iframe → parent начинает pan
+    // Middle-click mousedown над iframe → parent начинает pan.
+    // capture-phase + auxclick blocker — иначе Chrome активирует auto-scroll
+    // mode (один клик включает «инерционный скролл», нужен второй клик чтобы
+    // выйти). preventDefault в capture надёжно гасит default до того как
+    // браузер успел запустить auto-scroll.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 1) return;
       e.preventDefault();
+      e.stopPropagation();
       parent.postMessage({ type: 'stud-pan-start', clientX: e.clientX, clientY: e.clientY }, '*');
-    });
+    }, true);
+    document.addEventListener('auxclick', function(e) {
+      if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
 
     window.addEventListener('message', function(e) {
       var data = e.data;
@@ -1607,8 +1641,9 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           <div
             className="absolute top-0 left-0"
             style={{
-              transform: `translate(${panX}px, ${panY}px) scale(${scale})`,
+              transform: `translate3d(${panX}px, ${panY}px, 0) scale(${scale})`,
               transformOrigin: '0 0',
+              willChange: 'transform',
               padding: 40,
               display: 'flex',
               justifyContent: 'center',
