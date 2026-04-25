@@ -815,12 +815,15 @@ function LandingsList({
   }, [landings])
 
   async function loadLandings() {
+    // НЕ тянем html_content — у импортированных шаблонов он 1.6MB+ на лендинг,
+    // а в карточках списка используются только мета-поля. С select('*') страница
+    // грузилась минутами при 5+ шаблонных сайтах.
     const { data } = await supabase
       .from('landings')
-      .select('*')
+      .select('id, name, slug, status, meta_title, meta_description, funnel_id, funnel_stage_id, custom_domain, visits, conversions, project_id, created_at')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false })
-    const loaded = (data ?? []) as Landing[]
+    const loaded = (data ?? []).map(l => ({ ...l, html_content: null })) as Landing[]
     setLandings(loaded)
     setLoading(false)
   }
