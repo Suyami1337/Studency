@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { aiAssistant } from '@/lib/ai'
+import { createServerSupabase } from '@/lib/supabase-server'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = await createServerSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
     const body = await request.json()
     const { question, context, attachments } = body
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0

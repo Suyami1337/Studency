@@ -188,7 +188,8 @@ function LandingDetail({
   const [settingMetaDesc, setSettingMetaDesc] = useState(landing.meta_description ?? '')
   const [settingFunnelId, setSettingFunnelId] = useState(landing.funnel_id ?? '')
   const [settingFunnelStageId, setSettingFunnelStageId] = useState(landing.funnel_stage_id ?? '')
-  const [settingCustomDomain, setSettingCustomDomain] = useState(landing.custom_domain ?? '')
+  // settingCustomDomain — устаревшее (custom_domain теперь на проекте). Сохраняем
+  // только чтобы не потерять старые значения у legacy лендингов.
   const [settingIsMiniApp, setSettingIsMiniApp] = useState(landing.is_mini_app ?? false)
   const [funnels, setFunnels] = useState<Funnel[]>([])
   const [funnelStages, setFunnelStages] = useState<FunnelStage[]>([])
@@ -298,7 +299,6 @@ function LandingDetail({
         meta_description: settingMetaDesc || null,
         funnel_id: settingFunnelId || null,
         funnel_stage_id: settingFunnelStageId || null,
-        custom_domain: settingCustomDomain.trim() || null,
         is_mini_app: settingIsMiniApp,
       })
       .eq('id', landing.id)

@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generateLandingContent } from '@/lib/ai'
+import { createServerSupabase } from '@/lib/supabase-server'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
   try {
+    // Auth — не даём сжигать Anthropic-кредиты анонимам
+    const supabase = await createServerSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
     const body = await request.json()
     const { description } = body
     if (!description) return NextResponse.json({ error: 'description required' }, { status: 400 })

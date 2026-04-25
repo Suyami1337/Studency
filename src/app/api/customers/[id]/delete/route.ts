@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,16 +35,21 @@ export async function POST(
 
   const supabase = getSupabase()
 
-  // Получаем visitor_token для удаления tracking_events
+  // Получаем visitor_token для удаления tracking_events + project_id для auth
   const { data: customer, error: fetchErr } = await supabase
     .from('customers')
-    .select('id, visitor_token')
+    .select('id, visitor_token, project_id')
     .eq('id', customerId)
     .single()
 
   if (fetchErr || !customer) {
     return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
   }
+
+  // Auth: user должен иметь доступ к проекту клиента
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, customer.project_id)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
   const visitorToken = customer.visitor_token
 

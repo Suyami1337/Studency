@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { loadRecipients } from '@/lib/broadcast-send'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +24,10 @@ function getSupabase() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    if (!body.project_id) return NextResponse.json({ error: 'project_id required' }, { status: 400 })
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, body.project_id)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
     const supabase = getSupabase()
 
     const channel = body.channel ?? 'telegram'

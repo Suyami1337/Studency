@@ -59,8 +59,15 @@ export async function POST(request: NextRequest) {
 
     // Находим бот
     const { data: bot } = await supabase
-      .from('telegram_bots').select('id, token').eq('id', telegram_bot_id).single()
+      .from('telegram_bots').select('id, token, project_id').eq('id', telegram_bot_id).single()
     if (!bot) return NextResponse.json({ error: 'Бот не найден' }, { status: 404 })
+
+    // Auth: user должен иметь доступ к проекту бота
+    const { createServerSupabase } = await import('@/lib/supabase-server')
+    const { ensureProjectAccess } = await import('@/lib/api-auth')
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, bot.project_id)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
     // Находим conversation у получателя с этим ботом
     const { data: conv } = await supabase

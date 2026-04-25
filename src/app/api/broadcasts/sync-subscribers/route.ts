@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { syncBotSubscribers } from '@/lib/sync-bot-subscribers'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -24,8 +26,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = getSupabase()
     const { data: bot } = await supabase
-      .from('telegram_bots').select('id, token, name').eq('id', botId).single()
+      .from('telegram_bots').select('id, token, name, project_id').eq('id', botId).single()
     if (!bot) return NextResponse.json({ error: 'Bot not found' }, { status: 404 })
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, bot.project_id)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const result = await syncBotSubscribers(supabase, bot.id, bot.token)
     return NextResponse.json({ ok: true, ...result })
