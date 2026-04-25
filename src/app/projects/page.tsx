@@ -3,11 +3,14 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { validateSubdomain, suggestSubdomainFromName, ROOT_DOMAIN } from '@/lib/subdomain'
 
 type Project = {
   id: string
   name: string
-  domain: string | null
+  subdomain: string
+  custom_domain: string | null
+  custom_domain_status: string | null
   created_at: string
 }
 
@@ -16,6 +19,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
+  const [newSubdomain, setNewSubdomain] = useState('')
+  const [subdomainTouched, setSubdomainTouched] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const router = useRouter()
@@ -37,20 +42,29 @@ export default function ProjectsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!newName.trim()) return
+    const sub = (newSubdomain || suggestSubdomainFromName(newName)).toLowerCase().trim()
+    const validErr = validateSubdomain(sub)
+    if (validErr) { setCreateError(validErr); return }
     setCreating(true)
+    setCreateError('')
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
     const { data, error } = await supabase
       .from('projects')
-      .insert({ name: newName.trim(), owner_id: user.id })
+      .insert({ name: newName.trim(), owner_id: user.id, subdomain: sub })
       .select()
       .single()
 
     if (error) {
       console.error('Create project error:', error)
-      setCreateError('Ошибка: ' + error.message)
+      // Уникальность subdomain → понятное сообщение
+      if (/duplicate|unique/i.test(error.message)) {
+        setCreateError(`Поддомен «${sub}» уже занят. Попробуй другое имя.`)
+      } else {
+        setCreateError('Ошибка: ' + error.message)
+      }
       setCreating(false)
       return
     }
@@ -122,8 +136,10 @@ export default function ProjectsPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-gray-900 group-hover:text-[#6A55F8] transition-colors">{p.name}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5">
-                    {p.domain || 'Домен не привязан'}
+                  <p className="text-sm text-gray-500 mt-0.5 font-mono">
+                    {p.custom_domain && p.custom_domain_status === 'verified'
+                      ? p.custom_domain
+                      : `${p.subdomain}.${ROOT_DOMAIN}`}
                   </p>
                 </div>
               </div>
@@ -135,23 +151,40 @@ export default function ProjectsPage() {
           {showCreate ? (
             <form onSubmit={handleCreate} className="bg-white rounded-xl border border-[#6A55F8]/30 p-5 shadow-md shadow-[#6A55F8]/5">
               <h3 className="font-semibold text-gray-900 mb-3">Новый проект</h3>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Название</label>
               <input
                 type="text"
                 value={newName}
-                onChange={e => { setNewName(e.target.value); setCreateError('') }}
-                placeholder="Название проекта"
+                onChange={e => {
+                  setNewName(e.target.value)
+                  setCreateError('')
+                  if (!subdomainTouched) setNewSubdomain(suggestSubdomainFromName(e.target.value))
+                }}
+                placeholder="Например: Маркетинг школа"
                 autoFocus
                 className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8] mb-3"
               />
+              <label className="block text-xs font-medium text-gray-600 mb-1">Поддомен сайта</label>
+              <div className="flex items-center gap-1 mb-1">
+                <input
+                  type="text"
+                  value={newSubdomain}
+                  onChange={e => { setNewSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')); setSubdomainTouched(true); setCreateError('') }}
+                  placeholder="shkola"
+                  className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]"
+                />
+                <span className="text-sm text-gray-500 font-mono whitespace-nowrap">.{ROOT_DOMAIN}</span>
+              </div>
+              <p className="text-xs text-gray-400 mb-3">Можно поменять позже в настройках. Свой домен подключается отдельно.</p>
               {createError && (
                 <p className="text-sm text-red-500 mb-3">{createError}</p>
               )}
               <div className="flex items-center gap-2">
-                <button type="submit" disabled={creating}
+                <button type="submit" disabled={creating || !newName.trim()}
                   className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                   {creating ? 'Создаём...' : 'Создать'}
                 </button>
-                <button type="button" onClick={() => setShowCreate(false)}
+                <button type="button" onClick={() => { setShowCreate(false); setNewSubdomain(''); setSubdomainTouched(false) }}
                   className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-colors">
                   Отмена
                 </button>

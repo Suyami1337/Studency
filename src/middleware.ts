@@ -1,15 +1,63 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru'
+
+/** Является ли host корневым доменом платформы (главный сайт + лк). */
+function isRootHost(host: string): boolean {
+  if (!host) return false
+  const h = host.toLowerCase().split(':')[0]  // без порта
+  if (h === ROOT_DOMAIN) return true
+  if (h === `www.${ROOT_DOMAIN}`) return true
+  // Локалка / превью
+  if (h === 'localhost' || h.endsWith('.vercel.app')) return true
+  // Обращение по IP
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return true
+  return false
+}
+
+/** Извлекает поддомен из <sub>.studency.ru, иначе null. */
+function extractSubdomain(host: string): string | null {
+  const h = host.toLowerCase().split(':')[0]
+  const suffix = `.${ROOT_DOMAIN}`
+  if (h.endsWith(suffix)) {
+    const sub = h.slice(0, h.length - suffix.length)
+    if (sub && !sub.includes('.')) return sub
+  }
+  return null
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const host = request.headers.get('host') || ''
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Шаг 1. Routing по host: если host — субдомен или кастомный домен,
+  // rewrite на публичный route /_pub/[hostKind]/[hostValue]/[...path].
+  // Главный домен пропускается дальше (auth + страницы лк).
+  // ──────────────────────────────────────────────────────────────────────
+  if (!isRootHost(host) && !pathname.startsWith('/_next') && !pathname.startsWith('/_pub') && !pathname.startsWith('/api/')) {
+    const sub = extractSubdomain(host)
+    const url = request.nextUrl.clone()
+    if (sub) {
+      // <sub>.studency.ru/<path> → /_pub/sub/<sub>/<path>
+      url.pathname = `/_pub/sub/${sub}${pathname === '/' ? '' : pathname}`
+    } else {
+      // Кастомный домен → /_pub/cust/<host>/<path>
+      url.pathname = `/_pub/cust/${encodeURIComponent(host.split(':')[0])}${pathname === '/' ? '' : pathname}`
+    }
+    return NextResponse.rewrite(url)
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Шаг 2. На корневом домене — старая логика auth.
+  // ──────────────────────────────────────────────────────────────────────
 
   // Skip for static/api/public pages
-  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname.startsWith('/s/') || pathname === '/favicon.ico') {
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname.startsWith('/s/') || pathname.startsWith('/_pub') || pathname === '/favicon.ico') {
     return NextResponse.next()
   }
 
-  // If env vars missing, skip auth check
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
@@ -53,7 +101,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
   } catch {
-    // If auth check fails, let request through
     return NextResponse.next()
   }
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { validateSubdomain, ROOT_DOMAIN } from '@/lib/subdomain'
 
 type TelegramBot = {
   id: string
@@ -292,16 +293,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {activeTab === 'domain' && (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <div className="text-4xl mb-4">🌐</div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Домен</h3>
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-sm font-medium">
-            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            В разработке
-          </div>
-        </div>
-      )}
+      {activeTab === 'domain' && <DomainTab projectId={projectId} />}
     </div>
   )
 }
@@ -450,6 +442,208 @@ function CustomFieldsTab({ projectId }: { projectId: string }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// =============================================================================
+// DOMAIN TAB — управление поддоменом и кастомным доменом проекта
+// =============================================================================
+function DomainTab({ projectId }: { projectId: string }) {
+  const supabase = createClient()
+  const [project, setProject] = useState<{
+    subdomain: string
+    custom_domain: string | null
+    custom_domain_status: string | null
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [editingSub, setEditingSub] = useState(false)
+  const [subInput, setSubInput] = useState('')
+  const [subSaving, setSubSaving] = useState(false)
+  const [subError, setSubError] = useState('')
+  const [domainInput, setDomainInput] = useState('')
+  const [domainSaving, setDomainSaving] = useState(false)
+  const [domainError, setDomainError] = useState('')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [verification, setVerification] = useState<any>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase
+      .from('projects')
+      .select('subdomain, custom_domain, custom_domain_status')
+      .eq('id', projectId)
+      .single()
+    setProject(data)
+    setSubInput(data?.subdomain ?? '')
+    // Если есть кастомный домен — подтягиваем актуальный статус из Vercel
+    if (data?.custom_domain) {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/domain`)
+        const j = await res.json()
+        if (j.verification) setVerification(j.verification)
+        if (j.status && j.status !== data.custom_domain_status) {
+          setProject(p => p ? { ...p, custom_domain_status: j.status } : p)
+        }
+      } catch { /* ignore */ }
+    }
+    setLoading(false)
+  }
+  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId])
+
+  async function saveSubdomain() {
+    const sub = subInput.toLowerCase().trim()
+    const err = validateSubdomain(sub)
+    if (err) { setSubError(err); return }
+    setSubSaving(true); setSubError('')
+    const res = await fetch(`/api/projects/${projectId}/domain`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subdomain: sub }),
+    })
+    const j = await res.json()
+    if (!res.ok) { setSubError(j.error || 'Не удалось сохранить'); setSubSaving(false); return }
+    setEditingSub(false)
+    setSubSaving(false)
+    await load()
+  }
+
+  async function attachDomain() {
+    const d = domainInput.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    if (!d) { setDomainError('Укажи домен'); return }
+    setDomainSaving(true); setDomainError(''); setVerification(null)
+    const res = await fetch(`/api/projects/${projectId}/domain`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom_domain: d }),
+    })
+    const j = await res.json()
+    if (!res.ok) { setDomainError(j.error || 'Не удалось добавить домен'); setDomainSaving(false); return }
+    setDomainInput('')
+    if (j.verification) setVerification(j.verification)
+    setDomainSaving(false)
+    await load()
+  }
+
+  async function refreshDomainStatus() {
+    setRefreshing(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/domain`)
+      const j = await res.json()
+      if (j.verification) setVerification(j.verification)
+      else setVerification(null)
+      if (j.status) setProject(p => p ? { ...p, custom_domain_status: j.status } : p)
+    } catch { /* ignore */ }
+    setRefreshing(false)
+  }
+
+  async function detachDomain() {
+    if (!confirm('Отключить кастомный домен? Сайт станет доступен только по поддомену.')) return
+    await fetch(`/api/projects/${projectId}/domain`, { method: 'DELETE' })
+    setVerification(null)
+    await load()
+  }
+
+  if (loading) return <div className="text-sm text-gray-400 py-12 text-center">Загрузка...</div>
+  if (!project) return <div className="text-sm text-red-500 py-12 text-center">Проект не найден</div>
+
+  const status = project.custom_domain_status
+  const statusLabel = status === 'verified' ? 'Подключён' : status === 'failed' ? 'Ошибка' : 'Ожидает DNS'
+  const statusClass = status === 'verified' ? 'bg-green-50 text-green-700 border-green-200' : status === 'failed' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+
+  return (
+    <div className="space-y-5">
+      {/* Поддомен */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Поддомен платформы</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Бесплатный адрес твоей школы. Доступен сразу.</p>
+          </div>
+          {!editingSub && (
+            <button onClick={() => setEditingSub(true)} className="text-sm text-[#6A55F8] hover:underline">Изменить</button>
+          )}
+        </div>
+        {editingSub ? (
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <input value={subInput} onChange={e => { setSubInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')); setSubError('') }}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]" />
+              <span className="text-sm text-gray-500 font-mono whitespace-nowrap">.{ROOT_DOMAIN}</span>
+            </div>
+            {subError && <p className="text-sm text-red-500 mb-2">{subError}</p>}
+            <div className="flex gap-2">
+              <button onClick={saveSubdomain} disabled={subSaving} className="px-4 py-2 bg-[#6A55F8] text-white rounded-lg text-sm font-medium hover:bg-[#5040D6] disabled:opacity-50">
+                {subSaving ? 'Сохраняем...' : 'Сохранить'}
+              </button>
+              <button onClick={() => { setEditingSub(false); setSubInput(project.subdomain); setSubError('') }} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg">Отмена</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 rounded-lg">
+            <code className="text-sm font-mono text-gray-900">{project.subdomain}.{ROOT_DOMAIN}</code>
+            <a href={`https://${project.subdomain}.${ROOT_DOMAIN}`} target="_blank" rel="noopener" className="text-xs text-[#6A55F8] hover:underline ml-auto">Открыть ↗</a>
+          </div>
+        )}
+      </div>
+
+      {/* Кастомный домен */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Свой домен</h2>
+        <p className="text-xs text-gray-500 mb-4">Подключи свой домен (например, shkola.com) — клиенты будут видеть только его.</p>
+
+        {!project.custom_domain ? (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <input value={domainInput} onChange={e => { setDomainInput(e.target.value); setDomainError('') }}
+                placeholder="shkola.com"
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]" />
+              <button onClick={attachDomain} disabled={domainSaving || !domainInput.trim()}
+                className="px-4 py-2 bg-[#6A55F8] text-white rounded-lg text-sm font-medium hover:bg-[#5040D6] disabled:opacity-50 whitespace-nowrap">
+                {domainSaving ? 'Подключаем...' : 'Подключить'}
+              </button>
+            </div>
+            {domainError && <p className="text-sm text-red-500">{domainError}</p>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <code className="text-sm font-mono text-gray-900 px-3 py-2 bg-gray-50 rounded-lg flex-1">{project.custom_domain}</code>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusClass}`}>{statusLabel}</span>
+            </div>
+            {verification && Array.isArray(verification) && verification.length > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-semibold text-blue-900 mb-2">Настрой DNS у регистратора:</p>
+                <div className="space-y-1.5 font-mono text-xs">
+                  {verification.map((v, i) => (
+                    <div key={i} className="flex flex-wrap gap-2 text-gray-700">
+                      <span className="font-bold text-blue-700">{v.type}</span>
+                      <span>{v.domain}</span>
+                      <span>→</span>
+                      <span className="break-all">{v.value}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-blue-700 mt-3">После настройки DNS — нажми «Проверить». Vercel сам выдаст SSL.</p>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={refreshDomainStatus} disabled={refreshing} className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
+                {refreshing ? 'Проверяем...' : 'Проверить статус'}
+              </button>
+              <button onClick={detachDomain} className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">Отключить</button>
+            </div>
+          </div>
+        )}
+
+        <details className="mt-5">
+          <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">Как настроить DNS у регистратора</summary>
+          <div className="mt-3 text-xs text-gray-600 space-y-1.5 leading-relaxed">
+            <p>1. Подключи домен через эту форму — мы покажем тебе CNAME/A-записи которые надо добавить.</p>
+            <p>2. Зайди в DNS-настройки у регистратора (РУЦЕНТР, REG.RU, Namecheap, GoDaddy и т.п.)</p>
+            <p>3. Добавь записи как мы показали (обычно <code className="bg-gray-100 px-1 rounded">CNAME</code> на <code className="bg-gray-100 px-1 rounded">cname.vercel-dns.com</code>).</p>
+            <p>4. Подожди 5-30 минут пока DNS распространится, нажми «Проверить статус».</p>
+            <p>5. SSL-сертификат Vercel выдаст сам автоматически.</p>
+          </div>
+        </details>
+      </div>
     </div>
   )
 }

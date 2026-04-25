@@ -8,6 +8,7 @@ import { SkeletonList } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
 import { BlockEditor } from '@/components/landing/BlockEditor'
 import { landingTemplates } from '@/lib/landing-templates'
+import { ROOT_DOMAIN } from '@/lib/subdomain'
 
 type Landing = {
   id: string
@@ -151,10 +152,12 @@ function LandingDetail({
   landing: initialLanding,
   onBack,
   projectId,
+  publicHost,
 }: {
   landing: Landing
   onBack: (updated: Landing) => void
   projectId: string
+  publicHost: string
 }) {
   const supabase = createClient()
   const [landing, setLanding] = useState<Landing>(initialLanding)
@@ -560,8 +563,8 @@ function LandingDetail({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Slug</label>
               <div className="flex items-center gap-0">
-                <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-sm text-gray-500">
-                  studency.app/
+                <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-sm text-gray-500 font-mono">
+                  {publicHost || 'studency.ru'}/
                 </span>
                 <input
                   type="text"
@@ -619,7 +622,7 @@ function LandingDetail({
                 <p className="text-xs font-semibold text-gray-700">Как подключить кнопкой в боте (рекомендуется):</p>
                 <ol className="text-xs text-gray-500 space-y-1.5 list-decimal list-inside">
                   <li>В чат-боте или сценарии добавь кнопку типа <b>url</b></li>
-                  <li>Ссылку ставь с префиксом <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://t.me/your_bot/app?startapp=</code> или обычную <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://studency.ru/s/{landing.slug}</code></li>
+                  <li>Ссылку ставь с префиксом <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://t.me/your_bot/app?startapp=</code> или обычную <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">https://{publicHost || 'studency.ru'}/{landing.slug}</code></li>
                   <li>Telegram откроет страницу как Mini App — SDK сам передаст нам telegram_id клиента</li>
                 </ol>
                 <p className="text-[11px] text-gray-400 mt-1">Если лендинг открывают из обычного браузера — сайт работает как раньше, Mini App режим молчит.</p>
@@ -627,37 +630,7 @@ function LandingDetail({
             )}
           </div>
 
-          {/* Custom domain */}
-          <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="font-semibold text-gray-900">Кастомный домен</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Подключите свой домен вместо studency.vercel.app</p>
-              </div>
-              <span className="text-xs bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full font-medium">DNS настройка</span>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Домен</label>
-              <input
-                type="text"
-                value={settingCustomDomain}
-                onChange={(e) => setSettingCustomDomain(e.target.value)}
-                placeholder="example.com"
-                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10"
-              />
-            </div>
-            {settingCustomDomain && (
-              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                <p className="text-xs font-semibold text-gray-700">Инструкция по настройке DNS:</p>
-                <ol className="text-xs text-gray-500 space-y-1.5 list-decimal list-inside">
-                  <li>Зайдите в панель управления вашим доменом</li>
-                  <li>Создайте CNAME запись: <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">{settingCustomDomain}</code> → <code className="bg-white px-1.5 py-0.5 rounded border border-gray-200 font-mono">cname.vercel-dns.com</code></li>
-                  <li>Добавьте домен в Vercel Dashboard → Settings → Domains</li>
-                  <li>Сохраните настройки — домен заработает через 5–30 минут</li>
-                </ol>
-              </div>
-            )}
-          </div>
+          {/* Кастомный домен теперь на уровне ПРОЕКТА (Settings → Домен), не лендинга. */}
 
           {/* Funnel */}
           <div className="bg-white rounded-xl border border-gray-100 p-5 space-y-4">
@@ -785,10 +758,12 @@ function LandingDetail({
 // ═══════════════════════════════════════════════════════════════════════════
 function LandingsList({
   projectId,
+  publicHost,
   onSelect,
   onLandingsLoaded,
 }: {
   projectId: string
+  publicHost: string
   onSelect: (l: Landing) => void
   onLandingsLoaded?: (landings: Landing[]) => void
 }) {
@@ -991,8 +966,8 @@ function LandingsList({
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">Slug (URL)</label>
             <div className="flex items-center">
-              <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-xs text-gray-500 whitespace-nowrap">
-                studency.app/
+              <span className="px-3 py-2.5 bg-gray-50 border border-r-0 border-gray-200 rounded-l-lg text-xs text-gray-500 whitespace-nowrap font-mono">
+                {publicHost || 'studency.ru'}/
               </span>
               <input
                 type="text"
@@ -1058,7 +1033,7 @@ function LandingsList({
                 {landing.name}
               </p>
               <p className="text-xs text-gray-400 mb-4 font-mono truncate">
-                {pending ? 'создаётся…' : `studency.app/${landing.slug}`}
+                {pending ? 'создаётся…' : `${publicHost || 'studency.ru'}/${landing.slug}`}
               </p>
 
               {/* Stats */}
@@ -1088,7 +1063,32 @@ export default function SitesPage() {
   const { id: projectId } = useParams<{ id: string }>()
   const searchParams = useSearchParams()
   const router = useRouter()
+  const supabase = createClient()
   const [landingsList, setLandingsList] = useState<Landing[]>([])
+  const [project, setProject] = useState<{ subdomain: string; custom_domain: string | null; custom_domain_status: string | null } | null>(null)
+
+  // Загружаем мета-инфо проекта (subdomain/custom_domain) — для построения публичных URL
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data } = await supabase
+        .from('projects')
+        .select('subdomain, custom_domain, custom_domain_status')
+        .eq('id', projectId)
+        .single()
+      if (!cancelled && data) setProject(data)
+    }
+    load()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  // Префикс для публичной ссылки лендинга. Кастомный домен приоритетнее.
+  const publicHost = project
+    ? (project.custom_domain && project.custom_domain_status === 'verified'
+        ? project.custom_domain
+        : `${project.subdomain}.${ROOT_DOMAIN}`)
+    : ''
 
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
   const urlLandingId = searchParams.get('open')
@@ -1125,6 +1125,7 @@ export default function SitesPage() {
           landing={selectedLanding}
           onBack={handleBack}
           projectId={projectId}
+          publicHost={publicHost}
         />
       </div>
     )
@@ -1134,6 +1135,7 @@ export default function SitesPage() {
     <div className="p-6">
       <LandingsList
         projectId={projectId}
+        publicHost={publicHost}
         onSelect={(l) => selectLanding(l.id)}
         onLandingsLoaded={setLandingsList}
       />
