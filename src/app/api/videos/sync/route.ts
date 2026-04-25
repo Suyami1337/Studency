@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getKinescopeVideo } from '@/lib/kinescope'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -23,6 +25,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const projectId = body.project_id
     if (!projectId) return NextResponse.json({ error: 'project_id required' }, { status: 400 })
+
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, projectId)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const supabase = getSupabase()
 

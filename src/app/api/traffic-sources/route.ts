@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createChatInviteLink, getChat, getChatMember } from '@/lib/telegram'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 function getSupabase() {
   return createClient(
@@ -56,6 +58,10 @@ export async function GET(request: NextRequest) {
   const projectId = request.nextUrl.searchParams.get('projectId')
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 })
 
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, projectId)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
   const supabase = getSupabase()
   const { data, error } = await supabase
     .from('traffic_sources')
@@ -75,6 +81,10 @@ export async function POST(request: NextRequest) {
     if (!projectId || !name || !slug || !destinationUrl) {
       return NextResponse.json({ error: 'projectId, name, slug, destinationUrl обязательны' }, { status: 400 })
     }
+
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, projectId)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
     const supabase = getSupabase()

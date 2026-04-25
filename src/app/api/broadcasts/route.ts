@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 
@@ -15,6 +17,10 @@ export async function GET(request: NextRequest) {
   const projectId = request.nextUrl.searchParams.get('project_id')
   if (!projectId) return NextResponse.json({ error: 'project_id required' }, { status: 400 })
 
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, projectId)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
   const supabase = getSupabase()
   const { data } = await supabase.from('broadcasts')
     .select('*')
@@ -28,6 +34,12 @@ export async function GET(request: NextRequest) {
 // Если переданы scheduled_at в будущем → статус 'scheduled', иначе 'draft'.
 export async function POST(request: NextRequest) {
   const body = await request.json()
+  if (!body.project_id) return NextResponse.json({ error: 'project_id required' }, { status: 400 })
+
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, body.project_id)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
   const supabase = getSupabase()
 
   const scheduledAt = body.scheduled_at ? new Date(body.scheduled_at) : null
@@ -68,9 +80,15 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json()
   const supabase = getSupabase()
 
+  // Auth: рассылка должна принадлежать проекту, к которому есть доступ
+  const { data: existing } = await supabase.from('broadcasts').select('project_id, status').eq('id', id).maybeSingle()
+  if (!existing) return NextResponse.json({ error: 'not found' }, { status: 404 })
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, existing.project_id)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
   // Нельзя править отправленную/отправляемую
-  const { data: current } = await supabase.from('broadcasts').select('status').eq('id', id).single()
-  if (current && (current.status === 'sent' || current.status === 'sending')) {
+  if (existing.status === 'sent' || existing.status === 'sending') {
     return NextResponse.json({ error: 'Нельзя редактировать отправленную рассылку' }, { status: 400 })
   }
 
@@ -101,6 +119,12 @@ export async function DELETE(request: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   const supabase = getSupabase()
+  const { data: existing } = await supabase.from('broadcasts').select('project_id').eq('id', id).maybeSingle()
+  if (!existing) return NextResponse.json({ ok: true })  // already gone
+  const authClient = await createServerSupabase()
+  const access = await ensureProjectAccess(authClient, existing.project_id)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
   const { error } = await supabase.from('broadcasts').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { restoreVideoShortcodes } from '@/lib/video-shortcodes'
+import { ensureLandingAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 
@@ -11,6 +12,8 @@ type Ctx = { params: Promise<{ id: string; blockId: string }> }
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   const { id: landingId, blockId } = await params
   const supabase = await createServerSupabase()
+  const access = await ensureLandingAccess(supabase, landingId)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
   const body = await request.json()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,6 +51,8 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const { id: landingId, blockId } = await params
   const supabase = await createServerSupabase()
+  const access = await ensureLandingAccess(supabase, landingId)
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
   const { error } = await supabase
     .from('landing_blocks')

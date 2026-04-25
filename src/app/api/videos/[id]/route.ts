@@ -4,6 +4,8 @@ import {
   deleteKinescopeVideo, getKinescopeStatistics, updateKinescopeVideo,
   getKinescopeVideo,
 } from '@/lib/kinescope'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 
@@ -14,11 +16,23 @@ function getSupabase() {
   )
 }
 
+async function checkVideoAccess(videoId: string) {
+  const supabase = getSupabase()
+  const { data: v } = await supabase.from('videos').select('id, project_id').eq('id', videoId).maybeSingle()
+  if (!v) return { ok: false as const, status: 404, error: 'Not found' }
+  const auth = await createServerSupabase()
+  const access = await ensureProjectAccess(auth, v.project_id)
+  if (!access.ok) return access
+  return { ok: true as const, video: v }
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await checkVideoAccess(id)
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status })
   const supabase = getSupabase()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,6 +93,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await checkVideoAccess(id)
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status })
   const body = await request.json()
   const supabase = getSupabase()
 
@@ -112,6 +128,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await checkVideoAccess(id)
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status })
   const supabase = getSupabase()
 
   const { data: video } = await supabase.from('videos').select('*').eq('id', id).single()

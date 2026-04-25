@@ -5,6 +5,8 @@ import {
   applyPlayerSettingsToVideo, PlayerSettings,
 } from '@/lib/kinescope'
 import { trackUsage } from '@/lib/usage'
+import { createServerSupabase } from '@/lib/supabase-server'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -25,6 +27,10 @@ export async function POST(request: NextRequest) {
 
     if (!file) return NextResponse.json({ error: 'No file' }, { status: 400 })
     if (!projectId) return NextResponse.json({ error: 'No project_id' }, { status: 400 })
+
+    const authClient = await createServerSupabase()
+    const access = await ensureProjectAccess(authClient, projectId)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
 
     const supabase = getSupabase()
 

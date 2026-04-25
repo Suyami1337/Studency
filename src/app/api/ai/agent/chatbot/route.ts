@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { runChatbotAgent } from '@/lib/ai-agents/chatbot-agent'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -16,7 +17,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabase()
 
-    // Verify the scenario belongs to the project — isolation guarantee
+    // 1. User должен иметь доступ к projectId
+    const access = await ensureProjectAccess(supabase, projectId)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
+    // 2. Сценарий принадлежит этому проекту
     const { data: scenario, error: scErr } = await supabase
       .from('chatbot_scenarios')
       .select('id, project_id, name')

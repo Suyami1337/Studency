@@ -17,14 +17,17 @@ async function ensureLandingOwnership(
   supabase: any,
   landingId: string
 ): Promise<{ ok: true; landing: { id: string; project_id: string; html_content: string | null; is_blocks_based: boolean } } | { ok: false; status: number; error: string }> {
-  // Сначала пробуем новую схему (с is_blocks_based — добавлена миграцией 34)
+  // 1. Auth: user должен быть залогинен и иметь доступ к проекту лендинга
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false, status: 401, error: 'unauthorized' }
+
+  // 2. Найти лендинг
   const full = await supabase
     .from('landings')
     .select('id, project_id, html_content, is_blocks_based')
     .eq('id', landingId)
     .maybeSingle()
   if (full.error) {
-    // Если колонки нет — значит миграция 34-landing-blocks.sql не применена. Скажем это прямо.
     const msg = full.error.message || ''
     if (/is_blocks_based|column.*does not exist/i.test(msg)) {
       return {
@@ -35,7 +38,24 @@ async function ensureLandingOwnership(
     return { ok: false, status: 500, error: `Supabase: ${msg}` }
   }
   if (!full.data) return { ok: false, status: 404, error: 'Лендинг не найден' }
-  return { ok: true, landing: full.data }
+
+  // 3. User имеет доступ к проекту лендинга?
+  const projectId = full.data.project_id
+  const { data: project } = await supabase
+    .from('projects')
+    .select('owner_id')
+    .eq('id', projectId)
+    .maybeSingle()
+  if (project?.owner_id === user.id) return { ok: true, landing: full.data }
+  const { data: member } = await supabase
+    .from('project_members')
+    .select('role')
+    .eq('project_id', projectId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (member) return { ok: true, landing: full.data }
+
+  return { ok: false, status: 403, error: 'forbidden' }
 }
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {

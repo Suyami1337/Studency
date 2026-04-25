@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { runLandingAgent } from '@/lib/ai-agents/landing-agent'
+import { ensureProjectAccess } from '@/lib/api-auth'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -16,7 +17,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabase()
 
-    // Ownership guard
+    // 1. User должен иметь доступ к projectId
+    const access = await ensureProjectAccess(supabase, projectId)
+    if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status })
+
+    // 2. Лендинг существует и принадлежит этому проекту
     const { data: landing, error } = await supabase
       .from('landings')
       .select('id, project_id, name')
