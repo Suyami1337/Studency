@@ -1273,7 +1273,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (e.button !== 0) return;
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
-      if (findSelectable(e.target)) return;
+      // ВАЖНО: НЕ возвращаемся для selectable-элементов. Box-select должен
+      // работать ВЕЗДЕ внутри сайта — над пустотой и над текстом/картинкой
+      // одинаково. Click без drag → click handler выделит один элемент.
+      // Drag > 6px → запускаем box-select и подавляем последующий click,
+      // чтобы он не сбросил наш multi-select на single.
       var sx = e.clientX, sy = e.clientY;
       var started = false;
       function onMove(ev) {
@@ -1289,6 +1293,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         document.removeEventListener('mouseup', onUp, true);
         if (started) {
           parent.postMessage({ type: 'stud-box-end', clientX: ev.clientX, clientY: ev.clientY }, '*');
+          // Подавляем следующий click event — иначе click handler iframe
+          // выделит один элемент поверх нашего box-select multi-selection.
+          var suppressClick = function(ce) {
+            ce.preventDefault();
+            ce.stopPropagation();
+            document.removeEventListener('click', suppressClick, true);
+          };
+          document.addEventListener('click', suppressClick, true);
+          // Safety: если click так и не пришёл (бывает) — снимаем listener через тик
+          setTimeout(function() { document.removeEventListener('click', suppressClick, true); }, 0);
         }
       }
       document.addEventListener('mousemove', onMove, true);
