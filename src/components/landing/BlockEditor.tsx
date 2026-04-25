@@ -73,6 +73,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     iframeStart: { x: number; y: number }
     canvasStart: { x: number; y: number }
   } | null>(null)
+  // RAF-батчинг pan дельт от iframe (stud-pan-delta может прилетать чаще 60fps)
+  const panAccumRef = useRef<{ dx: number; dy: number; raf: number }>({ dx: 0, dy: 0, raf: 0 })
   const [boxRect, setBoxRect] = useState<null | { x: number; y: number; w: number; h: number }>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -366,20 +368,35 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (!target.closest('[data-stud-fullscreen-root]')) return
       if (target.closest('[data-stud-panel]')) return  // панели — свои события
       if (target.closest('[data-stud-site-wrap]')) return  // сайт — iframe обработает
-      // Middle-click (зажатие колёсика) → pan
+      // Middle-click (зажатие колёсика) → pan. Без stud-panning класса —
+      // его cursor:grabbing + pointer-events:none на iframe тормозят repaint
+      // тяжелой страницы при каждом mousemove. В iframe этого эффекта нет
+      // (parent body cursor не пробрасывается). Дельты накапливаем и
+      // flush'им через requestAnimationFrame (60fps cap, как iframe через
+      // postMessage micro-task batching).
       if (e.button === 1) {
         e.preventDefault()
-        document.body.classList.add('stud-panning')
         let lastX = e.clientX, lastY = e.clientY
+        let pdx = 0, pdy = 0, raf = 0
+        function flush() {
+          raf = 0
+          if (pdx === 0 && pdy === 0) return
+          const dx = pdx, dy = pdy
+          pdx = 0; pdy = 0
+          setPanX(p => p + dx)
+          setPanY(p => p + dy)
+        }
         function onMove(ev: MouseEvent) {
-          setPanX(p => p + (ev.clientX - lastX))
-          setPanY(p => p + (ev.clientY - lastY))
+          pdx += ev.clientX - lastX
+          pdy += ev.clientY - lastY
           lastX = ev.clientX
           lastY = ev.clientY
+          if (!raf) raf = requestAnimationFrame(flush)
         }
         function onUp(ev: MouseEvent) {
           if (ev.button !== 1) return
-          document.body.classList.remove('stud-panning')
+          if (raf) cancelAnimationFrame(raf)
+          flush()
           document.removeEventListener('mousemove', onMove, true)
           document.removeEventListener('mouseup', onUp, true)
         }
@@ -514,14 +531,23 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         setBoxRect(null)
         document.body.classList.remove('stud-panning')
       } else if (data.type === 'stud-pan-start') {
-        // Middle-click из iframe — pan обрабатывается полностью в iframe
-        // (mouse capture у iframe-document). Здесь только cursor styling.
-        document.body.classList.add('stud-panning')
+        // Middle-click из iframe — pan обрабатывается полностью в iframe.
+        // stud-panning класс не нужен (cursor над iframe не виден parent body).
       } else if (data.type === 'stud-pan-delta') {
-        setPanX(p => p + (data.dx || 0))
-        setPanY(p => p + (data.dy || 0))
+        // Накапливаем дельты, flush'им в RAF — батчинг в один render-кадр.
+        panAccumRef.current.dx += data.dx || 0
+        panAccumRef.current.dy += data.dy || 0
+        if (!panAccumRef.current.raf) {
+          panAccumRef.current.raf = requestAnimationFrame(() => {
+            const a = panAccumRef.current
+            const dx = a.dx, dy = a.dy
+            a.dx = 0; a.dy = 0; a.raf = 0
+            setPanX(p => p + dx)
+            setPanY(p => p + dy)
+          })
+        }
       } else if (data.type === 'stud-pan-end') {
-        document.body.classList.remove('stud-panning')
+        // ничего — RAF-flush сам всё применит
       } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
         // Cap защищает от патологических случаев когда шаблон растёт бесконечно
         const safeHeight = Math.min(Math.max(400, data.height), 30000)
