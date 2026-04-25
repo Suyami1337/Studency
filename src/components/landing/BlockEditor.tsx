@@ -933,13 +933,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (el.classList && el.classList.contains('block-inner')) return null;
       if (el === blockSection) return null;
 
-      // Запрещаем выделять wrapper всего блока (первый ребёнок .block-inner, занимающий всю ширину)
-      var parent = el.parentElement;
-      if (parent && parent.classList && parent.classList.contains('block-inner') && el.children.length > 0) {
-        var r = el.getBoundingClientRect();
-        var pr = parent.getBoundingClientRect();
-        if (pr.width > 0 && r.width >= pr.width * 0.9) return null;
-      }
+      // Раньше тут было правило «не selectable если el — прямой ребёнок
+      // block-inner и занимает >90% ширины». Оно режет верхний wrapper
+      // любого импортированного шаблона (main.page, .vsl-root, .container) —
+      // как раз это ломало слои у grisha-шаблонов: главный wrapper отбраковывался,
+      // а walk внутрь ходит только для selectable элементов → ничего в layers.
+      // Теперь любой не-block-inner и не-сам-section элемент selectable.
 
       return el;
     }
@@ -1463,11 +1462,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
               });
             }
 
-            // Рекурсия внутрь — чтобы не пропустить вложенные фигуры.
-            // Лимиты подняты для импортированных шаблонов: глубина 15 (vsl-style
-            // структура легко уходит на 8-10), 500 детей вместо 80 (контейнеры
-            // с большими списками карточек).
-            if (depth < 15 && c.children.length > 0 && c.children.length < 500 && INLINE_TAGS.indexOf(tag) === -1) {
+            // Рекурсия внутрь. Лимиты подняты для импортированных шаблонов.
+            // С снятым 90%-rule в findSelectable все не-block-inner элементы
+            // selectable → walk ходит на каждое наследование. Поэтому depth
+            // 20 (vsl-style легко 8-10, плюс с wrapper'ами).
+            if (depth < 20 && c.children.length > 0 && c.children.length < 500 && INLINE_TAGS.indexOf(tag) === -1) {
               walk(c, selectable && hasSize ? depth + 1 : depth);
             }
           }
@@ -1484,13 +1483,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       collectTimer = setTimeout(collectLayers, 300);
     }
     collectLayers();
-    // Дополнительные триггеры для импортированных шаблонов: до загрузки картинок
-    // у элементов rect.height = 0 → walk пропускает. Перезапускаем после load
-    // и через 1с (картинки base64 декодируются мгновенно, но layout async).
+    // Импортированные шаблоны: layout/шрифты/картинки могут применяться
+    // постепенно. Несколько retry-проб покрывают случай когда первый
+    // collectLayers застаёт элементы с rect.height = 0 → они отфильтрованы.
     if (document.readyState !== 'complete') {
       window.addEventListener('load', scheduleCollect);
     }
-    setTimeout(scheduleCollect, 800);
+    setTimeout(scheduleCollect, 300);
+    setTimeout(scheduleCollect, 1000);
+    setTimeout(scheduleCollect, 2500);
+    setTimeout(scheduleCollect, 5000);
     // MutationObserver на весь document.body — любое изменение DOM → обновить слои
     try {
       var mo = new MutationObserver(scheduleCollect);
