@@ -469,12 +469,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
   // Escape — снимает выделение (включая multi-select). В parent чтобы ловить
   // когда фокус не в iframe (например на панели слоёв).
+  // Cmd/Ctrl+A — выделяем все наши объекты вместо нативного «select text всего».
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape') return
       const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
-      iframeRef.current?.contentWindow?.postMessage({ type: 'stud-clear-selection' }, '*')
+      const inField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (e.key === 'Escape') {
+        if (inField) return
+        iframeRef.current?.contentWindow?.postMessage({ type: 'stud-clear-selection' }, '*')
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        if (inField) return  // в input/textarea/contenteditable Cmd+A работает как обычно
+        e.preventDefault()
+        iframeRef.current?.contentWindow?.postMessage({ type: 'stud-select-all' }, '*')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -720,11 +729,28 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   body.stud-dragging { user-select: none !important; }
   body.stud-dragging * { cursor: inherit !important; }
 
-  /* Отключаем нативное выделение браузера везде внутри редактора,
-     кроме элементов сейчас в режиме редактирования текста (contenteditable=true).
-     Это убирает раздражающее «синее» выделение которое срабатывало при drag. */
-  html, body, [data-block-id] { user-select: none; -webkit-user-select: none; }
-  [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+  /* Полностью отключаем нативное выделение браузера ВЕЗДЕ внутри редактора.
+     Шаблоны (особенно импортированные) часто ставят свои user-select: text —
+     перебиваем !important на каждом узле, кроме режима редактирования текста.
+     Также курсор text у заголовков/абзацев убираем — оставляем default. */
+  html, body, [data-block-id], [data-block-id] * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+  }
+  [data-block-id] [contenteditable="true"], [data-block-id] [contenteditable="true"] * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+  }
+  [data-block-id] h1, [data-block-id] h2, [data-block-id] h3,
+  [data-block-id] h4, [data-block-id] h5, [data-block-id] h6,
+  [data-block-id] p, [data-block-id] span, [data-block-id] li,
+  [data-block-id] a, [data-block-id] button {
+    cursor: default;
+  }
 
   /* Box-select rectangle */
   .stud-box-select {
@@ -1248,6 +1274,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       document.addEventListener('mouseup', onUp, true);
     });
 
+    // Cmd+A — выделить все selectable-элементы во всех видимых блоках
+    function selectAllElements() {
+      var found = [];
+      document.querySelectorAll('[data-block-id]').forEach(function(sec) {
+        sec.querySelectorAll('*').forEach(function(el) {
+          if (el.getAttribute && el.getAttribute('data-stud-editor-inject')) return;
+          if (findSelectable(el) !== el) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return;
+          found.push(el);
+        });
+      });
+      if (found.length > 0) setSelection(found);
+    }
+
     // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
     // iframe-viewport coords — ищет все selectable-элементы внутри и выделяет.
     window.__studBoxComplete = function(box) {
@@ -1309,11 +1350,19 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       setSelection([el]);
     });
 
-    // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo
+    // Esc → выйти из edit / снять выделение. Ctrl-Z / Cmd-Z → undo.
+    // Cmd/Ctrl+A → НЕ нативное select-text-всего, а наш multi-select.
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Escape') {
         exitEditMode();
         removeOverlay();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !editingEl) {
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        selectAllElements();
         return;
       }
       // Delete / Backspace — удаляет все выделенные (если не в edit-mode)
@@ -1550,6 +1599,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (data.type === 'stud-clear-selection') {
         exitEditMode();
         removeOverlay();
+        return;
+      }
+      if (data.type === 'stud-select-all') {
+        exitEditMode();
+        selectAllElements();
         return;
       }
       if (data.type === 'stud-box-complete' && data.box && window.__studBoxComplete) {
