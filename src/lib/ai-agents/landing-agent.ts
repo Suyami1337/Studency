@@ -652,7 +652,10 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
 
     let response: Anthropic.Messages.Message
     try {
-      response = await client.messages.create({
+      // Streaming: при max_tokens > 21333 (или time > 10 мин) Anthropic SDK
+      // требует stream API. Используем .stream().finalMessage() — семантика
+      // как у .create(), просто SDK не блокирует на long-request guard.
+      const stream = client.messages.stream({
         model: MODEL,
         max_tokens: MAX_OUTPUT_TOKENS,
         system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
@@ -660,6 +663,7 @@ export async function runLandingAgent(ctx: AgentInput): Promise<AgentOutput> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         messages: conversation as any,
       })
+      response = await stream.finalMessage()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[landing-agent] anthropic api error at iter=${iter}:`, msg)
