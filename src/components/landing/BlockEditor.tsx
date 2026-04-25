@@ -333,19 +333,24 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
   }, [])
 
-  // Native wheel-listener на canvas-space с {passive: false} + preventDefault.
-  // React onWheel всегда passive — браузер тратит время на проверку «можно ли
-  // скроллить» каждое событие → лаг. Нативный + preventDefault работает мгновенно
-  // (как в iframe, где wheel идёт через нативный listener).
+  // Wheel-listener на window с capture-phase. Ловит wheel ВЕЗДЕ в fullscreen,
+  // включая bg, canvas-space, iframe wrapper. Исключение — панели слоёв/свойств
+  // (они со своим внутренним scroll'ом). passive: false + preventDefault даёт
+  // мгновенную реакцию без браузерных проверок «можно ли скроллить body».
   useEffect(() => {
-    const node = canvasSpaceRef.current
-    if (!node) return
+    if (!fullscreen) return
     function onWheel(e: WheelEvent) {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      // Не из нашего fullscreen-редактора — пропускаем
+      if (!target.closest('[data-stud-fullscreen-root]')) return
+      // Над панелями — пусть скроллятся сами
+      if (target.closest('[data-stud-panel]')) return
       e.preventDefault()
       applyWheel(e.deltaX, e.deltaY, e.altKey, e.shiftKey)
     }
-    node.addEventListener('wheel', onWheel, { passive: false })
-    return () => node.removeEventListener('wheel', onWheel)
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions)
   }, [fullscreen, applyWheel])
 
   // Native mousedown на canvas-space — middle-click pan и LMB box-select.
@@ -1645,7 +1650,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
   // ══ Tilda-подобный fullscreen редактор ════════════════════════════════
   return (
-    <div className="fixed inset-0 z-40 bg-gray-200 flex flex-col">
+    <div data-stud-fullscreen-root className="fixed inset-0 z-40 bg-gray-200 flex flex-col">
       {/* ── Top bar — grid 3 зоны, центр точно по центру окна ── */}
       <div className="h-14 bg-white border-b border-gray-200 relative flex-shrink-0">
         {/* Left: + Add */}
@@ -1764,7 +1769,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
         {/* Left panel — оторванный прямоугольник с отступами */}
         {leftPanelOpen && (
-          <div className="absolute left-3 top-3 bottom-3 z-20">
+          <div data-stud-panel className="absolute left-3 top-3 bottom-3 z-20">
             <LayersPanel
               blocks={blocks}
               layers={layers}
@@ -1781,7 +1786,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 
         {/* Right panel — оторванный прямоугольник */}
         {rightPanelOpen && (
-          <div className="absolute right-3 top-3 bottom-3 z-20">
+          <div data-stud-panel className="absolute right-3 top-3 bottom-3 z-20">
             <PropertiesPanel
               info={selectedInfo}
               selectionCount={selectionCount}
