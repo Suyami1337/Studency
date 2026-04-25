@@ -6,10 +6,47 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import crypto from 'crypto'
 import { ROLE } from './knowledge/landing/role'
 import { CHECKLIST } from './knowledge/landing/checklist'
 import { EXAMPLES } from './knowledge/landing/examples'
 import { wrapLegacyHtmlAsBlock } from '../landing-blocks'
+
+// ─── base64-картинки в html_content ───────────────────────────────────────
+// Импортированные шаблоны (Лендинг.html / Урок 2.html) содержат картинки
+// инлайн как data:image/...;base64,<огромная-строка>. Один такой блок
+// HTML занимает 1.6+ MB и пробивает лимит контекста Claude (200K токенов).
+// Решение:
+//  - На read_block: заменяем base64 на короткий плейсхолдер (hash от данных)
+//  - На update_block: восстанавливаем плейсхолдеры обратно из БД-снапшота
+const B64_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)/g
+
+function redactBase64Images(html: string): { redacted: string; count: number } {
+  let count = 0
+  const redacted = html.replace(B64_RE, (_, mime, b64) => {
+    count++
+    const hash = crypto.createHash('sha1').update(b64 as string).digest('hex').slice(0, 12)
+    return `data:image/${mime};base64,__B64_${hash}__`
+  })
+  return { redacted, count }
+}
+
+/** Восстанавливаем base64 картинки в новом HTML из старого (по hash в плейсхолдере). */
+function restoreBase64FromOld(newHtml: string, oldHtml: string): string {
+  // Соберём mapping hash → реальный base64 из старого html
+  const map = new Map<string, string>()
+  const oldMatches = oldHtml.matchAll(B64_RE)
+  for (const m of oldMatches) {
+    const b64 = m[2]
+    const hash = crypto.createHash('sha1').update(b64).digest('hex').slice(0, 12)
+    if (!map.has(hash)) map.set(hash, b64)
+  }
+  // Заменяем плейсхолдеры в новом html на реальный base64
+  return newHtml.replace(/data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,__B64_([a-f0-9]{12})__/g, (full, mime, hash) => {
+    const real = map.get(hash)
+    return real ? `data:image/${mime};base64,${real}` : full
+  })
+}
 
 /** Алиас для единообразия имени в этом файле */
 const wrapLegacyHtmlAsBlockForAgent = wrapLegacyHtmlAsBlock
@@ -386,10 +423,18 @@ async function executeTool(
           .eq('landing_id', landingId)
           .single()
         if (!b) throw new Error('блок не найден')
-        // HTML отдаём сырым между маркеров, остальное — как JSON
-        const htmlSection = b.html_content
-          ? `\n===HTML_START===\n${b.html_content}\n===HTML_END===\n`
-          : ''
+        // base64-картинки заменяем на плейсхолдеры — иначе один импортированный
+        // лендинг 1.6MB пробивает лимит контекста.
+        let html: string = b.html_content || ''
+        let redactNote = ''
+        if (html) {
+          const { redacted, count } = redactBase64Images(html)
+          if (count > 0) {
+            html = redacted
+            redactNote = `\n===ВНИМАНИЕ===\nВ этом HTML ${count} base64-картинок заменены на плейсхолдеры вида __B64_<hash>__. Это нужно чтобы вписаться в лимит контекста. При update_block ОСТАВЛЯЙ плейсхолдеры на месте картинок которые НЕ должны меняться — система автоматически восстановит реальные base64 из текущей версии в БД. Если хочешь заменить картинку — поставь новый src (URL или новый data:image base64). Если хочешь удалить картинку — удали весь <img>.\n`
+          }
+        }
+        const htmlSection = html ? `\n===HTML_START===\n${html}\n===HTML_END===\n` : ''
         const content = JSON.stringify({
           id: b.id,
           name: b.name,
@@ -400,7 +445,7 @@ async function executeTool(
           desktop_styles: b.desktop_styles,
           mobile_styles: b.mobile_styles,
           layout: b.layout,
-        }, null, 2) + htmlSection
+        }, null, 2) + redactNote + htmlSection
         return {
           content,
           summary: `прочитал блок «${b.name || b.block_type}»`,
@@ -417,6 +462,19 @@ async function executeTool(
           if (input[k] !== undefined) updates[k] = input[k]
         }
         if (Object.keys(updates).length === 0) throw new Error('нет полей для обновления')
+        // Если агент прислал html_content с плейсхолдерами __B64_xxx__, подменяем
+        // обратно на реальный base64 из текущего html в БД.
+        if (typeof updates.html_content === 'string' && updates.html_content.includes('__B64_')) {
+          const { data: cur } = await supabase
+            .from('landing_blocks')
+            .select('html_content')
+            .eq('id', blockId)
+            .eq('landing_id', landingId)
+            .single()
+          if (cur?.html_content) {
+            updates.html_content = restoreBase64FromOld(updates.html_content, cur.html_content)
+          }
+        }
         const { data, error } = await supabase
           .from('landing_blocks')
           .update(updates)
