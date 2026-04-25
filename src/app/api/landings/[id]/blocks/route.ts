@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { wrapLegacyHtmlAsBlock, type BlockType } from '@/lib/landing-blocks'
+import { replaceVideoShortcodes } from '@/lib/video-shortcodes'
 
 export const runtime = 'nodejs'
 
@@ -50,9 +51,23 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     .order('order_position', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // Заменяем шорткоды {{video:UUID}} на iframe Kinescope — чтобы редактор
+  // показывал реальный плеер, как увидит конечный пользователь.
+  // В БД остаётся шорткод (см. PATCH в [blockId]/route.ts — restoreVideoShortcodes).
+  const enrichedBlocks = await Promise.all((blocks ?? []).map(async (b) => {
+    const out = { ...b }
+    if (typeof b.html_content === 'string' && b.html_content.includes('{{video:')) {
+      out.html_content = await replaceVideoShortcodes(b.html_content, supabase)
+    }
+    if (b.content && typeof b.content === 'object' && typeof b.content.text === 'string' && b.content.text.includes('{{video:')) {
+      out.content = { ...b.content, text: await replaceVideoShortcodes(b.content.text, supabase) }
+    }
+    return out
+  }))
+
   return NextResponse.json({
     ok: true,
-    blocks: blocks ?? [],
+    blocks: enrichedBlocks,
     isBlocksBased: guard.landing.is_blocks_based,
     hasLegacyHtml: Boolean(guard.landing.html_content),
   })

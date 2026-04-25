@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
+import { restoreVideoShortcodes } from '@/lib/video-shortcodes'
 
 export const runtime = 'nodejs'
 
@@ -20,6 +21,16 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   }
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
+  }
+
+  // Обратная замена iframe-плеера → шорткод {{video:UUID}}. В редакторе
+  // GET возвращает iframe (для preview), при сохранении возвращаем шорткод
+  // в БД — чтобы видео можно было заменить через Settings без правки HTML.
+  if (typeof updates.html_content === 'string') {
+    updates.html_content = restoreVideoShortcodes(updates.html_content)
+  }
+  if (updates.content && typeof updates.content === 'object' && typeof updates.content.text === 'string') {
+    updates.content = { ...updates.content, text: restoreVideoShortcodes(updates.content.text) }
   }
 
   const { data, error } = await supabase
