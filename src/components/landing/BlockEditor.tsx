@@ -470,6 +470,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   // Escape — снимает выделение (включая multi-select). В parent чтобы ловить
   // когда фокус не в iframe (например на панели слоёв).
   // Cmd/Ctrl+A — выделяем все наши объекты вместо нативного «select text всего».
+  // Стрелки — двигают выделенные элементы (через postMessage iframe).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement | null
@@ -480,9 +481,18 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
-        if (inField) return  // в input/textarea/contenteditable Cmd+A работает как обычно
+        if (inField) return
         e.preventDefault()
         iframeRef.current?.contentWindow?.postMessage({ type: 'stud-select-all' }, '*')
+        return
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (inField) return
+        e.preventDefault()
+        iframeRef.current?.contentWindow?.postMessage({
+          type: 'stud-arrow-move',
+          key: e.key, repeat: e.repeat, shiftKey: e.shiftKey,
+        }, '*')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1324,6 +1334,39 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (found.length > 0) setSelection(found);
     }
 
+    // Стрелки двигают выделенные. Один тап = 1px, удержание ускоряется
+    // (1 → 2 → 4 → 8). Shift = ×10.
+    var arrowRepeats = 0;
+    function arrowStep() {
+      if (arrowRepeats < 3) return 1;
+      if (arrowRepeats < 8) return 2;
+      if (arrowRepeats < 16) return 4;
+      return 8;
+    }
+    function moveSelected(dx, dy) {
+      if (selectedEls.length === 0) return;
+      var bidsToMark = {};
+      selectedEls.forEach(function(el) {
+        var sec = el.closest('[data-block-id]');
+        if (sec) {
+          var bid = sec.getAttribute('data-block-id');
+          if (bid && !bidsToMark[bid]) { pushUndo(bid, false); bidsToMark[bid] = true; }
+        }
+        var cs = window.getComputedStyle(el);
+        if (cs.position === 'static') el.style.position = 'relative';
+        var curLeft = parseFloat(el.style.left);
+        if (isNaN(curLeft)) curLeft = (cs.left === 'auto' ? 0 : parseFloat(cs.left) || 0);
+        var curTop = parseFloat(el.style.top);
+        if (isNaN(curTop)) curTop = (cs.top === 'auto' ? 0 : parseFloat(cs.top) || 0);
+        el.style.left = (curLeft + dx) + 'px';
+        el.style.top = (curTop + dy) + 'px';
+      });
+      try { positionOverlay(); } catch (_) {}
+      Object.keys(bidsToMark).forEach(function(b) {
+        parent.postMessage({ type: 'stud-input', blockId: b }, '*');
+      });
+    }
+
     // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
     // iframe-viewport coords — ищет все selectable-элементы внутри и выделяет.
     window.__studBoxComplete = function(box) {
@@ -1400,6 +1443,23 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         selectAllElements();
         return;
       }
+      // Стрелки → двигать выделенные элементы
+      var isArrow = e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+      if (isArrow && selectedEls.length > 0 && !editingEl) {
+        var t2 = e.target;
+        if (t2 && (t2.tagName === 'INPUT' || t2.tagName === 'TEXTAREA' || t2.isContentEditable)) return;
+        e.preventDefault();
+        if (e.repeat) arrowRepeats++; else arrowRepeats = 0;
+        var step = arrowStep();
+        if (e.shiftKey) step *= 10;
+        var dx = 0, dy = 0;
+        if (e.key === 'ArrowLeft') dx = -step;
+        else if (e.key === 'ArrowRight') dx = step;
+        else if (e.key === 'ArrowUp') dy = -step;
+        else if (e.key === 'ArrowDown') dy = step;
+        moveSelected(dx, dy);
+        return;
+      }
       // Delete / Backspace — удаляет все выделенные (если не в edit-mode)
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEls.length > 0 && !editingEl) {
         var t = e.target;
@@ -1448,6 +1508,13 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         }
         e.preventDefault();
         doUndo();
+      }
+    });
+
+    // Сброс счётчика arrow-repeats при отпускании
+    document.addEventListener('keyup', function(e) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        arrowRepeats = 0;
       }
     });
 
@@ -1639,6 +1706,18 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (data.type === 'stud-select-all') {
         exitEditMode();
         selectAllElements();
+        return;
+      }
+      if (data.type === 'stud-arrow-move' && selectedEls.length > 0 && !editingEl) {
+        if (data.repeat) arrowRepeats++; else arrowRepeats = 0;
+        var step = arrowStep();
+        if (data.shiftKey) step *= 10;
+        var dx = 0, dy = 0;
+        if (data.key === 'ArrowLeft') dx = -step;
+        else if (data.key === 'ArrowRight') dx = step;
+        else if (data.key === 'ArrowUp') dy = -step;
+        else if (data.key === 'ArrowDown') dy = step;
+        moveSelected(dx, dy);
         return;
       }
       if (data.type === 'stud-box-complete' && data.box && window.__studBoxComplete) {
