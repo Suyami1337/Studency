@@ -67,6 +67,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   const [panY, setPanY] = useState(0)
   const [scale, setScale] = useState(1)
   const canvasSpaceRef = useRef<HTMLDivElement>(null)
+  // Состояние iframe-box-select (drag пришёл от iframe). Хранит стартовые
+  // координаты в iframe-viewport (для финального box) и canvas-space (для рамки).
+  const iframeBoxRef = useRef<{
+    iframeStart: { x: number; y: number }
+    canvasStart: { x: number; y: number }
+  } | null>(null)
   const [boxRect, setBoxRect] = useState<null | { x: number; y: number; w: number; h: number }>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -406,32 +412,55 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         // Колесо над iframe → применяем к canvas-space (pan или zoom)
         applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.altKey, !!data.shiftKey)
       } else if (data.type === 'stud-box-start') {
+        // iframe начал box-drag. Сохраняем стартовые координаты в обоих
+        // системах: iframe-viewport (для финального box) и canvas-space
+        // (для отрисовки рамки). НЕ регистрируем window listeners — mouse
+        // capture у iframe-document, события не дойдут до parent.window.
         const iframeRect = iframeRef.current?.getBoundingClientRect()
-        const clientX = (iframeRect?.left ?? 0) + data.clientX
-        const clientY = (iframeRect?.top ?? 0) + data.clientY
-        startBoxSelect(clientX, clientY)
-      } else if (data.type === 'stud-pan-start') {
-        // Middle-click из iframe → сразу отключаем pointer-events у iframe
-        // (чтобы mousemove/mouseup гарантированно доходили до parent window)
+        const canvasRect = canvasSpaceRef.current?.getBoundingClientRect()
+        if (!iframeRect || !canvasRect) return
+        const sxCanvas = (iframeRect.left + data.clientX) - canvasRect.left
+        const syCanvas = (iframeRect.top + data.clientY) - canvasRect.top
+        iframeBoxRef.current = {
+          iframeStart: { x: data.clientX, y: data.clientY },
+          canvasStart: { x: sxCanvas, y: syCanvas },
+        }
+        setBoxRect({ x: sxCanvas, y: syCanvas, w: 0, h: 0 })
         document.body.classList.add('stud-panning')
+      } else if (data.type === 'stud-box-move' && iframeBoxRef.current) {
         const iframeRect = iframeRef.current?.getBoundingClientRect()
-        let lastX = (iframeRect?.left ?? 0) + data.clientX
-        let lastY = (iframeRect?.top ?? 0) + data.clientY
-        function onMove(ev: MouseEvent) {
-          // delta-based: двигаем на приращение — без проблем с накопленной ошибкой / transform
-          setPanX(p => p + (ev.clientX - lastX))
-          setPanY(p => p + (ev.clientY - lastY))
-          lastX = ev.clientX
-          lastY = ev.clientY
+        const canvasRect = canvasSpaceRef.current?.getBoundingClientRect()
+        if (!iframeRect || !canvasRect) return
+        const cx = (iframeRect.left + data.clientX) - canvasRect.left
+        const cy = (iframeRect.top + data.clientY) - canvasRect.top
+        const s = iframeBoxRef.current.canvasStart
+        setBoxRect({
+          x: Math.min(s.x, cx),
+          y: Math.min(s.y, cy),
+          w: Math.abs(cx - s.x),
+          h: Math.abs(cy - s.y),
+        })
+      } else if (data.type === 'stud-box-end' && iframeBoxRef.current) {
+        const s = iframeBoxRef.current.iframeStart
+        const boxInIframe = {
+          left: Math.min(s.x, data.clientX),
+          top: Math.min(s.y, data.clientY),
+          right: Math.max(s.x, data.clientX),
+          bottom: Math.max(s.y, data.clientY),
         }
-        function onUp(ev: MouseEvent) {
-          if (ev.button !== 1 && ev.button !== undefined && ev.button !== 0) return
-          document.body.classList.remove('stud-panning')
-          window.removeEventListener('mousemove', onMove)
-          window.removeEventListener('mouseup', onUp)
-        }
-        window.addEventListener('mousemove', onMove)
-        window.addEventListener('mouseup', onUp)
+        iframeRef.current?.contentWindow?.postMessage({ type: 'stud-box-complete', box: boxInIframe }, '*')
+        iframeBoxRef.current = null
+        setBoxRect(null)
+        document.body.classList.remove('stud-panning')
+      } else if (data.type === 'stud-pan-start') {
+        // Middle-click из iframe — pan обрабатывается полностью в iframe
+        // (mouse capture у iframe-document). Здесь только cursor styling.
+        document.body.classList.add('stud-panning')
+      } else if (data.type === 'stud-pan-delta') {
+        setPanX(p => p + (data.dx || 0))
+        setPanY(p => p + (data.dy || 0))
+      } else if (data.type === 'stud-pan-end') {
+        document.body.classList.remove('stud-panning')
       } else if (data.type === 'stud-resize' && typeof data.height === 'number') {
         // Cap защищает от патологических случаев когда шаблон растёт бесконечно
         const safeHeight = Math.min(Math.max(400, data.height), 30000)
@@ -1051,24 +1080,33 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
     }
 
-    // Box-select. iframe-side threshold 6px — НЕ отправляем parent'у
-    // ничего пока пользователь реально не начал тянуть. Простой клик не
-    // должен запускать выделение. Симметрия с поведением bg-канваса.
+    // Box-select полностью обрабатывается ВНУТРИ iframe.
+    // Браузер привязывает mouse-capture к iframe-document при mousedown →
+    // mousemove/mouseup идут в iframe независимо от pointer-events:none.
+    // Поэтому слушать window в parent бесполезно. iframe сам ловит move/up
+    // и шлёт parent'у updates через postMessage — рамка рисуется в реальном
+    // времени, на mouseup применяется selection.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 0) return;
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
       if (findSelectable(e.target)) return;
       var sx = e.clientX, sy = e.clientY;
+      var started = false;
       function onMove(ev) {
-        if (Math.abs(ev.clientX - sx) < 6 && Math.abs(ev.clientY - sy) < 6) return;
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        parent.postMessage({ type: 'stud-box-start', clientX: sx, clientY: sy }, '*');
+        if (!started) {
+          if (Math.abs(ev.clientX - sx) < 6 && Math.abs(ev.clientY - sy) < 6) return;
+          started = true;
+          parent.postMessage({ type: 'stud-box-start', clientX: sx, clientY: sy }, '*');
+        }
+        parent.postMessage({ type: 'stud-box-move', clientX: ev.clientX, clientY: ev.clientY }, '*');
       }
-      function onUp() {
+      function onUp(ev) {
         document.removeEventListener('mousemove', onMove, true);
         document.removeEventListener('mouseup', onUp, true);
+        if (started) {
+          parent.postMessage({ type: 'stud-box-end', clientX: ev.clientX, clientY: ev.clientY }, '*');
+        }
       }
       document.addEventListener('mousemove', onMove, true);
       document.addEventListener('mouseup', onUp, true);
@@ -1323,16 +1361,29 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }, '*');
     }, { passive: false });
 
-    // Middle-click mousedown над iframe → parent начинает pan.
-    // capture-phase + auxclick blocker — иначе Chrome активирует auto-scroll
-    // mode (один клик включает «инерционный скролл», нужен второй клик чтобы
-    // выйти). preventDefault в capture надёжно гасит default до того как
-    // браузер успел запустить auto-scroll.
+    // Middle-click pan — полностью обрабатывается в iframe (mouse capture
+    // принадлежит iframe-document после mousedown). capture phase +
+    // preventDefault гасит Chrome auto-scroll mode на корню. Шлём parent'у
+    // только дельты координат, чтобы он применил к state.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 1) return;
       e.preventDefault();
       e.stopPropagation();
-      parent.postMessage({ type: 'stud-pan-start', clientX: e.clientX, clientY: e.clientY }, '*');
+      parent.postMessage({ type: 'stud-pan-start' }, '*');
+      var lastX = e.clientX, lastY = e.clientY;
+      function onMove(ev) {
+        parent.postMessage({ type: 'stud-pan-delta', dx: ev.clientX - lastX, dy: ev.clientY - lastY }, '*');
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+      }
+      function onUp(ev) {
+        if (ev.button !== 1) return;
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        parent.postMessage({ type: 'stud-pan-end' }, '*');
+      }
+      document.addEventListener('mousemove', onMove, true);
+      document.addEventListener('mouseup', onUp, true);
     }, true);
     document.addEventListener('auxclick', function(e) {
       if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
