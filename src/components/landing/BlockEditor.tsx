@@ -277,8 +277,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     }
     function onUp() {
       document.body.classList.remove('stud-panning')
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
+      document.removeEventListener('mousemove', onMove, true)
+      document.removeEventListener('mouseup', onUp, true)
       setBoxRect(null)
       // Если не двигали — просто click в фон → снимаем выделение в iframe (симметрия с iframe-click)
       if (!dragStarted) {
@@ -303,8 +303,8 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       }
       iframeRef.current?.contentWindow?.postMessage({ type: 'stud-box-complete', box: boxInIframe }, '*')
     }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    document.addEventListener('mousemove', onMove, true)
+    document.addEventListener('mouseup', onUp, true)
   }
 
   // Delete в parent — работает когда выделен элемент даже если фокус в нашей панели/списке слоёв
@@ -347,6 +347,50 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     node.addEventListener('wheel', onWheel, { passive: false })
     return () => node.removeEventListener('wheel', onWheel)
   }, [fullscreen, applyWheel])
+
+  // Native mousedown на canvas-space — middle-click pan и LMB box-select.
+  // Полностью симметрично iframe: capture-phase listeners на document,
+  // никаких window.* и React synthetic events. Capture phase даёт минимальную
+  // задержку — события приходят до bubble-фазы и не тротлятся.
+  useEffect(() => {
+    const node = canvasSpaceRef.current
+    if (!node) return
+
+    function onMouseDown(e: MouseEvent) {
+      const target = e.target as HTMLElement
+      // Middle-click (зажатие колёсика) → pan
+      if (e.button === 1) {
+        e.preventDefault()
+        document.body.classList.add('stud-panning')
+        let lastX = e.clientX, lastY = e.clientY
+        function onMove(ev: MouseEvent) {
+          setPanX(p => p + (ev.clientX - lastX))
+          setPanY(p => p + (ev.clientY - lastY))
+          lastX = ev.clientX
+          lastY = ev.clientY
+        }
+        function onUp(ev: MouseEvent) {
+          if (ev.button !== 1) return
+          document.body.classList.remove('stud-panning')
+          document.removeEventListener('mousemove', onMove, true)
+          document.removeEventListener('mouseup', onUp, true)
+        }
+        document.addEventListener('mousemove', onMove, true)
+        document.addEventListener('mouseup', onUp, true)
+        return
+      }
+      // LMB на bg → box-select (кроме сайта и UI)
+      if (e.button === 0) {
+        if (target.closest('[data-stud-site-wrap]')) return
+        if (target.closest('button, a, input, textarea, select')) return
+        e.preventDefault()
+        startBoxSelect(e.clientX, e.clientY)
+      }
+    }
+
+    node.addEventListener('mousedown', onMouseDown, true)
+    return () => node.removeEventListener('mousedown', onMouseDown, true)
+  }, [fullscreen])
 
   // Ctrl/Cmd + Z → undo через iframe (в parent keydown, чтобы ловить когда фокус не в iframe)
   useEffect(() => {
@@ -1661,37 +1705,6 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           className="absolute inset-0 overflow-hidden select-none"
           style={{
             background: 'repeating-conic-gradient(#dedede 0 25%, #e8e8e8 0 50%) 0 0 / 20px 20px',
-          }}
-          onMouseDown={(e) => {
-            // Middle click (button=1) → пан
-            if (e.button === 1) {
-              e.preventDefault()
-              document.body.classList.add('stud-panning')
-              let lastX = e.clientX, lastY = e.clientY
-              function onMove(ev: MouseEvent) {
-                setPanX(p => p + (ev.clientX - lastX))
-                setPanY(p => p + (ev.clientY - lastY))
-                lastX = ev.clientX
-                lastY = ev.clientY
-              }
-              function onUp() {
-                document.body.classList.remove('stud-panning')
-                window.removeEventListener('mousemove', onMove)
-                window.removeEventListener('mouseup', onUp)
-              }
-              window.addEventListener('mousemove', onMove)
-              window.addEventListener('mouseup', onUp)
-              return
-            }
-            // LMB на любой части canvas-space, КРОМЕ самого сайта и UI-кнопок → box-select.
-            // Это покрывает места слева/справа/сверху/снизу от сайта внутри transformed-обёртки.
-            if (e.button === 0) {
-              const t = e.target as HTMLElement
-              if (t.closest('[data-stud-site-wrap]')) return  // клик попал в сайт — iframe сам обработает
-              if (t.closest('button, a, input, textarea, select')) return  // клик в UI-кнопку
-              e.preventDefault()
-              startBoxSelect(e.clientX, e.clientY)
-            }
           }}
         >
           <div
