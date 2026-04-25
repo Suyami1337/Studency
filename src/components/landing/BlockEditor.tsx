@@ -730,21 +730,26 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   body.stud-dragging * { cursor: inherit !important; }
 
   /* Полностью отключаем нативное выделение браузера ВЕЗДЕ внутри редактора.
-     Шаблоны (особенно импортированные) часто ставят свои user-select: text —
-     перебиваем !important на каждом узле, кроме режима редактирования текста.
-     Также курсор text у заголовков/абзацев убираем — оставляем default. */
-  html, body, [data-block-id], [data-block-id] * {
+     Универсальный селектор * перебивает любые специфичные user-select: text
+     из шаблонов. Исключение — contenteditable=true в режиме редактирования. */
+  html, body, * {
     user-select: none !important;
     -webkit-user-select: none !important;
     -moz-user-select: none !important;
     -ms-user-select: none !important;
+    -webkit-touch-callout: none !important;
   }
-  [data-block-id] [contenteditable="true"], [data-block-id] [contenteditable="true"] * {
+  [contenteditable="true"], [contenteditable="true"] * {
     user-select: text !important;
     -webkit-user-select: text !important;
     -moz-user-select: text !important;
     -ms-user-select: text !important;
   }
+  /* Скрываем визуально selection-highlight на случай если он всё-таки прорвётся */
+  ::selection { background: transparent !important; color: inherit !important; }
+  ::-moz-selection { background: transparent !important; color: inherit !important; }
+  [contenteditable="true"] ::selection { background: rgba(106,85,248,0.3) !important; color: inherit !important; }
+
   [data-block-id] h1, [data-block-id] h2, [data-block-id] h3,
   [data-block-id] h4, [data-block-id] h5, [data-block-id] h6,
   [data-block-id] p, [data-block-id] span, [data-block-id] li,
@@ -762,6 +767,26 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
 </style>
 <script data-stud-editor-inject>
   (function() {
+    // Жёстко глушим нативное text-selection: CSS user-select:none иногда
+    // не предотвращает selection на drag (особенно в WebKit). Capture-phase
+    // selectstart event с preventDefault — единственный надёжный способ.
+    // Исключение — режим редактирования текста (contenteditable=true).
+    document.addEventListener('selectstart', function(e) {
+      var t = e.target;
+      if (t && t.closest && t.closest('[contenteditable="true"]')) return;
+      e.preventDefault();
+    }, true);
+    // На mousedown сразу очищаем существующий selection — на случай если
+    // он остался от предыдущего действия.
+    document.addEventListener('mousedown', function(e) {
+      var t = e.target;
+      if (t && t.closest && t.closest('[contenteditable="true"]')) return;
+      try {
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) sel.removeAllRanges();
+      } catch (_) {}
+    }, true);
+
     // Добавляем toolbar над каждым блоком
     document.querySelectorAll('[data-block-id]').forEach(function(section) {
       var blockId = section.getAttribute('data-block-id');
