@@ -806,6 +806,14 @@ function LandingsList({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Синхронизируем ROOT-стейт landingsList с внутренним landings ВСЕГДА,
+  // не только при первой загрузке. Иначе после optimistic create клик по новой
+  // карточке не открывает редактор: ROOT не знает про новый id.
+  useEffect(() => {
+    onLandingsLoaded?.(landings)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landings])
+
   async function loadLandings() {
     const { data } = await supabase
       .from('landings')
@@ -814,7 +822,6 @@ function LandingsList({
       .order('created_at', { ascending: false })
     const loaded = (data ?? []) as Landing[]
     setLandings(loaded)
-    onLandingsLoaded?.(loaded)
     setLoading(false)
   }
 
