@@ -1463,8 +1463,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
               });
             }
 
-            // Рекурсия внутрь — чтобы не пропустить вложенные фигуры
-            if (depth < 6 && c.children.length > 0 && c.children.length < 80 && INLINE_TAGS.indexOf(tag) === -1) {
+            // Рекурсия внутрь — чтобы не пропустить вложенные фигуры.
+            // Лимиты подняты для импортированных шаблонов: глубина 15 (vsl-style
+            // структура легко уходит на 8-10), 500 детей вместо 80 (контейнеры
+            // с большими списками карточек).
+            if (depth < 15 && c.children.length > 0 && c.children.length < 500 && INLINE_TAGS.indexOf(tag) === -1) {
               walk(c, selectable && hasSize ? depth + 1 : depth);
             }
           }
@@ -1481,6 +1484,13 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       collectTimer = setTimeout(collectLayers, 300);
     }
     collectLayers();
+    // Дополнительные триггеры для импортированных шаблонов: до загрузки картинок
+    // у элементов rect.height = 0 → walk пропускает. Перезапускаем после load
+    // и через 1с (картинки base64 декодируются мгновенно, но layout async).
+    if (document.readyState !== 'complete') {
+      window.addEventListener('load', scheduleCollect);
+    }
+    setTimeout(scheduleCollect, 800);
     // MutationObserver на весь document.body — любое изменение DOM → обновить слои
     try {
       var mo = new MutationObserver(scheduleCollect);
