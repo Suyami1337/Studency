@@ -75,6 +75,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   } | null>(null)
   // RAF-батчинг pan дельт от iframe (stud-pan-delta может прилетать чаще 60fps)
   const panAccumRef = useRef<{ dx: number; dy: number; raf: number }>({ dx: 0, dy: 0, raf: 0 })
+  // Refs current state — нужны для zoom-к-курсору (внутри callback применяем
+  // setPanX/setPanY с учётом старого scale/pan)
+  const scaleRef = useRef(scale)
+  const panXRef = useRef(panX)
+  const panYRef = useRef(panY)
+  useEffect(() => { scaleRef.current = scale }, [scale])
+  useEffect(() => { panXRef.current = panX }, [panX])
+  useEffect(() => { panYRef.current = panY }, [panY])
   const [boxRect, setBoxRect] = useState<null | { x: number; y: number; w: number; h: number }>(null)
   const [addMenu, setAddMenu] = useState<null | { blockId: string; x: number; y: number }>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -326,9 +334,25 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
   // Применить wheel из любого источника (canvas-space или iframe-postMessage)
   // zoomKey = Cmd (Mac) / Ctrl (Win/Linux) / pinch-zoom трекпада на Mac
   // (последний эмулируется браузером как wheel + ctrlKey=true)
-  const applyWheel = useCallback((deltaX: number, deltaY: number, zoomKey: boolean, shiftKey: boolean) => {
+  // mouseCanvasX/Y — точка под курсором в canvas-space coords (для zoom-к-курсору)
+  const applyWheel = useCallback((
+    deltaX: number, deltaY: number, zoomKey: boolean, shiftKey: boolean,
+    mouseCanvasX?: number, mouseCanvasY?: number,
+  ) => {
     if (zoomKey) {
-      setScale(s => Math.max(0.25, Math.min(2, s * (deltaY > 0 ? 0.9 : 1.1))))
+      const oldScale = scaleRef.current
+      const newScale = Math.max(0.25, Math.min(2, oldScale * (deltaY > 0 ? 0.9 : 1.1)))
+      if (newScale === oldScale) return
+      // Zoom-к-курсору: подгоняем pan чтобы точка под курсором осталась на месте.
+      // Формула: newPan = mouse - (mouse - oldPan) * (newScale / oldScale)
+      if (mouseCanvasX !== undefined && mouseCanvasY !== undefined) {
+        const ratio = newScale / oldScale
+        const oldPanX = panXRef.current
+        const oldPanY = panYRef.current
+        setPanX(mouseCanvasX - (mouseCanvasX - oldPanX) * ratio)
+        setPanY(mouseCanvasY - (mouseCanvasY - oldPanY) * ratio)
+      }
+      setScale(newScale)
     } else if (shiftKey) {
       setPanX(x => x - (deltaY + deltaX) * 1.6)
     } else {
@@ -359,7 +383,10 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function onWheel(e: WheelEvent) {
       if (!isParentArea(e.target as HTMLElement | null)) return
       e.preventDefault()
-      applyWheel(e.deltaX, e.deltaY, e.ctrlKey || e.metaKey, e.shiftKey)
+      const canvasRect = canvasSpaceRef.current?.getBoundingClientRect()
+      const mx = canvasRect ? e.clientX - canvasRect.left : undefined
+      const my = canvasRect ? e.clientY - canvasRect.top : undefined
+      applyWheel(e.deltaX, e.deltaY, e.ctrlKey || e.metaKey, e.shiftKey, mx, my)
     }
     window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     return () => window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions)
@@ -494,8 +521,21 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         collectLiveHtml()
         void handleAddBlock()
       } else if (data.type === 'stud-wheel') {
-        // Колесо над iframe → применяем к canvas-space (pan или zoom)
-        applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.ctrlKey || !!data.metaKey, !!data.shiftKey)
+        // Колесо над iframe → применяем к canvas-space (pan или zoom).
+        // Координаты курсора: iframe-DOM clientX/Y * scaleRatio + iframeRect offset.
+        // scaleRatio = displayed iframe width / iframe content width (учёт scale).
+        const iframeEl = iframeRef.current
+        const canvasEl = canvasSpaceRef.current
+        let mx: number | undefined, my: number | undefined
+        if (iframeEl && canvasEl) {
+          const iframeRect = iframeEl.getBoundingClientRect()
+          const innerW = iframeEl.contentWindow?.innerWidth ?? iframeRect.width
+          const ratio = innerW > 0 ? iframeRect.width / innerW : 1
+          const canvasRect = canvasEl.getBoundingClientRect()
+          mx = iframeRect.left + (data.clientX || 0) * ratio - canvasRect.left
+          my = iframeRect.top + (data.clientY || 0) * ratio - canvasRect.top
+        }
+        applyWheel(data.deltaX || 0, data.deltaY || 0, !!data.ctrlKey || !!data.metaKey, !!data.shiftKey, mx, my)
       } else if (data.type === 'stud-box-start') {
         // iframe начал box-drag. Сохраняем стартовые координаты в обоих
         // системах: iframe-viewport (для финального box) и canvas-space
@@ -1444,31 +1484,36 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style','class'] });
     } catch (_) {}
 
-    // Пересылаем wheel в parent — чтобы pan/zoom работали когда курсор над сайтом
+    // Пересылаем wheel в parent — чтобы pan/zoom работали когда курсор над сайтом.
+    // clientX/Y в iframe-DOM-coords → parent конвертирует в canvas-coords для zoom-к-курсору.
     window.addEventListener('wheel', function(e) {
       if (editingEl && editingEl.contains(e.target)) return;
       e.preventDefault();
       parent.postMessage({
         type: 'stud-wheel',
         deltaX: e.deltaX, deltaY: e.deltaY,
+        clientX: e.clientX, clientY: e.clientY,
         altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey,
       }, '*');
     }, { passive: false });
 
     // Middle-click pan — полностью обрабатывается в iframe (mouse capture
-    // принадлежит iframe-document после mousedown). capture phase +
-    // preventDefault гасит Chrome auto-scroll mode на корню. Шлём parent'у
-    // только дельты координат, чтобы он применил к state.
+    // принадлежит iframe-document после mousedown).
+    // ВАЖНО: используем screenX/screenY вместо clientX/clientY. clientX
+    // относительно iframe-window, а iframe сдвигается на экране при каждом
+    // pan-применении → клиентские координаты курсора меняются "сами собой"
+    // → накапливающаяся ошибка дельты → ТРЯСКА. screenX относительно
+    // физического экрана, не зависит от transform iframe.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 1) return;
       e.preventDefault();
       e.stopPropagation();
       parent.postMessage({ type: 'stud-pan-start' }, '*');
-      var lastX = e.clientX, lastY = e.clientY;
+      var lastX = e.screenX, lastY = e.screenY;
       function onMove(ev) {
-        parent.postMessage({ type: 'stud-pan-delta', dx: ev.clientX - lastX, dy: ev.clientY - lastY }, '*');
-        lastX = ev.clientX;
-        lastY = ev.clientY;
+        parent.postMessage({ type: 'stud-pan-delta', dx: ev.screenX - lastX, dy: ev.screenY - lastY }, '*');
+        lastX = ev.screenX;
+        lastY = ev.screenY;
       }
       function onUp(ev) {
         if (ev.button !== 1) return;
