@@ -274,8 +274,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       setBoxRect(null)
-      // Если не двигали — просто click, не box
-      if (!dragStarted) return
+      // Если не двигали — просто click в фон → снимаем выделение в iframe (симметрия с iframe-click)
+      if (!dragStarted) {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'stud-clear-selection' }, '*')
+        return
+      }
       // Финальный box в client-coords (global)
       const boxGlobal = {
         left: Math.min(startClientX, startClientX + (lastEnd.x - start.x)),
@@ -1035,29 +1038,14 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       if (bid) parent.postMessage({ type: 'stud-input', blockId: bid }, '*');
     }
 
-    // Box-select обрабатывается в PARENT (см. canvasSpaceRef.onMouseDown).
-    // Здесь — отслеживаем mousedown в фоне iframe и отправляем parent'у box-start
-    // ТОЛЬКО когда пользователь реально начал drag (сместился > 5px). Простой клик
-    // без удержания не должен запускать выделение.
+    // Box-select полностью обрабатывается в PARENT. iframe только сигналит
+    // «mousedown в моём фоне, начни box». Threshold для drag-vs-click — в parent.
     document.addEventListener('mousedown', function(e) {
       if (e.button !== 0) return;
       if (e.target.closest('.stud-overlay, .stud-block-toolbar, .stud-add-block-btn, .stud-box-select, .stud-float-toolbar')) return;
       if (editingEl && editingEl.contains(e.target)) return;
       if (findSelectable(e.target)) return;
-      var sx = e.clientX, sy = e.clientY;
-      var THRESH = 5;
-      function onMove(ev) {
-        if (Math.abs(ev.clientX - sx) < THRESH && Math.abs(ev.clientY - sy) < THRESH) return;
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-        parent.postMessage({ type: 'stud-box-start', clientX: sx, clientY: sy }, '*');
-      }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove, true);
-        document.removeEventListener('mouseup', onUp, true);
-      }
-      document.addEventListener('mousemove', onMove, true);
-      document.addEventListener('mouseup', onUp, true);
+      parent.postMessage({ type: 'stud-box-start', clientX: e.clientX, clientY: e.clientY }, '*');
     });
 
     // Iframe-side функция которую parent вызывает после mouseup с финальным rect в
@@ -1320,6 +1308,11 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
       var data = e.data;
       if (!data || typeof data !== 'object') return;
       if (data.type === 'stud-undo') { doUndo(); return; }
+      if (data.type === 'stud-clear-selection') {
+        exitEditMode();
+        removeOverlay();
+        return;
+      }
       if (data.type === 'stud-box-complete' && data.box && window.__studBoxComplete) {
         window.__studBoxComplete(data.box);
         return;
@@ -1600,8 +1593,12 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
               window.addEventListener('mouseup', onUp)
               return
             }
-            // LMB на пустом фоне canvas-space → box-select
-            if (e.button === 0 && e.target === e.currentTarget) {
+            // LMB на любой части canvas-space, КРОМЕ самого сайта и UI-кнопок → box-select.
+            // Это покрывает места слева/справа/сверху/снизу от сайта внутри transformed-обёртки.
+            if (e.button === 0) {
+              const t = e.target as HTMLElement
+              if (t.closest('[data-stud-site-wrap]')) return  // клик попал в сайт — iframe сам обработает
+              if (t.closest('button, a, input, textarea, select')) return  // клик в UI-кнопку
               e.preventDefault()
               startBoxSelect(e.clientX, e.clientY)
             }
@@ -1619,6 +1616,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
             }}
           >
             <div
+              data-stud-site-wrap
               className={`bg-white transition-shadow ${isMobileLike ? 'rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-2xl' : 'rounded-lg shadow-2xl'}`}
               style={isMobileLike ? { width: viewportWidth ?? '100%' } : { width: viewportWidth ?? 1280 }}
             >
