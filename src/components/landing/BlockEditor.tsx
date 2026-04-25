@@ -402,14 +402,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     function onMouseDown(e: MouseEvent) {
       const target = e.target as HTMLElement | null
       if (!isParentArea(target)) return
-      // Middle-click (зажатие колёсика) → pan. Без stud-panning класса —
-      // его cursor:grabbing + pointer-events:none на iframe тормозят repaint
-      // тяжелой страницы при каждом mousemove. В iframe этого эффекта нет
-      // (parent body cursor не пробрасывается). Дельты накапливаем и
-      // flush'им через requestAnimationFrame (60fps cap, как iframe через
-      // postMessage micro-task batching).
+      // Middle-click (зажатие колёсика) → pan.
+      // stud-panning класс ставит pointer-events:none у iframe — это критично:
+      // когда mouse-capture у parent.document, mousemove ВНУТРИ iframe area
+      // идут на iframe-document, не на parent. Без pointer-events:none pan
+      // обрывается при пересечении границы iframe. С ним события «проходят
+      // сквозь» iframe → seamless pan по всей canvas.
+      // RAF-батчинг: дельты накапливаем, flush'им раз в кадр.
       if (e.button === 1) {
         e.preventDefault()
+        document.body.classList.add('stud-panning')
         let lastX = e.clientX, lastY = e.clientY
         let pdx = 0, pdy = 0, raf = 0
         function flush() {
@@ -431,6 +433,7 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
           if (ev.button !== 1) return
           if (raf) cancelAnimationFrame(raf)
           flush()
+          document.body.classList.remove('stud-panning')
           document.removeEventListener('mousemove', onMove, true)
           document.removeEventListener('mouseup', onUp, true)
         }
