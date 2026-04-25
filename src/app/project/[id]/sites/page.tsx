@@ -838,7 +838,13 @@ function LandingsList({
     if (!newName.trim()) return
     const slug = newSlug.trim() || autoSlug(newName)
     const template = selectedTemplate ? landingTemplates.find(t => t.id === selectedTemplate) : null
-    const htmlContent = template?.html || null
+    let htmlContent: string | null = template?.html ?? null
+    if (!htmlContent && template?.htmlPath) {
+      try {
+        const res = await fetch(template.htmlPath)
+        if (res.ok) htmlContent = await res.text()
+      } catch { /* шаблон не загрузился — создадим пустой лендинг */ }
+    }
     const tempLanding: Landing = {
       id: 'temp-' + Date.now(),
       name: newName.trim(),

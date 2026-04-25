@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Локальные исходники шаблонов лендингов (с dev-scraps, ~65MB).
+# В прод идут только public/templates/ — их версионируем.
+/templates/

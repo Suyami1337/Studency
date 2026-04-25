@@ -1,4 +1,16 @@
-export const landingTemplates = [
+// Шаблон лендинга для селектора при создании сайта.
+// Тяжёлые шаблоны (с inline base64 или внешними assets) кладём в public/templates/
+// и указываем htmlPath — fetch'нём при создании. Лёгкие держим inline в html.
+export type LandingTemplate = {
+  id: string
+  name: string
+  description: string
+  icon: string
+  html?: string
+  htmlPath?: string
+}
+
+export const landingTemplates: LandingTemplate[] = [
   {
     id: 'infobiz',
     name: 'Онлайн-курс',
@@ -361,5 +373,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#1a1a2e;backg
   <div class="timer">⏱ Акция до конца недели</div>
 </div>
 </body></html>`,
+  },
+  {
+    id: 'grisha-1',
+    name: 'Урок 1 — заработок в онлайне',
+    description: 'Образовательная страница урока курса',
+    icon: '1️⃣',
+    htmlPath: '/templates/grisha-1.html',
+  },
+  {
+    id: 'grisha-2',
+    name: 'Урок 2 — на чём зарабатывать',
+    description: 'Образовательная страница урока курса',
+    icon: '2️⃣',
+    htmlPath: '/templates/grisha-2.html',
+  },
+  {
+    id: 'grisha-3',
+    name: 'Урок 3 — выход на 100-150к',
+    description: 'Образовательная страница урока курса',
+    icon: '3️⃣',
+    htmlPath: '/templates/grisha-3.html',
   },
 ]
