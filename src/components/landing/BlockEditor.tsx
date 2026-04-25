@@ -353,16 +353,19 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
     return () => window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions)
   }, [fullscreen, applyWheel])
 
-  // Native mousedown на canvas-space — middle-click pan и LMB box-select.
-  // Полностью симметрично iframe: capture-phase listeners на document,
-  // никаких window.* и React synthetic events. Capture phase даёт минимальную
-  // задержку — события приходят до bubble-фазы и не тротлятся.
+  // Native mousedown на window с capture — ловит и в bg, и в любом месте
+  // редактора, не зависит от того что canvasSpaceRef успел смонтироваться.
+  // Аналогично wheel-listener'у. iframe имеет свой mousedown handler внутри,
+  // на window сюда приходят только события из parent-документа.
   useEffect(() => {
-    const node = canvasSpaceRef.current
-    if (!node) return
+    if (!fullscreen) return
 
     function onMouseDown(e: MouseEvent) {
-      const target = e.target as HTMLElement
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (!target.closest('[data-stud-fullscreen-root]')) return
+      if (target.closest('[data-stud-panel]')) return  // панели — свои события
+      if (target.closest('[data-stud-site-wrap]')) return  // сайт — iframe обработает
       // Middle-click (зажатие колёсика) → pan
       if (e.button === 1) {
         e.preventDefault()
@@ -384,17 +387,16 @@ export function BlockEditor({ landingId, landingName, onSave }: Props) {
         document.addEventListener('mouseup', onUp, true)
         return
       }
-      // LMB на bg → box-select (кроме сайта и UI)
+      // LMB → box-select (кроме UI-кнопок)
       if (e.button === 0) {
-        if (target.closest('[data-stud-site-wrap]')) return
         if (target.closest('button, a, input, textarea, select')) return
         e.preventDefault()
         startBoxSelect(e.clientX, e.clientY)
       }
     }
 
-    node.addEventListener('mousedown', onMouseDown, true)
-    return () => node.removeEventListener('mousedown', onMouseDown, true)
+    window.addEventListener('mousedown', onMouseDown, { capture: true })
+    return () => window.removeEventListener('mousedown', onMouseDown, { capture: true } as EventListenerOptions)
   }, [fullscreen])
 
   // Ctrl/Cmd + Z → undo через iframe (в parent keydown, чтобы ловить когда фокус не в iframe)
