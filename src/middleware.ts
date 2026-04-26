@@ -33,7 +33,7 @@ export async function middleware(request: NextRequest) {
 
   // ──────────────────────────────────────────────────────────────────────
   // Шаг 1. Routing по host: если host — субдомен или кастомный домен,
-  // rewrite на публичный route /_pub/[hostKind]/[hostValue]/[...path].
+  // rewrite на публичный route /pub/[hostKind]/[hostValue]/[...path].
   // Главный домен пропускается дальше (auth + страницы лк).
   // ──────────────────────────────────────────────────────────────────────
   if (!isRootHost(host)) {
@@ -41,7 +41,7 @@ export async function middleware(request: NextRequest) {
     // tracking, статика, public API, favicon/robots.
     const passThrough =
       pathname.startsWith('/_next') ||
-      pathname.startsWith('/_pub') ||
+      pathname.startsWith('/pub') ||
       pathname.startsWith('/api/') ||
       pathname.startsWith('/go/') ||  // короткие ссылки трекинга
       pathname === '/favicon.ico' ||
@@ -52,9 +52,9 @@ export async function middleware(request: NextRequest) {
     const sub = extractSubdomain(host)
     const url = request.nextUrl.clone()
     if (sub) {
-      url.pathname = `/_pub/sub/${sub}${pathname === '/' ? '' : pathname}`
+      url.pathname = `/pub/sub/${sub}${pathname === '/' ? '' : pathname}`
     } else {
-      url.pathname = `/_pub/cust/${encodeURIComponent(host.split(':')[0])}${pathname === '/' ? '' : pathname}`
+      url.pathname = `/pub/cust/${encodeURIComponent(host.split(':')[0])}${pathname === '/' ? '' : pathname}`
     }
     return NextResponse.rewrite(url)
   }
@@ -64,7 +64,7 @@ export async function middleware(request: NextRequest) {
   // ──────────────────────────────────────────────────────────────────────
 
   // Skip for static/api/public pages
-  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname.startsWith('/s/') || pathname.startsWith('/_pub') || pathname === '/favicon.ico') {
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname.startsWith('/s/') || pathname.startsWith('/pub') || pathname === '/favicon.ico') {
     return NextResponse.next()
   }
 

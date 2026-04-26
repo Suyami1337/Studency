@@ -12,8 +12,8 @@ const RESERVED = new Set([
   'help', 'support', 'docs', 'blog', 'news', 'about', 'contact', 'privacy', 'terms',
   'legal', 'pricing', 'auth', 'login', 'signup', 'register', 'logout',
   'dashboard', 'settings', 'account', 'billing', 'invoice',
-  // Наши служебные пути
-  's', '_subdomain', '_custom', '_p', '_pub', '_proj',
+  // Наши служебные пути (не должны конфликтовать с роутами)
+  's', 'pub', 'go', 'unsubscribe', 'gate', 'btn',
   // Зарезервировано на будущее
   'studency', 'studencyapp', 'platform',
 ])
