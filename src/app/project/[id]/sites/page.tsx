@@ -998,56 +998,63 @@ function LandingsList({
         </div>
       )}
 
-      {/* Cards grid */}
+      {/* List — каждый сайт строкой */}
       {landings.length > 0 && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
           {landings.map((landing) => {
             // Pending — пока optimistic id не заменён на реальный UUID. Клик
             // на такую карточку приведёт к Supabase «invalid uuid».
             const pending = landing.id.startsWith('temp-')
             return (
-            <button
-              key={landing.id}
-              onClick={() => { if (!pending) onSelect(landing) }}
-              disabled={pending}
-              className={`bg-white rounded-xl border border-gray-100 p-5 text-left transition-all group ${
-                pending
-                  ? 'opacity-60 cursor-wait'
-                  : 'hover:border-[#6A55F8]/40 hover:shadow-md'
-              }`}
-            >
-              {/* Top row */}
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <div className="w-10 h-10 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">
+              <button
+                key={landing.id}
+                onClick={() => { if (!pending) onSelect(landing) }}
+                disabled={pending}
+                className={`w-full bg-white rounded-xl border border-gray-100 p-4 text-left transition-all group flex items-center gap-4 ${
+                  pending
+                    ? 'opacity-60 cursor-wait'
+                    : 'hover:border-[#6A55F8]/40 hover:shadow-md'
+                }`}
+              >
+                {/* Icon */}
+                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">
                   {pending ? (
                     <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
                       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeDasharray="42" strokeDashoffset="20" strokeLinecap="round"/>
                     </svg>
                   ) : '🌐'}
                 </div>
-                <StatusBadge status={landing.status} />
-              </div>
 
-              {/* Name */}
-              <p className={`font-semibold text-gray-900 mb-0.5 transition-colors ${pending ? '' : 'group-hover:text-[#6A55F8]'}`}>
-                {landing.name}
-              </p>
-              <p className="text-xs text-gray-400 mb-4 font-mono truncate">
-                {pending ? 'создаётся…' : `${publicHost || 'studency.ru'}/${landing.slug}`}
-              </p>
+                {/* Name + URL */}
+                <div className="flex-1 min-w-0">
+                  <p className={`font-semibold text-gray-900 truncate transition-colors ${pending ? '' : 'group-hover:text-[#6A55F8]'}`}>
+                    {landing.name}
+                  </p>
+                  <p className="text-xs text-gray-400 font-mono truncate mt-0.5">
+                    {pending ? 'создаётся…' : `${publicHost || 'studency.ru'}/${landing.slug}`}
+                  </p>
+                </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-50">
-                <div className="text-center">
-                  <p className="text-lg font-bold text-gray-900">{landing.visits}</p>
-                  <p className="text-xs text-gray-400">посещений</p>
+                {/* Stats */}
+                <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{landing.visits}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">посещений</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{landing.conversions}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">конверсий</p>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="text-lg font-bold text-gray-900">{landing.conversions}</p>
-                  <p className="text-xs text-gray-400">конверсий</p>
+
+                {/* Status + chevron */}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <StatusBadge status={landing.status} />
+                  <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
                 </div>
-              </div>
-            </button>
+              </button>
             )
           })}
         </div>
