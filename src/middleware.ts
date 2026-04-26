@@ -3,10 +3,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru'
 
-const ADMIN_PATHS = new Set([
-  'sites', 'crm', 'chatbots', 'funnels', 'analytics', 'users', 'settings',
-  'media', 'videos', 'learning', 'journal', 'social', 'broadcasts',
-  'conversations', 'orders', 'products',
+// Все admin-пути живут под /project/<id>/<section>. Сами сегменты-имена
+// держим тут только для определения, что это НЕ публичный лендинг.
+const RESERVED_FIRST_SEGMENTS = new Set([
+  'account', 'projects', 'project', 'login', 'register', 'api', '_next',
+  'pub', 'go', 's', 'btn', 'gate', 'unsubscribe',
+  'favicon.ico', 'robots.txt', 'sitemap.xml',
 ])
 
 function isRootHost(host: string): boolean {
@@ -29,29 +31,28 @@ function extractSubdomain(host: string): string | null {
   return null
 }
 
-// In-memory cache subdomain ↔ project_id для быстрого resolve в middleware.
-// Edge инстанции независимы → per-instance cache, TTL 60 сек.
+// In-memory cache subdomain → user_id (TTL 60s).
 type CacheEntry = { id: string | null; expiresAt: number }
-const subToIdCache = new Map<string, CacheEntry>()
+const subToUserCache = new Map<string, CacheEntry>()
 const CACHE_TTL = 60_000
 
-async function resolveProjectIdBySubdomain(sub: string): Promise<string | null> {
+async function resolveOwnerBySubdomain(sub: string): Promise<string | null> {
   const now = Date.now()
-  const cached = subToIdCache.get(sub)
+  const cached = subToUserCache.get(sub)
   if (cached && cached.expiresAt > now) return cached.id
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const apiKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!supabaseUrl || !apiKey) return null
-    const url = `${supabaseUrl}/rest/v1/projects?subdomain=eq.${encodeURIComponent(sub)}&select=id&limit=1`
+    const url = `${supabaseUrl}/rest/v1/account_domains?subdomain=eq.${encodeURIComponent(sub)}&select=user_id&limit=1`
     const res = await fetch(url, {
       headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
       cache: 'no-store',
     })
     if (!res.ok) return null
     const data = await res.json()
-    const id = (Array.isArray(data) && data[0]?.id) ? data[0].id as string : null
-    subToIdCache.set(sub, { id, expiresAt: now + CACHE_TTL })
+    const id = (Array.isArray(data) && data[0]?.user_id) ? data[0].user_id as string : null
+    subToUserCache.set(sub, { id, expiresAt: now + CACHE_TTL })
     return id
   } catch {
     return null
@@ -73,7 +74,7 @@ export async function middleware(request: NextRequest) {
   const host = request.headers.get('host') || ''
 
   // ─────────────────────────────────────────────────────────────────────
-  // Главный домен (studency.ru / www.studency.ru / localhost / vercel.app)
+  // Главный домен (studency.ru / www / localhost / vercel.app)
   // ─────────────────────────────────────────────────────────────────────
   if (isRootHost(host)) {
     if (
@@ -86,8 +87,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
-    // /project/<id>/<rest> на main → handoff на subdomain проекта.
-    // Проверка subdomain делается в самом handoff endpoint.
+    // /project/<id>/<rest> на main → handoff на subdomain аккаунта.
     const projMatch = pathname.match(/^\/project\/([0-9a-f-]{36})(\/.*)?$/i)
     if (projMatch) {
       const projectId = projMatch[1]
@@ -95,7 +95,7 @@ export async function middleware(request: NextRequest) {
       const url = request.nextUrl.clone()
       url.pathname = '/api/auth/handoff-redirect'
       url.searchParams.set('projectId', projectId)
-      url.searchParams.set('path', rest)
+      url.searchParams.set('path', `/project/${projectId}${rest === '/' ? '' : rest}`)
       return NextResponse.redirect(url, 307)
     }
 
@@ -135,7 +135,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // Subdomain или custom_domain
+  // Subdomain или custom_domain (host != root)
   // ─────────────────────────────────────────────────────────────────────
 
   if (
@@ -151,68 +151,46 @@ export async function middleware(request: NextRequest) {
   }
 
   const sub = extractSubdomain(host)
+  const firstSeg = pathname.split('/').filter(Boolean)[0] || ''
+  const isAuthed = hasAuthCookie(request)
+  const isReservedAdmin = RESERVED_FIRST_SEGMENTS.has(firstSeg) // /account, /projects, /project, /login, /register, ...
 
-  // На subdomain'е /project/<id>/<rest> → 308 редирект на /<rest>
-  // (чтобы старые Link href работали и URL bar был чистым)
-  if (sub) {
-    const projOnSub = pathname.match(/^\/project\/([0-9a-f-]{36})(\/.*)?$/i)
-    if (projOnSub) {
-      const url = request.nextUrl.clone()
-      url.pathname = projOnSub[2] || '/'
-      return NextResponse.redirect(url, 308)
-    }
-  }
-
-  // Admin-routing на subdomain'е
-  if (sub) {
-    const firstSeg = pathname.split('/').filter(Boolean)[0] || ''
-    const isAdminPath = ADMIN_PATHS.has(firstSeg)
-    const isAuthed = hasAuthCookie(request)
-
-    // /account — настройки аккаунта (level 1) рендерятся на любом host'е
-    if (firstSeg === 'account') {
-      if (!isAuthed) {
-        const fullUrl = `${request.nextUrl.protocol}//${host}${pathname}${request.nextUrl.search}`
-        const loginUrl = new URL(`https://${ROOT_DOMAIN}/login`)
-        loginUrl.searchParams.set('next', fullUrl)
-        return NextResponse.redirect(loginUrl, 302)
-      }
-      return NextResponse.next()
+  // Зарезервированные admin-разделы (/account, /projects, /project/...) и
+  // root (/) при наличии auth — рендерим напрямую, без rewrite на лендинг.
+  if (isReservedAdmin) {
+    // Для /login и /register на subdomain'е — редирект на main (логин всегда на главном)
+    if (firstSeg === 'login' || firstSeg === 'register') {
+      const url = new URL(`https://${ROOT_DOMAIN}${pathname}${request.nextUrl.search}`)
+      return NextResponse.redirect(url, 302)
     }
 
-    // Root path авторизованного юзера → admin dashboard проекта
-    if (pathname === '/' && isAuthed) {
-      const projectId = await resolveProjectIdBySubdomain(sub)
-      if (projectId) {
-        const url = request.nextUrl.clone()
-        url.pathname = `/project/${projectId}`
-        return NextResponse.rewrite(url)
-      }
-    }
-
-    // Admin-разделы (sites, crm, etc) для авторизованных
-    if (isAdminPath && isAuthed) {
-      const projectId = await resolveProjectIdBySubdomain(sub)
-      if (projectId) {
-        const url = request.nextUrl.clone()
-        url.pathname = `/project/${projectId}${pathname}`
-        return NextResponse.rewrite(url)
-      }
-    }
-
-    // Admin-разделы для НЕавторизованного → редирект на main login с next
-    if (isAdminPath && !isAuthed) {
+    if (!isAuthed) {
       const fullUrl = `${request.nextUrl.protocol}//${host}${pathname}${request.nextUrl.search}`
       const loginUrl = new URL(`https://${ROOT_DOMAIN}/login`)
       loginUrl.searchParams.set('next', fullUrl)
       return NextResponse.redirect(loginUrl, 302)
     }
+    return NextResponse.next()
   }
 
-  // Public landing routing (для всех остальных запросов)
+  // Root subdomain'а для авторизованного → редиректим на /projects (выбор проекта)
+  if (sub && pathname === '/' && isAuthed) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/projects'
+    return NextResponse.redirect(url, 302)
+  }
+
+  // Иначе считаем, что это публичный лендинг.
+  // Резолв owner по subdomain, лендинг по (owner_id, slug).
   const url = request.nextUrl.clone()
   if (sub) {
-    url.pathname = `/pub/sub/${sub}${pathname === '/' ? '' : pathname}`
+    const ownerId = await resolveOwnerBySubdomain(sub)
+    if (ownerId) {
+      url.pathname = `/pub/owner/${ownerId}${pathname === '/' ? '' : pathname}`
+    } else {
+      // subdomain неизвестен → рендерим 404 страницу
+      url.pathname = `/pub/owner/__not_found__${pathname === '/' ? '' : pathname}`
+    }
   } else {
     url.pathname = `/pub/cust/${encodeURIComponent(host.split(':')[0])}${pathname === '/' ? '' : pathname}`
   }

@@ -3,48 +3,51 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
-import { validateSubdomain, suggestSubdomainFromName, ROOT_DOMAIN } from '@/lib/subdomain'
+import { ROOT_DOMAIN } from '@/lib/subdomain'
 
 type Project = {
   id: string
   name: string
-  subdomain: string
-  custom_domain: string | null
-  custom_domain_status: string | null
   created_at: string
 }
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
+  const [accountSubdomain, setAccountSubdomain] = useState<string>('')
+  const [accountCustomDomain, setAccountCustomDomain] = useState<string | null>(null)
+  const [accountCustomStatus, setAccountCustomStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
-  const [newSubdomain, setNewSubdomain] = useState('')
-  const [subdomainTouched, setSubdomainTouched] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const router = useRouter()
   const supabase = createClient()
 
-  async function loadProjects() {
-    const { data } = await supabase
-      .from('projects')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    setProjects(data ?? [])
+  async function load() {
+    const [{ data: ad }, { data: ps }] = await Promise.all([
+      supabase
+        .from('account_domains')
+        .select('subdomain, custom_domain, custom_domain_status')
+        .maybeSingle(),
+      supabase
+        .from('projects')
+        .select('id, name, created_at')
+        .order('created_at', { ascending: false }),
+    ])
+    setAccountSubdomain(ad?.subdomain ?? '')
+    setAccountCustomDomain(ad?.custom_domain ?? null)
+    setAccountCustomStatus(ad?.custom_domain_status ?? null)
+    setProjects(ps ?? [])
     setLoading(false)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadProjects() }, [])
+  useEffect(() => { load() }, [])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!newName.trim()) return
-    const sub = (newSubdomain || suggestSubdomainFromName(newName)).toLowerCase().trim()
-    const validErr = validateSubdomain(sub)
-    if (validErr) { setCreateError(validErr); return }
     setCreating(true)
     setCreateError('')
 
@@ -53,75 +56,44 @@ export default function ProjectsPage() {
 
     const { data, error } = await supabase
       .from('projects')
-      .insert({ name: newName.trim(), owner_id: user.id, subdomain: sub })
+      .insert({ name: newName.trim(), owner_id: user.id })
       .select()
       .single()
 
     if (error) {
       console.error('Create project error:', error)
-      // Уникальность subdomain → понятное сообщение
-      if (/duplicate|unique/i.test(error.message)) {
-        setCreateError(`Поддомен «${sub}» уже занят. Попробуй другое имя.`)
-      } else {
-        setCreateError('Ошибка: ' + error.message)
-      }
+      setCreateError('Ошибка: ' + error.message)
       setCreating(false)
       return
     }
 
     if (data) {
-      // Add owner as member
       await supabase.from('project_members').insert({
         project_id: data.id,
         user_id: user.id,
         role: 'owner',
       })
 
-      // Регистрируем поддомен в Vercel (чтобы Vercel выдал SSL для <sub>.studency.ru)
-      fetch(`/api/projects/${data.id}/register-subdomain`, {
-        method: 'POST',
-      }).catch(err => console.error('register-subdomain failed:', err))
-
-      // Создаём Kinescope папку (не блокируем если недоступно)
+      // Kinescope folder (фоном)
       fetch('/api/projects/setup-kinescope', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: data.id }),
       }).catch(err => console.error('kinescope setup failed:', err))
 
-      router.push(`/project/${data.id}`)
+      // Открыть проект (на subdomain аккаунта через handoff)
+      window.location.href = `/project/${data.id}`
     }
 
     setCreating(false)
   }
 
   async function handleLogout() {
-    try { await supabase.auth.signOut() } catch { /* ignore */ }
-    // Принудительно убиваем все Supabase cookies с любыми вариантами domain
-    // (host-only от старых логинов и domain=.studency.ru от новых).
-    if (typeof document !== 'undefined') {
-      const root = (process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru')
-      const variants = ['', `; domain=${root}`, `; domain=.${root}`, `; domain=${location.hostname}`]
-      for (const cookie of document.cookie.split(';')) {
-        const name = cookie.split('=')[0].trim()
-        if (name.startsWith('sb-')) {
-          for (const dom of variants) {
-            document.cookie = `${name}=; path=/${dom}; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`
-          }
-        }
-      }
-    }
-    // Hard redirect — чтобы middleware гарантированно не увидел старый session
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login'
-    } else {
-      router.push('/login')
-    }
+    window.location.assign('/api/auth/global-logout')
   }
 
   function selectProject(id: string) {
-    // Hard redirect через middleware — он сделает handoff на subdomain
-    // если у проекта есть subdomain. Без subdomain — fallback на /project/<id>.
+    // Hard redirect через middleware → handoff на subdomain аккаунта
     if (typeof window !== 'undefined') {
       window.location.href = `/project/${id}`
     } else {
@@ -140,13 +112,38 @@ export default function ProjectsPage() {
     )
   }
 
+  // Если у юзера почему-то нет subdomain'а — попросим зайти в настройки
+  if (!accountSubdomain) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-white via-[#F8F7FF] to-[#F0EDFF]">
+        <div className="max-w-sm bg-white rounded-2xl border border-gray-100 p-8 text-center">
+          <div className="text-3xl mb-3">🌐</div>
+          <h1 className="text-lg font-semibold text-gray-900 mb-2">Не настроен поддомен</h1>
+          <p className="text-sm text-gray-500 mb-5">
+            Для работы платформы нужно выбрать поддомен — это адрес вашей школы.
+          </p>
+          <a
+            href="/account/settings?tab=domain"
+            className="inline-block px-4 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium"
+          >
+            Настроить поддомен
+          </a>
+        </div>
+      </div>
+    )
+  }
+
+  const accountUrl = accountCustomDomain && accountCustomStatus === 'verified'
+    ? accountCustomDomain
+    : `${accountSubdomain}.${ROOT_DOMAIN}`
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-[#F8F7FF] to-[#F0EDFF] py-16 px-6">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Мои проекты</h1>
-            <p className="text-sm text-gray-500">Выберите проект или создайте новый</p>
+            <p className="text-sm text-gray-500 font-mono mt-0.5">{accountUrl}</p>
           </div>
           <div className="flex items-center gap-2">
             <a
@@ -177,11 +174,7 @@ export default function ProjectsPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-gray-900 group-hover:text-[#6A55F8] transition-colors">{p.name}</h3>
-                  <p className="text-sm text-gray-500 mt-0.5 font-mono">
-                    {p.custom_domain && p.custom_domain_status === 'verified'
-                      ? p.custom_domain
-                      : `${p.subdomain}.${ROOT_DOMAIN}`}
-                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">создан {new Date(p.created_at).toLocaleDateString('ru')}</p>
                 </div>
               </div>
               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
@@ -196,27 +189,12 @@ export default function ProjectsPage() {
               <input
                 type="text"
                 value={newName}
-                onChange={e => {
-                  setNewName(e.target.value)
-                  setCreateError('')
-                  if (!subdomainTouched) setNewSubdomain(suggestSubdomainFromName(e.target.value))
-                }}
+                onChange={e => { setNewName(e.target.value); setCreateError('') }}
                 placeholder="Например: Маркетинг школа"
                 autoFocus
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8] mb-3"
+                className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8] mb-2"
               />
-              <label className="block text-xs font-medium text-gray-600 mb-1">Поддомен сайта</label>
-              <div className="flex items-center gap-1 mb-1">
-                <input
-                  type="text"
-                  value={newSubdomain}
-                  onChange={e => { setNewSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')); setSubdomainTouched(true); setCreateError('') }}
-                  placeholder="shkola"
-                  className="flex-1 px-4 py-2.5 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]"
-                />
-                <span className="text-sm text-gray-500 font-mono whitespace-nowrap">.{ROOT_DOMAIN}</span>
-              </div>
-              <p className="text-xs text-gray-400 mb-3">Можно поменять позже в настройках. Свой домен подключается отдельно.</p>
+              <p className="text-xs text-gray-400 mb-3">Проект будет жить на {accountUrl}</p>
               {createError && (
                 <p className="text-sm text-red-500 mb-3">{createError}</p>
               )}
@@ -225,7 +203,7 @@ export default function ProjectsPage() {
                   className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
                   {creating ? 'Создаём...' : 'Создать'}
                 </button>
-                <button type="button" onClick={() => { setShowCreate(false); setNewSubdomain(''); setSubdomainTouched(false) }}
+                <button type="button" onClick={() => { setShowCreate(false); setNewName(''); setCreateError('') }}
                   className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-colors">
                   Отмена
                 </button>

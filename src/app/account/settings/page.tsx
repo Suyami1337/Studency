@@ -1,22 +1,30 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
-import { ROOT_DOMAIN } from '@/lib/subdomain'
+import { ROOT_DOMAIN, validateSubdomain } from '@/lib/subdomain'
 
 type Project = {
   id: string
   name: string
-  subdomain: string
-  custom_domain: string | null
-  custom_domain_status: string | null
   created_at: string
 }
 
-export default function AccountSettingsPage() {
+type DomainState = {
+  subdomain: string
+  custom_domain: string | null
+  custom_domain_status: string | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  verification?: any
+}
+
+function AccountSettingsInner() {
   const supabase = createClient()
-  const [activeTab, setActiveTab] = useState<'profile' | 'projects' | 'danger'>('profile')
+  const searchParams = useSearchParams()
+  const initialTab = (searchParams.get('tab') as 'profile' | 'domain' | 'projects' | 'danger') || 'profile'
+  const [activeTab, setActiveTab] = useState<'profile' | 'domain' | 'projects' | 'danger'>(initialTab)
 
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
@@ -41,7 +49,7 @@ export default function AccountSettingsPage() {
     }
     const { data } = await supabase
       .from('projects')
-      .select('id, name, subdomain, custom_domain, custom_domain_status, created_at')
+      .select('id, name, created_at')
       .order('created_at', { ascending: false })
     setProjects(data ?? [])
     setLoading(false)
@@ -52,7 +60,6 @@ export default function AccountSettingsPage() {
 
   async function handleLogout() {
     setLoggingOut(true)
-    // global-logout сам почистит cookie на текущем хосте, потом redirect через main domain
     window.location.assign('/api/auth/global-logout')
   }
 
@@ -85,6 +92,7 @@ export default function AccountSettingsPage() {
 
   const tabs = [
     { id: 'profile' as const, label: 'Профиль' },
+    { id: 'domain' as const, label: 'Домен' },
     { id: 'projects' as const, label: 'Мои проекты' },
     { id: 'danger' as const, label: 'Опасная зона' },
   ]
@@ -155,6 +163,8 @@ export default function AccountSettingsPage() {
           </div>
         )}
 
+        {activeTab === 'domain' && <DomainTab />}
+
         {activeTab === 'projects' && (
           <div className="space-y-3">
             {projects.length === 0 && (
@@ -170,20 +180,18 @@ export default function AccountSettingsPage() {
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-semibold text-gray-900 truncate">{p.name}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5 font-mono truncate">
-                      {p.custom_domain && p.custom_domain_status === 'verified'
-                        ? p.custom_domain
-                        : `${p.subdomain}.${ROOT_DOMAIN}`}
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      создан {new Date(p.created_at).toLocaleDateString('ru')}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Link
+                  <a
                     href={`/project/${p.id}`}
                     className="text-xs text-[#6A55F8] hover:underline px-2"
                   >
                     Открыть
-                  </Link>
+                  </a>
                   {confirmProjectId === p.id ? (
                     <div className="flex items-center gap-2">
                       <button
@@ -268,5 +276,182 @@ export default function AccountSettingsPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// =============================================================================
+// DOMAIN TAB — настройка subdomain и custom_domain аккаунта
+// =============================================================================
+function DomainTab() {
+  const [state, setState] = useState<DomainState | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [editingSub, setEditingSub] = useState(false)
+  const [subInput, setSubInput] = useState('')
+  const [subSaving, setSubSaving] = useState(false)
+  const [subError, setSubError] = useState('')
+  const [domainInput, setDomainInput] = useState('')
+  const [domainSaving, setDomainSaving] = useState(false)
+  const [domainError, setDomainError] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    const res = await fetch('/api/account/domain')
+    const j = await res.json()
+    setState(j)
+    setSubInput(j.subdomain ?? '')
+    setLoading(false)
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [])
+
+  async function saveSubdomain() {
+    const sub = subInput.toLowerCase().trim()
+    const err = validateSubdomain(sub)
+    if (err) { setSubError(err); return }
+    setSubSaving(true); setSubError('')
+    const res = await fetch('/api/account/domain', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subdomain: sub }),
+    })
+    const j = await res.json()
+    if (!res.ok) { setSubError(j.error || 'Не удалось сохранить'); setSubSaving(false); return }
+    setEditingSub(false)
+    setSubSaving(false)
+    await load()
+  }
+
+  async function attachDomain() {
+    const d = domainInput.toLowerCase().trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    if (!d) { setDomainError('Укажи домен'); return }
+    setDomainSaving(true); setDomainError('')
+    const res = await fetch('/api/account/domain', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_domain: d }),
+    })
+    const j = await res.json()
+    if (!res.ok) { setDomainError(j.error || 'Не удалось добавить домен'); setDomainSaving(false); return }
+    setDomainInput('')
+    setDomainSaving(false)
+    await load()
+  }
+
+  async function refreshDomainStatus() {
+    setRefreshing(true)
+    await load()
+    setRefreshing(false)
+  }
+
+  async function detachDomain() {
+    if (!confirm('Отключить кастомный домен? Все проекты вернутся на поддомен.')) return
+    await fetch('/api/account/domain', { method: 'DELETE' })
+    await load()
+  }
+
+  if (loading) return <div className="text-sm text-gray-400 py-12 text-center">Загрузка...</div>
+
+  const status = state?.custom_domain_status ?? null
+  const statusLabel = status === 'verified' ? 'Подключён' : status === 'failed' ? 'Ошибка' : 'Ожидает DNS'
+  const statusClass = status === 'verified' ? 'bg-green-50 text-green-700 border-green-200' : status === 'failed' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+
+  return (
+    <div className="space-y-5">
+      {/* Поддомен */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-5">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Поддомен аккаунта</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Под этим адресом живут ВСЕ ваши проекты.</p>
+          </div>
+          {!editingSub && state?.subdomain && (
+            <button onClick={() => setEditingSub(true)} className="text-sm text-[#6A55F8] hover:underline">Изменить</button>
+          )}
+        </div>
+        {editingSub || !state?.subdomain ? (
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <input value={subInput} onChange={e => { setSubInput(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')); setSubError('') }}
+                placeholder="shkola"
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]" />
+              <span className="text-sm text-gray-500 font-mono whitespace-nowrap">.{ROOT_DOMAIN}</span>
+            </div>
+            {subError && <p className="text-sm text-red-500 mb-2">{subError}</p>}
+            <div className="flex gap-2">
+              <button onClick={saveSubdomain} disabled={subSaving} className="px-4 py-2 bg-[#6A55F8] text-white rounded-lg text-sm font-medium hover:bg-[#5040D6] disabled:opacity-50">
+                {subSaving ? 'Сохраняем...' : 'Сохранить'}
+              </button>
+              {state?.subdomain && (
+                <button onClick={() => { setEditingSub(false); setSubInput(state.subdomain); setSubError('') }} className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg">Отмена</button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 rounded-lg">
+            <code className="text-sm font-mono text-gray-900">{state.subdomain}.{ROOT_DOMAIN}</code>
+            <a href={`https://${state.subdomain}.${ROOT_DOMAIN}`} target="_blank" rel="noopener" className="text-xs text-[#6A55F8] hover:underline ml-auto">Открыть ↗</a>
+          </div>
+        )}
+      </div>
+
+      {/* Кастомный домен */}
+      <div className="bg-white rounded-2xl border border-gray-100 p-5">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Свой домен</h2>
+        <p className="text-xs text-gray-500 mb-4">Подключите свой домен — клиенты будут видеть его вместо поддомена.</p>
+
+        {!state?.custom_domain ? (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <input value={domainInput} onChange={e => { setDomainInput(e.target.value); setDomainError('') }}
+                placeholder="shkola.com"
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]" />
+              <button onClick={attachDomain} disabled={domainSaving || !domainInput.trim()}
+                className="px-4 py-2 bg-[#6A55F8] text-white rounded-lg text-sm font-medium hover:bg-[#5040D6] disabled:opacity-50 whitespace-nowrap">
+                {domainSaving ? 'Подключаем...' : 'Подключить'}
+              </button>
+            </div>
+            {domainError && <p className="text-sm text-red-500">{domainError}</p>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <code className="text-sm font-mono text-gray-900 px-3 py-2 bg-gray-50 rounded-lg flex-1">{state.custom_domain}</code>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusClass}`}>{statusLabel}</span>
+            </div>
+            {state.verification && Array.isArray(state.verification) && state.verification.length > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm font-semibold text-blue-900 mb-2">Настройте DNS у регистратора:</p>
+                <div className="space-y-1.5 font-mono text-xs">
+                  {(state.verification as Array<{ type: string; domain: string; value: string }>).map((v, i) => (
+                    <div key={i} className="flex flex-wrap gap-2 text-gray-700">
+                      <span className="font-bold text-blue-700">{v.type}</span>
+                      <span>{v.domain}</span>
+                      <span>→</span>
+                      <span className="break-all">{v.value}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-blue-700 mt-3">После настройки DNS — нажмите «Проверить». Vercel сам выдаст SSL.</p>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={refreshDomainStatus} disabled={refreshing} className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
+                {refreshing ? 'Проверяем...' : 'Проверить статус'}
+              </button>
+              <button onClick={detachDomain} className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">Отключить</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export default function AccountSettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AccountSettingsInner />
+    </Suspense>
   )
 }

@@ -1,9 +1,9 @@
 // Публичный роут для лендингов школ — middleware rewrite'ит сюда:
-//   <sub>.studency.ru/<path>     →  /_pub/sub/<sub>/<path>
-//   <custom-domain>/<path>       →  /_pub/cust/<encoded-host>/<path>
+//   <sub>.studency.ru/<path>     →  /pub/owner/<owner_id>/<path>
+//   <custom-domain>/<path>       →  /pub/cust/<encoded-host>/<path>
 //
-// Резолвит проект по subdomain или custom_domain, ищет landing по
-// (project_id, slug) с уникальностью в рамках проекта.
+// Лендинг резолвится по (owner_id, slug). Один subdomain/домен на аккаунт,
+// под ним живут лендинги ВСЕХ проектов юзера — slug уникален в рамках account.
 
 import { createClient } from '@supabase/supabase-js'
 import type { NextRequest } from 'next/server'
@@ -24,21 +24,39 @@ export async function GET(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // Lookup project
-  let projectQuery = supabase.from('projects').select('id, subdomain, custom_domain, custom_domain_status')
-  if (kind === 'sub') {
-    projectQuery = projectQuery.eq('subdomain', host.toLowerCase())
+  let ownerId: string | null = null
+
+  if (kind === 'owner') {
+    if (host === '__not_found__') return notFoundResponse()
+    ownerId = host
   } else if (kind === 'cust') {
     const decoded = decodeURIComponent(host).toLowerCase()
-    projectQuery = projectQuery.eq('custom_domain', decoded).eq('custom_domain_status', 'verified')
+    const { data: ad } = await supabase
+      .from('account_domains')
+      .select('user_id')
+      .eq('custom_domain', decoded)
+      .eq('custom_domain_status', 'verified')
+      .maybeSingle()
+    if (!ad) return notFoundResponse()
+    ownerId = ad.user_id
+  } else if (kind === 'sub') {
+    // Backward-compat: старый middleware ещё мог отправлять сюда (например
+    // от прокинутого URL). Резолвим subdomain → user_id.
+    const { data: ad } = await supabase
+      .from('account_domains')
+      .select('user_id')
+      .eq('subdomain', host.toLowerCase())
+      .maybeSingle()
+    if (!ad) return notFoundResponse()
+    ownerId = ad.user_id
   } else {
     return notFoundResponse()
   }
-  const { data: project } = await projectQuery.maybeSingle()
-  if (!project) return notFoundResponse()
+
+  if (!ownerId) return notFoundResponse()
 
   // Лендинги доступны ТОЛЬКО по конкретному slug'у. Пустой путь (root
-  // субдомена) = 404 — у школы нет автоматической главной страницы,
+  // subdomain'а) = 404 — у школы нет автоматической главной страницы,
   // ученики приходят по конкретной ссылке которую им дали.
   const slug = (path && path.length > 0 ? path[0] : '').toLowerCase()
   if (!slug) return notFoundResponse()
@@ -46,7 +64,7 @@ export async function GET(
   const { data: landing } = await supabase
     .from('landings')
     .select('id, slug, status, name, meta_title, meta_description, is_mini_app, project_id, is_blocks_based, html_content')
-    .eq('project_id', project.id)
+    .eq('owner_id', ownerId)
     .eq('status', 'published')
     .eq('slug', slug)
     .limit(1)

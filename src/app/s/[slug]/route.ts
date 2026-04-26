@@ -35,22 +35,29 @@ export async function GET(
 
   if (!landing) return notFoundResponse()
 
-  // Если у проекта есть subdomain/custom_domain — 301 редирект на новый URL
+  // Если у владельца проекта есть subdomain/custom_domain — 301 редирект на новый URL
   const { data: project } = await supabase
     .from('projects')
-    .select('subdomain, custom_domain, custom_domain_status')
+    .select('owner_id')
     .eq('id', landing.project_id)
     .single()
 
-  if (project) {
-    let target: string | null = null
-    if (project.custom_domain && project.custom_domain_status === 'verified') {
-      target = `https://${project.custom_domain}/${landing.slug}`
-    } else if (project.subdomain) {
-      target = `https://${project.subdomain}.${ROOT_DOMAIN}/${landing.slug}`
-    }
-    if (target && new URL(request.url).host !== new URL(target).host) {
-      return NextResponse.redirect(target, 301)
+  if (project?.owner_id) {
+    const { data: account } = await supabase
+      .from('account_domains')
+      .select('subdomain, custom_domain, custom_domain_status')
+      .eq('user_id', project.owner_id)
+      .maybeSingle()
+    if (account) {
+      let target: string | null = null
+      if (account.custom_domain && account.custom_domain_status === 'verified') {
+        target = `https://${account.custom_domain}/${landing.slug}`
+      } else if (account.subdomain) {
+        target = `https://${account.subdomain}.${ROOT_DOMAIN}/${landing.slug}`
+      }
+      if (target && new URL(request.url).host !== new URL(target).host) {
+        return NextResponse.redirect(target, 301)
+      }
     }
   }
 

@@ -1067,16 +1067,19 @@ export default function SitesPage() {
   const [landingsList, setLandingsList] = useState<Landing[]>([])
   const [project, setProject] = useState<{ subdomain: string; custom_domain: string | null; custom_domain_status: string | null } | null>(null)
 
-  // Загружаем мета-инфо проекта (subdomain/custom_domain) — для построения публичных URL
+  // Загружаем subdomain аккаунта — для построения публичных URL лендингов
   useEffect(() => {
     let cancelled = false
     async function load() {
       const { data } = await supabase
-        .from('projects')
+        .from('account_domains')
         .select('subdomain, custom_domain, custom_domain_status')
-        .eq('id', projectId)
-        .single()
-      if (!cancelled && data) setProject(data)
+        .maybeSingle()
+      if (!cancelled && data) setProject({
+        subdomain: data.subdomain,
+        custom_domain: data.custom_domain,
+        custom_domain_status: data.custom_domain_status,
+      })
     }
     load()
     return () => { cancelled = true }
