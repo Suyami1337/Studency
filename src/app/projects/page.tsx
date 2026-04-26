@@ -96,8 +96,27 @@ export default function ProjectsPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut()
-    router.push('/login')
+    try { await supabase.auth.signOut() } catch { /* ignore */ }
+    // Принудительно убиваем все Supabase cookies с любыми вариантами domain
+    // (host-only от старых логинов и domain=.studency.ru от новых).
+    if (typeof document !== 'undefined') {
+      const root = (process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru')
+      const variants = ['', `; domain=${root}`, `; domain=.${root}`, `; domain=${location.hostname}`]
+      for (const cookie of document.cookie.split(';')) {
+        const name = cookie.split('=')[0].trim()
+        if (name.startsWith('sb-')) {
+          for (const dom of variants) {
+            document.cookie = `${name}=; path=/${dom}; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`
+          }
+        }
+      }
+    }
+    // Hard redirect — чтобы middleware гарантированно не увидел старый session
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login'
+    } else {
+      router.push('/login')
+    }
   }
 
   function selectProject(id: string) {
