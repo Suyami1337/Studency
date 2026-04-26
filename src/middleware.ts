@@ -100,6 +100,22 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url, 307)
     }
 
+    // Если кто-то открывает studency.ru/<slug> — пробуем зарезолвить как
+    // публичный лендинг через legacy /s/<slug> (там 301 на subdomain владельца).
+    // Это ВАЖНО: иначе ссылки в кнопках чат-ботов и другие public-ссылки на
+    // main домен попадают в auth check ниже и редиректятся на /login.
+    const ROOT_RESERVED = new Set([
+      'login', 'register', 'projects', 'project', 'account',
+      'api', 'pub', 's', 'go', 'btn', 'gate', 'unsubscribe',
+      'templates', '_next', 'favicon.ico', 'robots.txt', 'sitemap.xml',
+    ])
+    const slugMatch = pathname.match(/^\/([a-zA-Z0-9_-]+)\/?$/)
+    if (slugMatch && !ROOT_RESERVED.has(slugMatch[1].toLowerCase())) {
+      const url = request.nextUrl.clone()
+      url.pathname = `/s/${slugMatch[1]}`
+      return NextResponse.rewrite(url)
+    }
+
     // Auth check для остальных страниц на main
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
