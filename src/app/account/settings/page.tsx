@@ -412,29 +412,28 @@ function DomainTab() {
               </button>
             </div>
             {domainError && <p className="text-sm text-red-500">{domainError}</p>}
+            <p className="text-[11px] text-gray-400 mt-2">После подключения покажем точные DNS-записи которые надо добавить у вашего регистратора (Reg.ru, REG.RU, Namecheap и др.).</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="flex items-center gap-2">
               <code className="text-sm font-mono text-gray-900 px-3 py-2 bg-gray-50 rounded-lg flex-1">{state.custom_domain}</code>
               <span className={`px-2.5 py-1 rounded-full text-xs font-medium border ${statusClass}`}>{statusLabel}</span>
             </div>
-            {state.verification && Array.isArray(state.verification) && state.verification.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm font-semibold text-blue-900 mb-2">Настройте DNS у регистратора:</p>
-                <div className="space-y-1.5 font-mono text-xs">
-                  {(state.verification as Array<{ type: string; domain: string; value: string }>).map((v, i) => (
-                    <div key={i} className="flex flex-wrap gap-2 text-gray-700">
-                      <span className="font-bold text-blue-700">{v.type}</span>
-                      <span>{v.domain}</span>
-                      <span>→</span>
-                      <span className="break-all">{v.value}</span>
-                    </div>
-                  ))}
-                </div>
-                <p className="text-xs text-blue-700 mt-3">После настройки DNS — нажмите «Проверить». Vercel сам выдаст SSL.</p>
+
+            {status !== 'verified' && (
+              <DnsInstructions
+                domain={state.custom_domain}
+                verification={state.verification as Array<{ type: string; domain: string; value: string }> | null | undefined}
+              />
+            )}
+
+            {status === 'verified' && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+                ✓ Домен подключён. Клиенты могут открывать ваш сайт по адресу <code className="bg-white px-1.5 py-0.5 rounded font-mono text-green-900">{state.custom_domain}</code>
               </div>
             )}
+
             <div className="flex gap-2">
               <button onClick={refreshDomainStatus} disabled={refreshing} className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
                 {refreshing ? 'Проверяем...' : 'Проверить статус'}
@@ -444,6 +443,143 @@ function DomainTab() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// DNS INSTRUCTIONS — пошаговая инструкция для Reg.ru / других регистраторов
+// =============================================================================
+
+type DnsRecord = {
+  type: 'A' | 'CNAME' | 'TXT' | string
+  name: string       // что вписать в поле «Имя» / «Subdomain»
+  value: string      // что вписать в поле «Значение» / «Value»
+  hint?: string      // пояснение
+}
+
+/**
+ * Преобразует verification от Vercel в DNS-записи в формате Reg.ru.
+ * Если verification пустой — собираем дефолтные записи (A для apex, CNAME для www/sub).
+ */
+function buildDnsRecords(domain: string, verification: Array<{ type: string; domain: string; value: string }> | null | undefined): DnsRecord[] {
+  const out: DnsRecord[] = []
+  const isApex = !domain.includes('.', domain.indexOf('.') + 1) // example.ru = 1 точка → apex; www.example.ru = 2 точки
+
+  // Vercel verification (TXT для подтверждения владения и пр.)
+  if (verification && verification.length > 0) {
+    for (const v of verification) {
+      // Имя записи относительно домена
+      let name = v.domain.replace(`.${domain}`, '')
+      if (v.domain === domain) name = '@'
+      if (name === domain) name = '@'
+      out.push({
+        type: v.type,
+        name: name || '@',
+        value: v.value,
+        hint: v.type === 'TXT' ? 'Подтверждение владения доменом' : undefined,
+      })
+    }
+  }
+
+  // Дефолтные записи для самого домена (если verification их не вернул)
+  const hasMainRecord = out.some(r => r.name === '@' && (r.type === 'A' || r.type === 'CNAME'))
+  if (!hasMainRecord) {
+    if (isApex) {
+      out.push({
+        type: 'A',
+        name: '@',
+        value: '76.76.21.21',
+        hint: 'IP-адрес Vercel',
+      })
+    } else {
+      out.push({
+        type: 'CNAME',
+        name: domain.split('.')[0],
+        value: 'cname.vercel-dns.com.',
+        hint: 'Указывает на Vercel',
+      })
+    }
+  }
+
+  return out
+}
+
+function DnsInstructions({ domain, verification }: { domain: string; verification: Array<{ type: string; domain: string; value: string }> | null | undefined }) {
+  const records = buildDnsRecords(domain, verification)
+  const [copied, setCopied] = useState<string | null>(null)
+
+  function copy(text: string, key: string) {
+    navigator.clipboard?.writeText(text)
+    setCopied(key)
+    setTimeout(() => setCopied(null), 1500)
+  }
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-blue-900 mb-1">Что сделать в Reg.ru (или у вашего регистратора)</h3>
+        <p className="text-xs text-blue-800/80">Зайдите в личный кабинет → раздел «Домены» → выберите <code className="bg-white px-1 rounded font-mono">{domain}</code> → «DNS-серверы и управление зоной» → добавьте записи ниже:</p>
+      </div>
+
+      <ol className="space-y-3 text-sm text-blue-900">
+        <li>
+          <span className="font-semibold">1.</span> Откройте раздел DNS-управления для домена <code className="bg-white px-1 rounded font-mono">{domain}</code>.
+        </li>
+        <li>
+          <span className="font-semibold">2.</span> Если уже есть записи типа <code className="bg-white px-1 rounded font-mono">A</code> или <code className="bg-white px-1 rounded font-mono">CNAME</code> для имени <code className="bg-white px-1 rounded font-mono">@</code> или <code className="bg-white px-1 rounded font-mono">www</code> — удалите их.
+        </li>
+        <li>
+          <span className="font-semibold">3.</span> Добавьте {records.length === 1 ? 'запись' : 'записи'}:
+        </li>
+      </ol>
+
+      <div className="space-y-2.5">
+        {records.map((r, i) => (
+          <div key={i} className="bg-white rounded-lg border border-blue-200 p-3">
+            <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
+              <span className="px-2 py-1 rounded bg-blue-100 text-blue-700 text-xs font-bold font-mono w-14 text-center">{r.type}</span>
+              <div className="min-w-0">
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">Имя / Subdomain</div>
+                    <div className="flex items-center gap-1.5">
+                      <code className="font-mono text-gray-900">{r.name}</code>
+                      <button onClick={() => copy(r.name, `n${i}`)} className="text-[10px] text-blue-600 hover:underline">{copied === `n${i}` ? '✓' : 'копировать'}</button>
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">Значение / Value</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <code className="font-mono text-gray-900 truncate">{r.value}</code>
+                      <button onClick={() => copy(r.value, `v${i}`)} className="text-[10px] text-blue-600 hover:underline shrink-0">{copied === `v${i}` ? '✓' : 'копировать'}</button>
+                    </div>
+                  </div>
+                </div>
+                {r.hint && <p className="text-[11px] text-gray-500 mt-1.5">{r.hint}</p>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="text-xs text-blue-800/90 pt-1 border-t border-blue-200/60 space-y-1.5">
+        <p><span className="font-semibold">4.</span> Сохраните изменения у регистратора.</p>
+        <p><span className="font-semibold">5.</span> Подождите 10–30 минут (DNS кешируется), потом нажмите кнопку <span className="font-semibold">«Проверить статус»</span> ниже.</p>
+        <p><span className="font-semibold">6.</span> Когда статус станет «Подключён» — SSL-сертификат Vercel выдаст автоматически.</p>
+      </div>
+
+      <details className="text-xs text-blue-800/80">
+        <summary className="cursor-pointer font-semibold hover:text-blue-900">Как именно это сделать в Reg.ru</summary>
+        <ol className="mt-2 space-y-1 list-decimal list-inside text-[12px] leading-relaxed">
+          <li>Откройте <a href="https://www.reg.ru" target="_blank" rel="noopener" className="underline">reg.ru</a> и войдите в личный кабинет.</li>
+          <li>В разделе «Мои домены и услуги» нажмите на ваш домен <code className="bg-white px-1 rounded">{domain}</code>.</li>
+          <li>В меню слева выберите «DNS-серверы и управление зоной» (или просто «DNS»).</li>
+          <li>Если домен использует не reg.ru DNS-серверы — переключите на reg.ru DNS (обычно ns1.reg.ru / ns2.reg.ru).</li>
+          <li>Нажмите «Добавить запись», выберите тип (A / CNAME / TXT), вставьте имя и значение из таблицы выше.</li>
+          <li>Повторите для каждой записи. Сохраните.</li>
+        </ol>
+      </details>
     </div>
   )
 }
