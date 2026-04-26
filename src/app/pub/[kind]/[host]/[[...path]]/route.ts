@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru'
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ kind: string; host: string; path?: string[] }> }
 ) {
   const { kind, host, path } = await params
@@ -72,5 +72,5 @@ export async function GET(
 
   if (!landing) return notFoundResponse()
 
-  return renderLandingResponse(landing as PublicLanding, supabase, BASE_URL)
+  return renderLandingResponse(landing as PublicLanding, supabase, BASE_URL, request)
 }

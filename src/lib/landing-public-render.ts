@@ -5,10 +5,14 @@
 // с готовым HTML. Никакого React-runtime — отдаём text/html напрямую, чтобы
 // шаблонные <script> работали без React mismatch error #418.
 
-import { cookies } from 'next/headers'
+import type { NextRequest } from 'next/server'
+import { randomUUID } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 import { replaceVideoShortcodes } from '@/lib/video-shortcodes'
+
+const VISITOR_COOKIE = 'stud_vid'
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 год
 
 export type PublicLanding = {
   id: string
@@ -182,22 +186,153 @@ function buildTrackingScript(opts: {
 </script>`
 }
 
+/**
+ * Гарантирует наличие visitor_token и customer-карточки для текущего посетителя.
+ *
+ * Источники привязки (по приоритету):
+ *  1. URL `?_sc=<customerId>` — пришёл из бота через /btn-редирект, customer уже известен.
+ *     Синхронизируем cookie с visitor_token этого customer'а (или наоборот).
+ *  2. cookie stud_vid + поиск customer.visitor_token — возвратный визит.
+ *  3. Иначе создаём нового customer типа Гость с visitor_token = cookie.
+ *
+ * Возвращает customerId, актуальный visitorToken, и флаг — нужно ли установить
+ * cookie в Set-Cookie (true когда токен только что выдан или поменялся).
+ */
+async function ensureVisitorCustomer(
+  supabase: SupabaseClient,
+  request: NextRequest | undefined,
+  landing: PublicLanding,
+): Promise<{ customerId: string | null; visitorToken: string; setCookie: boolean }> {
+  if (!request) {
+    return { customerId: null, visitorToken: '', setCookie: false }
+  }
+  const url = new URL(request.url)
+  const customerIdFromUrl = url.searchParams.get('_sc')
+  let visitorToken = request.cookies.get(VISITOR_COOKIE)?.value ?? ''
+  let customerId: string | null = null
+  let setCookie = false
+
+  // 1. URL ?_sc=<id> приоритетнее — пришли из бот-кнопки
+  if (customerIdFromUrl) {
+    const { data: c } = await supabase
+      .from('customers')
+      .select('id, visitor_token')
+      .eq('id', customerIdFromUrl)
+      .eq('project_id', landing.project_id)
+      .maybeSingle()
+    if (c) {
+      customerId = c.id as string
+      const customerVT = (c as { visitor_token: string | null }).visitor_token
+      if (customerVT && customerVT !== visitorToken) {
+        // Customer уже имеет VT — используем его (склеиваем с cookie)
+        visitorToken = customerVT
+        setCookie = true
+      } else if (!customerVT) {
+        // Customer без VT — назначим cookie или новый UUID
+        if (!visitorToken) { visitorToken = randomUUID(); setCookie = true }
+        await supabase.from('customers').update({ visitor_token: visitorToken }).eq('id', customerId)
+      }
+    }
+  }
+
+  // 2. По cookie ищем существующего customer'а
+  if (!customerId && visitorToken) {
+    const { data: c } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('visitor_token', visitorToken)
+      .eq('project_id', landing.project_id)
+      .limit(1)
+      .maybeSingle()
+    if (c) customerId = c.id as string
+  }
+
+  // 3. Cookie не было — генерируем
+  if (!visitorToken) {
+    visitorToken = randomUUID()
+    setCookie = true
+  }
+
+  // 4. Customer не определён — создаём гостя
+  if (!customerId) {
+    const { data: c } = await supabase
+      .from('customers')
+      .insert({
+        project_id: landing.project_id,
+        visitor_token: visitorToken,
+        is_blocked: false,
+      })
+      .select('id')
+      .single()
+    if (c) customerId = c.id as string
+  }
+
+  return { customerId, visitorToken, setCookie }
+}
+
+function setCookieHeader(value: string, secure: boolean): string {
+  const parts = [
+    `${VISITOR_COOKIE}=${value}`,
+    `Max-Age=${COOKIE_MAX_AGE}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+  ]
+  if (secure) parts.push('Secure')
+  return parts.join('; ')
+}
+
+function clientIp(request: NextRequest | undefined): string {
+  if (!request) return 'unknown'
+  return (
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')
+    || 'unknown'
+  )
+}
+
 /** Главная функция: принимает уже разрешённый landing → возвращает Response с HTML. */
 export async function renderLandingResponse(
   landing: PublicLanding,
   supabase: SupabaseClient,
   baseUrl: string,
+  request?: NextRequest,
 ): Promise<Response> {
-  const cookieStore = await cookies()
-  const visitorToken = cookieStore.get('stud_vid')?.value ?? ''
+  const { customerId, visitorToken, setCookie } = await ensureVisitorCustomer(supabase, request, landing)
   const title = landing.meta_title || landing.name || 'Лендинг'
   const description = landing.meta_description || ''
   const isMiniApp = Boolean(landing.is_mini_app)
+
+  // Fire-and-forget: записываем визит сайта (попадёт в timeline как landing_view через VIEW)
+  if (request) {
+    const ip = clientIp(request)
+    const ua = request.headers.get('user-agent')
+    const ref = request.headers.get('referer')
+    void supabase
+      .from('landing_visits')
+      .insert({
+        landing_id: landing.id,
+        customer_id: customerId,
+        visitor_id: visitorToken || null,
+        ip_address: ip,
+        user_agent: ua,
+        referrer: ref,
+      })
+      .then(({ error }) => { if (error) console.warn('[landing] visit insert error:', error.message) })
+  }
 
   const trackingScript = buildTrackingScript({
     slug: landing.slug, visitorToken, baseUrl, isMiniApp, projectId: landing.project_id,
   })
   const extraHead = isMiniApp ? `<script src="https://telegram.org/js/telegram-web-app.js" async></script>` : ''
+
+  const baseHeaders: Record<string, string> = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  }
+  if (setCookie && visitorToken) {
+    baseHeaders['Set-Cookie'] = setCookieHeader(visitorToken, process.env.NODE_ENV === 'production')
+  }
 
   if (landing.is_blocks_based) {
     const { data: blocks } = await supabase
@@ -209,7 +344,7 @@ export async function renderLandingResponse(
     const blockList = (blocks ?? []) as LandingBlock[]
     let doc = assembleLandingHtml(blockList, { title, metaDescription: description, extraHead, extraBodyEnd: trackingScript })
     doc = await replaceVideoShortcodes(doc, supabase)
-    return new Response(doc, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+    return new Response(doc, { status: 200, headers: baseHeaders })
   }
 
   if (!landing.html_content) return notFoundResponse()
@@ -230,5 +365,5 @@ ${bodyInner}
 ${trackingScript}
 </body>
 </html>`
-  return new Response(doc, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+  return new Response(doc, { status: 200, headers: baseHeaders })
 }

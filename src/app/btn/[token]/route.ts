@@ -51,6 +51,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     destination = 'https://' + destination.replace(/^\/+/, '')
   }
 
+  // Если знаем customer_id и destination — http(s) URL, добавляем _sc=<id>.
+  // Лендинг прочитает этот параметр и привяжет визит к карточке клиента.
+  // Внешние сайты получат «безобидный» query param.
+  if (customerParam && /^https?:\/\//i.test(destination)) {
+    try {
+      const u = new URL(destination)
+      if (!u.searchParams.has('_sc')) {
+        u.searchParams.set('_sc', customerParam)
+        destination = u.toString()
+      }
+    } catch { /* кривой URL — оставляем как есть */ }
+  }
+
   // Fire-and-forget лог (не ждём) — projectId достаём отдельной цепочкой,
   // не блокируем редирект
   void (async () => {

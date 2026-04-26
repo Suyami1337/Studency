@@ -61,5 +61,5 @@ export async function GET(
     }
   }
 
-  return renderLandingResponse(landing as PublicLanding, supabase, BASE_URL)
+  return renderLandingResponse(landing as PublicLanding, supabase, BASE_URL, request)
 }
