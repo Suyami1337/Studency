@@ -44,7 +44,7 @@ CREATE VIEW customer_timeline_events AS
   FROM chatbot_messages cm
   JOIN chatbot_conversations cc ON cc.id = cm.conversation_id
   JOIN telegram_bots b ON b.id = cc.telegram_bot_id
-  WHERE cm.direction = 'out' AND cc.customer_id IS NOT NULL
+  WHERE cm.direction = 'outgoing' AND cc.customer_id IS NOT NULL
 
   UNION ALL
 
@@ -63,7 +63,7 @@ CREATE VIEW customer_timeline_events AS
   FROM chatbot_messages cm
   JOIN chatbot_conversations cc ON cc.id = cm.conversation_id
   JOIN telegram_bots b ON b.id = cc.telegram_bot_id
-  WHERE cm.direction = 'in' AND cc.customer_id IS NOT NULL
+  WHERE cm.direction = 'incoming' AND cc.customer_id IS NOT NULL
 
   UNION ALL
 
