@@ -148,8 +148,13 @@ export async function loadFollowupButtons(supabase: SupabaseClient, followupId: 
   return btns.filter((b: any) => b.text).map((b: any) => {
     let url: string | undefined
     if (b.action_type === 'url' && b.action_url) {
-      const cParam = customerId ? `?c=${customerId}` : ''
-      url = `${appUrl}/btn/${b.id}${cParam}`
+      // Если трекинг выключен — прямая ссылка без обёртки /btn/
+      if (b.track_clicks === false) {
+        url = b.action_url
+      } else {
+        const cParam = customerId ? `?c=${customerId}` : ''
+        url = `${appUrl}/btn/${b.id}${cParam}`
+      }
     }
     return {
       text: b.text,
@@ -272,8 +277,12 @@ export async function sendScenarioMessage(
         const userButtons = (extraBtns ?? []).filter((b: any) => b.text).map((b: any) => {
           let url: string | undefined
           if (b.action_type === 'url' && b.action_url) {
-            const cParam = customer?.id ? `?c=${customer.id}` : ''
-            url = `${appUrl}/btn/${b.id}${cParam}`
+            if (b.track_clicks === false) {
+              url = b.action_url
+            } else {
+              const cParam = customer?.id ? `?c=${customer.id}` : ''
+              url = `${appUrl}/btn/${b.id}${cParam}`
+            }
           }
           return {
             text: b.text,
@@ -356,13 +365,17 @@ export async function sendScenarioMessage(
       if (b.action_type === 'url' && b.action_url) {
         // Подстановка {tgid}
         const resolvedDest = userId ? b.action_url.replace(/\{tgid\}/g, String(userId)) : b.action_url
-        // Заворачиваем в прокси-редирект для аналитики кликов
-        const cParam = customerIdForClicks ? `?c=${customerIdForClicks}` : ''
-        url = `${appUrl}/btn/${b.id}${cParam}`
-        // Если b.action_url уже указывает на telegram или если мы не знаем project_id,
-        // всё равно прокси работает — он редиректит на оригинальный action_url из БД.
-        // (Временная переменная resolvedDest нужна если включить inline-подстановку)
-        void resolvedDest
+        if (b.track_clicks === false) {
+          // Прямая ссылка без обёртки — без аналитики кликов
+          url = resolvedDest
+        } else {
+          // Заворачиваем в прокси-редирект для аналитики кликов
+          const cParam = customerIdForClicks ? `?c=${customerIdForClicks}` : ''
+          url = `${appUrl}/btn/${b.id}${cParam}`
+          // Если b.action_url уже указывает на telegram или если мы не знаем project_id,
+          // всё равно прокси работает — он редиректит на оригинальный action_url из БД.
+          void resolvedDest
+        }
       }
       return {
         text: b.text,

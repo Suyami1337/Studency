@@ -26,6 +26,7 @@ type Button = {
   id: string; message_id: string; order_position: number; text: string
   action_type: string; action_url: string | null; action_trigger_word: string | null
   action_goto_message_id: string | null
+  track_clicks?: boolean
 }
 type Followup = {
   id: string; scenario_message_id: string; order_index: number
@@ -769,6 +770,7 @@ function MessageCard({
           action_url: nb.data.action_url ?? null,
           action_trigger_word: nb.data.action_trigger_word ?? null,
           action_goto_message_id: nb.data.action_goto_message_id ?? null,
+          track_clicks: nb.data.track_clicks !== false,
           order_position: pos,
         })
         pos++
@@ -1169,6 +1171,27 @@ function ExpandedEditor({ projectId, msg, e, set, buttons, allMessages, onAddBut
                         </select>
                       )}
                     </div>
+
+                    {/* Track clicks toggle — только для URL-кнопок.
+                        ВКЛ (по умолчанию): ссылка идёт через прокси /btn/<id>?c=…
+                        и клики попадают в аналитику.
+                        ВЫКЛ: прямая ссылка, без логирования. */}
+                    {btn.action_type === 'url' && (
+                      <label className="flex items-center justify-between gap-2 pt-1">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={btn.track_clicks !== false}
+                            onChange={ev => onUpdateButton(btn.id, { track_clicks: ev.target.checked })}
+                            className="rounded border-gray-300 text-[#6A55F8] focus:ring-[#6A55F8]"
+                          />
+                          <span className="text-[11px] text-gray-600">📊 Считать клики по этой кнопке</span>
+                        </div>
+                        <span className="text-[10px] text-gray-400">
+                          {btn.track_clicks !== false ? 'трекинг включён' : 'прямая ссылка'}
+                        </span>
+                      </label>
+                    )}
                   </div>
                 ))}
               </div>
