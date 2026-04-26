@@ -77,6 +77,11 @@ export default function ProjectsPage() {
         role: 'owner',
       })
 
+      // Регистрируем поддомен в Vercel (чтобы Vercel выдал SSL для <sub>.studency.ru)
+      fetch(`/api/projects/${data.id}/register-subdomain`, {
+        method: 'POST',
+      }).catch(err => console.error('register-subdomain failed:', err))
+
       // Создаём Kinescope папку (не блокируем если недоступно)
       fetch('/api/projects/setup-kinescope', {
         method: 'POST',

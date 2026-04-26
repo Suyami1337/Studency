@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase-server'
-import { validateSubdomain } from '@/lib/subdomain'
+import { validateSubdomain, ROOT_DOMAIN } from '@/lib/subdomain'
 import { addVercelDomain, removeVercelDomain, checkVercelDomain } from '@/lib/vercel-domains'
 
 export const runtime = 'nodejs'
@@ -43,12 +43,22 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     const sub = body.subdomain.toLowerCase().trim()
     const err = validateSubdomain(sub)
     if (err) return NextResponse.json({ error: err }, { status: 400 })
+    const oldSub = guard.project.subdomain as string | null
     const { error } = await supabase.from('projects').update({ subdomain: sub }).eq('id', id)
     if (error) {
       if (/duplicate|unique/i.test(error.message)) {
         return NextResponse.json({ error: 'Этот поддомен уже занят' }, { status: 409 })
       }
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    // Зарегистрировать новый поддомен в Vercel (для выдачи SSL через HTTP-01).
+    // Wildcard *.studency.ru без Vercel-NS не получает wildcard-SSL — каждый
+    // субдомен надо добавить как отдельный domain.
+    const newHost = `${sub}.${ROOT_DOMAIN}`
+    addVercelDomain(newHost).catch(e => console.error('Vercel addDomain failed:', e))
+    // Старый удалить (фоном)
+    if (oldSub && oldSub !== sub) {
+      removeVercelDomain(`${oldSub}.${ROOT_DOMAIN}`).catch(() => {})
     }
     return NextResponse.json({ ok: true, subdomain: sub })
   }
