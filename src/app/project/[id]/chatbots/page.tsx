@@ -507,25 +507,107 @@ function MessageCard({
   const [followupsDirty, setFollowupsDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const followupRef = React.useRef<FollowupSectionHandle>(null)
-  const isDirty = Object.keys(draft).length > 0 || followupsDirty
-  const e = { ...msg, ...draft } // effective values
+  // Локальный draft для кнопок — НИЧЕГО не пишется в БД до клика «Сохранить».
+  const [buttonDraft, setButtonDraft] = useState<Record<string, Partial<Button>>>({})
+  const [newButtons, setNewButtons] = useState<Array<{ tempId: string; data: Partial<Button> }>>([])
+  const [deletedButtonIds, setDeletedButtonIds] = useState<Set<string>>(new Set())
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _suppress = { onAddButton, onDeleteButton, onUpdateButton } // оставлено для обратной совместимости — не используется внутри карточки
+
+  const buttonsDirty = Object.keys(buttonDraft).length > 0 || newButtons.length > 0 || deletedButtonIds.size > 0
+  const isDirty = Object.keys(draft).length > 0 || followupsDirty || buttonsDirty
+  const e = { ...msg, ...draft } // effective message values
+
+  // Effective список кнопок: saved минус удалённые + draft изменения + новые pending
+  const effectiveButtons: Button[] = [
+    ...buttons
+      .filter(b => !deletedButtonIds.has(b.id))
+      .map(b => ({ ...b, ...(buttonDraft[b.id] || {}) })),
+    ...newButtons.map(nb => ({
+      id: nb.tempId,
+      message_id: msg.id,
+      text: '',
+      action_type: 'url' as const,
+      action_url: null,
+      action_trigger_word: null,
+      action_goto_message_id: null,
+      order_position: 0,
+      ...(nb.data as Partial<Button>),
+    } as Button)),
+  ]
 
   function toggleExpanded() {
     if (useModal) {
-      if (expanded) onCloseModal?.()
-      else onOpenModal?.()
+      if (expanded) {
+        if (isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
+        handleDiscard()
+        onCloseModal?.()
+      } else {
+        onOpenModal?.()
+      }
     } else {
+      // Закрытие inline-режима — тоже проверяем dirty
+      if (expanded && isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
+      if (expanded && isDirty) handleDiscard()
       setLocalExpanded(v => !v)
     }
   }
+
+  // Предупреждение при попытке закрыть вкладку браузера с несохранёнными изменениями
+  React.useEffect(() => {
+    if (!isDirty) return
+    function handler(ev: BeforeUnloadEvent) {
+      ev.preventDefault()
+      ev.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [isDirty])
 
   function set(data: Partial<Message>) {
     setDraft(prev => ({ ...prev, ...data }))
   }
 
+  // Локальные операции с кнопками — пишут только в локальный state, БД не трогают
+  function localUpdateButton(id: string, data: Partial<Button>) {
+    if (id.startsWith('temp-btn-')) {
+      setNewButtons(prev => prev.map(nb => nb.tempId === id ? { ...nb, data: { ...nb.data, ...data } } : nb))
+    } else {
+      setButtonDraft(prev => ({ ...prev, [id]: { ...(prev[id] || {}), ...data } }))
+    }
+  }
+  function localAddButton(_messageId?: string) {
+    const tempId = `temp-btn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    setNewButtons(prev => [...prev, {
+      tempId,
+      data: { text: '', action_type: 'url', action_url: '' },
+    }])
+  }
+  function localDeleteButton(id: string) {
+    if (id.startsWith('temp-btn-')) {
+      setNewButtons(prev => prev.filter(nb => nb.tempId !== id))
+    } else {
+      setDeletedButtonIds(prev => {
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+      // также чистим любые draft изменения для этой кнопки
+      setButtonDraft(prev => {
+        if (!prev[id]) return prev
+        const c = { ...prev }
+        delete c[id]
+        return c
+      })
+    }
+  }
+
   async function handleSave() {
     if (!isDirty) return
     setSaving(true)
+
+    // 1. Message updates
     if (Object.keys(draft).length > 0) {
       const updates = {
         text: e.text, is_start: e.is_start, trigger_word: e.trigger_word,
@@ -551,14 +633,55 @@ function MessageCard({
       onUpdate(msg.id, updates)
       setDraft({})
     }
+
+    // 2. Buttons — insert новых, update изменённых, delete удалённых (только если msg уже в БД)
+    if (buttonsDirty && !msg.id.startsWith('temp-')) {
+      // delete первыми чтобы не было constraint conflicts если пересоздаются с тем же текстом
+      for (const id of deletedButtonIds) {
+        await supabase.from('scenario_buttons').delete().eq('id', id)
+      }
+      for (const [id, data] of Object.entries(buttonDraft)) {
+        await supabase.from('scenario_buttons').update(data).eq('id', id)
+      }
+      // insert новых — берём максимальный order_position у оставшихся как стартовый offset
+      const maxPos = effectiveButtons
+        .filter(b => !b.id.startsWith('temp-btn-'))
+        .reduce((m, b) => Math.max(m, b.order_position ?? 0), -1)
+      let pos = maxPos + 1
+      for (const nb of newButtons) {
+        const text = (nb.data.text ?? '').toString().trim()
+        if (!text) { pos++; continue } // пустые кнопки не сохраняем
+        await supabase.from('scenario_buttons').insert({
+          message_id: msg.id,
+          text,
+          action_type: nb.data.action_type ?? 'url',
+          action_url: nb.data.action_url ?? null,
+          action_trigger_word: nb.data.action_trigger_word ?? null,
+          action_goto_message_id: nb.data.action_goto_message_id ?? null,
+          order_position: pos,
+        })
+        pos++
+      }
+      setButtonDraft({})
+      setNewButtons([])
+      setDeletedButtonIds(new Set())
+      // триггерим reload родителя — новые кнопки получат реальные id
+      onUpdate(msg.id, {})
+    }
+
+    // 3. Followups
     if (followupsDirty) {
       await followupRef.current?.save()
     }
+
     setSaving(false)
   }
 
   function handleDiscard() {
     setDraft({})
+    setButtonDraft({})
+    setNewButtons([])
+    setDeletedButtonIds(new Set())
     followupRef.current?.discard()
   }
 
@@ -637,11 +760,11 @@ function MessageCard({
           msg={msg}
           e={e}
           set={set}
-          buttons={buttons}
+          buttons={effectiveButtons}
           allMessages={allMessages}
-          onAddButton={onAddButton}
-          onDeleteButton={onDeleteButton}
-          onUpdateButton={onUpdateButton}
+          onAddButton={localAddButton}
+          onDeleteButton={localDeleteButton}
+          onUpdateButton={localUpdateButton}
           hideFollowups={hideFollowups}
           followupRef={followupRef}
           setFollowupsDirty={setFollowupsDirty}
@@ -665,8 +788,16 @@ function MessageCard({
             handleDiscard()
             onCloseModal?.()
           }}
-          onPrev={onModalPrev}
-          onNext={onModalNext}
+          onPrev={() => {
+            if (isDirty && !confirm('Есть несохранённые изменения. Перейти к другому сообщению без сохранения?')) return
+            handleDiscard()
+            onModalPrev?.()
+          }}
+          onNext={() => {
+            if (isDirty && !confirm('Есть несохранённые изменения. Перейти к другому сообщению без сохранения?')) return
+            handleDiscard()
+            onModalNext?.()
+          }}
           canPrev={canModalPrev}
           canNext={canModalNext}
           isDirty={isDirty}
@@ -678,11 +809,11 @@ function MessageCard({
             msg={msg}
             e={e}
             set={set}
-            buttons={buttons}
+            buttons={effectiveButtons}
             allMessages={allMessages}
-            onAddButton={onAddButton}
-            onDeleteButton={onDeleteButton}
-            onUpdateButton={onUpdateButton}
+            onAddButton={localAddButton}
+            onDeleteButton={localDeleteButton}
+            onUpdateButton={localUpdateButton}
             hideFollowups={hideFollowups}
             followupRef={followupRef}
             setFollowupsDirty={setFollowupsDirty}
