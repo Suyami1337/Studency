@@ -453,6 +453,71 @@ function stripHtml(s: string): string {
 }
 
 // =============================================
+// CONFIRM DIALOG — кастомная модалка подтверждения с предупреждением
+// (используется вместо native confirm() — он мелкий, легко проскочить,
+// и в некоторых браузерах не виден поверх своих модалок)
+// =============================================
+function ConfirmDialog({
+  message,
+  confirmLabel = 'Подтвердить',
+  cancelLabel = 'Отмена',
+  onConfirm,
+  onCancel,
+}: {
+  message: string
+  confirmLabel?: string
+  cancelLabel?: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  // ESC закрывает диалог
+  React.useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === 'Escape') onCancel()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl"
+        onClick={ev => ev.stopPropagation()}
+      >
+        <div className="flex items-start gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-xl flex-shrink-0">⚠️</div>
+          <div className="flex-1">
+            <h3 className="text-base font-semibold text-gray-900 mb-1.5">Несохранённые изменения</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">{message}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+            autoFocus
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================
 // MESSAGE EDITOR (карточка сообщения)
 // =============================================
 function MessageCard({
@@ -511,6 +576,8 @@ function MessageCard({
   const [buttonDraft, setButtonDraft] = useState<Record<string, Partial<Button>>>({})
   const [newButtons, setNewButtons] = useState<Array<{ tempId: string; data: Partial<Button> }>>([])
   const [deletedButtonIds, setDeletedButtonIds] = useState<Set<string>>(new Set())
+  // Кастомная модалка подтверждения (вместо native confirm() который мелкий и легко проскочить)
+  const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null)
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _suppress = { onAddButton, onDeleteButton, onUpdateButton } // оставлено для обратной совместимости — не используется внутри карточки
@@ -572,17 +639,28 @@ function MessageCard({
   function toggleExpanded() {
     if (useModal) {
       if (expanded) {
-        if (isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
-        handleDiscard()
-        onCloseModal?.()
+        if (isDirty) {
+          setConfirmAction({
+            message: 'У вас несохранённые изменения. Если закроете окно сейчас — все правки в этом сообщении пропадут.',
+            onConfirm: () => { handleDiscard(); onCloseModal?.() },
+          })
+        } else {
+          handleDiscard()
+          onCloseModal?.()
+        }
       } else {
         onOpenModal?.()
       }
     } else {
       // Закрытие inline-режима — тоже проверяем dirty
-      if (expanded && isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
-      if (expanded && isDirty) handleDiscard()
-      setLocalExpanded(v => !v)
+      if (expanded && isDirty) {
+        setConfirmAction({
+          message: 'У вас несохранённые изменения. Если свернёте сейчас — все правки в этом сообщении пропадут.',
+          onConfirm: () => { handleDiscard(); setLocalExpanded(false) },
+        })
+      } else {
+        setLocalExpanded(v => !v)
+      }
     }
   }
 
@@ -808,9 +886,10 @@ function MessageCard({
           onSave={handleSave}
           onDiscard={handleDiscard}
           onDelete={() => {
-            if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
-              onDelete(msg.id)
-            }
+            setConfirmAction({
+              message: 'Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.',
+              onConfirm: () => onDelete(msg.id),
+            })
           }}
         />
       )}
@@ -819,19 +898,37 @@ function MessageCard({
           title={`${typeLabel} #${displayNumber ?? msg.order_position + 1}`}
           positionLabel={modalPositionLabel}
           onClose={() => {
-            if (isDirty && !confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
-            handleDiscard()
-            onCloseModal?.()
+            if (isDirty) {
+              setConfirmAction({
+                message: 'У вас несохранённые изменения. Если закроете окно сейчас — все правки в этом сообщении пропадут.',
+                onConfirm: () => { handleDiscard(); onCloseModal?.() },
+              })
+            } else {
+              handleDiscard()
+              onCloseModal?.()
+            }
           }}
           onPrev={() => {
-            if (isDirty && !confirm('Есть несохранённые изменения. Перейти к другому сообщению без сохранения?')) return
-            handleDiscard()
-            onModalPrev?.()
+            if (isDirty) {
+              setConfirmAction({
+                message: 'У вас несохранённые изменения. Если перейдёте к другому сообщению — все правки в этом пропадут.',
+                onConfirm: () => { handleDiscard(); onModalPrev?.() },
+              })
+            } else {
+              handleDiscard()
+              onModalPrev?.()
+            }
           }}
           onNext={() => {
-            if (isDirty && !confirm('Есть несохранённые изменения. Перейти к другому сообщению без сохранения?')) return
-            handleDiscard()
-            onModalNext?.()
+            if (isDirty) {
+              setConfirmAction({
+                message: 'У вас несохранённые изменения. Если перейдёте к другому сообщению — все правки в этом пропадут.',
+                onConfirm: () => { handleDiscard(); onModalNext?.() },
+              })
+            } else {
+              handleDiscard()
+              onModalNext?.()
+            }
           }}
           canPrev={canModalPrev}
           canNext={canModalNext}
@@ -857,14 +954,25 @@ function MessageCard({
             onSave={handleSave}
             onDiscard={handleDiscard}
             onDelete={() => {
-              if (confirm('Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.')) {
-                onDelete(msg.id)
-                onCloseModal?.()
-              }
+              setConfirmAction({
+                message: 'Удалить это сообщение? Все кнопки и дожимы, привязанные к нему, тоже удалятся. Действие необратимо.',
+                onConfirm: () => { onDelete(msg.id); onCloseModal?.() },
+              })
             }}
             hideFooter
           />
         </MessageEditorModal>
+      )}
+
+      {/* Кастомная модалка подтверждения — показывается ПОВЕРХ редактора */}
+      {confirmAction && (
+        <ConfirmDialog
+          message={confirmAction.message}
+          confirmLabel="Да, закрыть без сохранения"
+          cancelLabel="Остаться и сохранить"
+          onConfirm={() => { confirmAction.onConfirm(); setConfirmAction(null) }}
+          onCancel={() => setConfirmAction(null)}
+        />
       )}
     </div>
   )
