@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 import { replaceVideoShortcodes } from '@/lib/video-shortcodes'
+import { mergeByVisitorToken } from '@/lib/customer-merge'
 
 const VISITOR_COOKIE = 'stud_vid'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 год
@@ -145,6 +146,30 @@ function buildTrackingScript(opts: {
   else initVideoTracking();
   setTimeout(initVideoTracking, 500); setTimeout(initVideoTracking, 2000);
 
+  // Identity stitching: подмена Telegram-ссылок на ?start=vt_<VT>.
+  // Если юзер кликает на ссылку t.me/<bot> — Telegram прокинет start-параметр
+  // в первое сообщение боту, и webhook сольёт Гость-карточку с tg-карточкой.
+  function patchTelegramLinks() {
+    if (!VT) return;
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length; i++) {
+      var a = anchors[i];
+      var href = a.getAttribute('href') || '';
+      if (!/^https?:\\/\\/(t\\.me|telegram\\.me)\\//i.test(href)) continue;
+      try {
+        var u = new URL(href);
+        if (u.searchParams.has('start')) continue;
+        // Не трогаем ссылки на каналы (/<channel> без бота). Но безопасный путь —
+        // приклеить start всегда: каналы игнорируют этот параметр.
+        u.searchParams.set('start', 'vt_' + VT);
+        a.setAttribute('href', u.toString());
+      } catch (e) {}
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', patchTelegramLinks);
+  else patchTelegramLinks();
+  setTimeout(patchTelegramLinks, 1500);
+
   document.addEventListener('click', function(e) {
     var el = e.target.closest('button, [type=submit], [role=button], a[href]');
     if (!el) return;
@@ -223,6 +248,13 @@ async function ensureVisitorCustomer(
     if (c) {
       customerId = c.id as string
       const customerVT = (c as { visitor_token: string | null }).visitor_token
+
+      // Identity stitching: если cookie указывает на Гостя в этом же проекте
+      // (а target — telegram-карточка), сливаем Гостя в target.
+      if (visitorToken) {
+        await mergeByVisitorToken(supabase, visitorToken, landing.project_id, customerId)
+      }
+
       if (customerVT && customerVT !== visitorToken) {
         // Customer уже имеет VT — используем его (склеиваем с cookie)
         visitorToken = customerVT

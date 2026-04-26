@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { sendScenarioMessage } from '@/lib/scenario-sender'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
 import { answerCallbackQuery } from '@/lib/telegram'
+import { mergeByVisitorToken } from '@/lib/customer-merge'
 
 function getSupabase() {
   return createClient(
@@ -406,6 +407,13 @@ export async function POST(request: NextRequest) {
     if (text.startsWith('/start src_')) {
       sourceSlugFromStart = text.replace('/start src_', '').trim().replace(/_/g, '-') || null
     }
+    // Извлекаем visitor_token если пришёл /start vt_<UUID> — identity stitching
+    // с лендинга: на сайте уже создавалась Гость-карточка, теперь сливаем её
+    // с telegram-карточкой.
+    let visitorTokenFromStart: string | null = null
+    if (text.startsWith('/start vt_')) {
+      visitorTokenFromStart = text.replace('/start vt_', '').trim() || null
+    }
 
     // Find or create customer (проверяем по telegram_id чтобы не плодить дубликаты)
     let customerId = conversation.customer_id
@@ -422,6 +430,11 @@ export async function POST(request: NextRequest) {
           telegram_username: username, full_name: firstName,
           bot_subscribed: true, bot_subscribed_at: new Date().toISOString(),
         }).eq('id', existingByTgId.id)
+        // Identity stitching — сливаем Гостя из лендинга если есть payload
+        if (visitorTokenFromStart) {
+          await mergeByVisitorToken(supabase, visitorTokenFromStart, projectId, existingByTgId.id)
+            .catch(err => console.error('[merge] vt_ stitch failed:', err))
+        }
         await supabase.from('customer_actions').insert({
           customer_id: existingByTgId.id, project_id: projectId, action: 'bot_start',
           data: { bot_name: bot.name, telegram_username: username },
@@ -449,6 +462,11 @@ export async function POST(request: NextRequest) {
         if (customer) {
           customerId = customer.id
           await supabase.from('chatbot_conversations').update({ customer_id: customer.id }).eq('id', conversation.id)
+          // Identity stitching — сливаем Гостя из лендинга если есть payload
+          if (visitorTokenFromStart) {
+            await mergeByVisitorToken(supabase, visitorTokenFromStart, projectId, customer.id)
+              .catch(err => console.error('[merge] vt_ stitch failed:', err))
+          }
           await supabase.from('customer_actions').insert({
             customer_id: customer.id, project_id: projectId, action: 'bot_start',
             data: { bot_name: bot.name, telegram_username: username },
