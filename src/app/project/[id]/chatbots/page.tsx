@@ -541,7 +541,7 @@ function MessageCard({
 }: {
   projectId: string
   msg: Message; buttons: Button[]; allMessages: Message[]
-  onUpdate: (id: string, data: Partial<Message>) => void
+  onUpdate: (id: string, data: Partial<Message>) => void | Promise<void>
   onDelete: (id: string) => void
   onAddButton: (messageId: string) => void
   onDeleteButton: (id: string) => void
@@ -778,8 +778,9 @@ function MessageCard({
       // обновлённые buttons. Это исключает race condition с моргающим UI.
       setNewButtons([])
       setDeletedButtonIds(new Set())
-      // триггерим reload родителя — новые кнопки получат реальные id
-      onUpdate(msg.id, {})
+      // Триггерим reload родителя и ДОЖИДАЕМСЯ его. После этого props.buttons
+      // обновятся, useEffect [buttons] почистит совпадающий draft → isDirty=false.
+      await Promise.resolve(onUpdate(msg.id, {}))
     }
 
     // 3. Followups
@@ -2323,8 +2324,14 @@ function ScenarioDetail({ scenario, onBack, onDeleted, onDuplicated }: { scenari
     }
   }
 
-  // Только локальное обновление — DB-запись делает сам MessageCard при Save
-  function updateMessage(id: string, data: Partial<Message>) {
+  // Только локальное обновление — DB-запись делает сам MessageCard при Save.
+  // Если data пустой — это сигнал «MessageCard сохранил кнопки/followups,
+  // перезагрузи всё из БД чтобы пришли новые id и actual buttons».
+  async function updateMessage(id: string, data: Partial<Message>) {
+    if (Object.keys(data).length === 0) {
+      await loadData()
+      return
+    }
     setMessages(prev => prev.map(m => m.id === id ? { ...m, ...data } : m))
   }
 
