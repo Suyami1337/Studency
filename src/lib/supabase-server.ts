@@ -1,6 +1,11 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 
+// Cookie-домен для авторизации. Если задан → cookie доступна на всех
+// субдоменах (например '.studency.ru'). Если пусто — host-only cookie
+// (default браузера).
+const COOKIE_DOMAIN = process.env.NEXT_PUBLIC_COOKIE_DOMAIN || ''
+
 export async function createServerSupabase() {
   const cookieStore = await cookies()
 
@@ -14,9 +19,10 @@ export async function createServerSupabase() {
         },
         setAll(cookiesToSet) {
           try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
+            cookiesToSet.forEach(({ name, value, options }) => {
+              const opts = COOKIE_DOMAIN ? { ...options, domain: COOKIE_DOMAIN } : options
+              cookieStore.set(name, value, opts)
+            })
           } catch {
             // Server component — ignore
           }
