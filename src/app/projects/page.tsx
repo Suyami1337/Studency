@@ -120,7 +120,13 @@ export default function ProjectsPage() {
   }
 
   function selectProject(id: string) {
-    router.push(`/project/${id}`)
+    // Hard redirect через middleware — он сделает handoff на subdomain
+    // если у проекта есть subdomain. Без subdomain — fallback на /project/<id>.
+    if (typeof window !== 'undefined') {
+      window.location.href = `/project/${id}`
+    } else {
+      router.push(`/project/${id}`)
+    }
   }
 
   if (loading) {
