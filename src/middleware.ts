@@ -82,6 +82,7 @@ export async function middleware(request: NextRequest) {
       pathname.startsWith('/api') ||
       pathname.startsWith('/s/') ||
       pathname.startsWith('/pub') ||
+      pathname.startsWith('/templates/') ||
       pathname === '/favicon.ico'
     ) {
       return NextResponse.next()
@@ -143,6 +144,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/pub') ||
     pathname.startsWith('/api/') ||
     pathname.startsWith('/go/') ||
+    pathname.startsWith('/templates/') ||
     pathname === '/favicon.ico' ||
     pathname === '/robots.txt' ||
     pathname === '/sitemap.xml'
