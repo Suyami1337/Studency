@@ -2,8 +2,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendScenarioMessage } from '@/lib/scenario-sender'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
+
+// /api/events — публичный endpoint (вызывается из лендингов и трекинга),
+// поэтому полная аутентификация невозможна. Защищаемся: валидация input,
+// проверка существования project_id, rate-limit per IP+project.
+const MAX_FIELD_LEN = 200
+const MAX_METADATA_BYTES = 4096
+const RATE_LIMIT = 60          // events/min на (ip, project_id)
+const RATE_WINDOW_MS = 60_000
+
+// Допустимые event_type (всё остальное — мусор)
+const ALLOWED_EVENT_TYPES = new Set([
+  'page_view', 'button_click', 'link_click', 'form_submit', 'video_start',
+  'video_progress', 'video_complete', 'landing_visit', 'mini_app_opened',
+  'subscription', 'unsubscribe', 'purchase', 'trigger_fired', 'custom',
+])
+
+function truncate(s: unknown, max: number): string | null {
+  if (s == null) return null
+  const str = String(s)
+  return str.length > max ? str.slice(0, max) : str
+}
 
 function getSupabase() {
   return createClient(
@@ -40,14 +62,53 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'project_id and event_type required' }, { status: 400 })
     }
 
+    // Валидация event_type (отсекает мусор/спам с произвольными типами)
+    if (!ALLOWED_EVENT_TYPES.has(event_type)) {
+      return NextResponse.json({ error: 'unsupported event_type' }, { status: 400 })
+    }
+
+    // Валидация project_id формата (UUID)
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(project_id)) {
+      return NextResponse.json({ error: 'invalid project_id' }, { status: 400 })
+    }
+
+    // Rate-limit per (IP, project_id)
+    const ip = clientIp(request)
+    if (!rateLimit(`events:${ip}:${project_id}`, RATE_LIMIT, RATE_WINDOW_MS)) {
+      return NextResponse.json({ error: 'rate limit exceeded' }, { status: 429 })
+    }
+
+    // Ограничиваем длину строковых полей и размер metadata
+    const safeEventName = truncate(event_name, MAX_FIELD_LEN)
+    const safeSource = truncate(source, MAX_FIELD_LEN)
+    const safeSourceId = truncate(source_id, MAX_FIELD_LEN)
+    const safeSessionId = truncate(session_id, MAX_FIELD_LEN)
+    let safeMetadata: Record<string, unknown> = {}
+    try {
+      const metaStr = JSON.stringify(metadata ?? {})
+      if (metaStr.length <= MAX_METADATA_BYTES) {
+        safeMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+      }
+    } catch { /* ignore — оставляем пустой metadata */ }
+
     const supabase = getSupabase()
 
-    // 1. Пишем событие
+    // Проверяем что project_id — реальный проект (отсекаем мусор)
+    const { data: projectExists } = await supabase
+      .from('projects').select('id').eq('id', project_id).maybeSingle()
+    if (!projectExists) {
+      return NextResponse.json({ error: 'project not found' }, { status: 404 })
+    }
+
+    // 1. Пишем событие (санитизированные значения)
     const { data: event, error } = await supabase.from('events').insert({
-      project_id, event_type, event_name, source, source_id,
+      project_id, event_type,
+      event_name: safeEventName,
+      source: safeSource,
+      source_id: safeSourceId,
       customer_id: customer_id ?? null,
-      session_id: session_id ?? null,
-      metadata,
+      session_id: safeSessionId,
+      metadata: safeMetadata,
     }).select().single()
 
     if (error) {

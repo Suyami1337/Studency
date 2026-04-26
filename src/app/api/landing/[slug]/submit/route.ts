@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,6 +32,13 @@ export async function POST(
 ) {
   try {
     const { slug } = await params
+
+    // Rate-limit per (IP, slug). 5 заявок/мин с одного IP — спам ботов.
+    const ip = clientIp(request)
+    if (!rateLimit(`submit:${ip}:${slug}`, 5, 60_000)) {
+      return NextResponse.json({ error: 'Слишком много заявок, попробуйте через минуту' }, { status: 429, headers: CORS_HEADERS })
+    }
+
     const body = await request.json() as {
       name?: string
       phone?: string

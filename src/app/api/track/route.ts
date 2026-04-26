@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,6 +36,12 @@ export async function POST(request: NextRequest) {
     const eventType = body.eventType || 'button_click'
 
     if (!landingSlug || !buttonText) {
+      return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
+    }
+
+    // Rate-limit per (IP, slug) — отсекаем флуд от ботов
+    const ip = clientIp(request)
+    if (!rateLimit(`track:${ip}:${landingSlug}`, 120, 60_000)) {
       return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
