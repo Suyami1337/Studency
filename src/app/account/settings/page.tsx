@@ -676,34 +676,13 @@ function DnsInstructions({
           ))}
         </div>
 
-        <ol className="text-xs text-gray-700 space-y-1.5 pt-3 border-t border-gray-100 list-decimal list-inside leading-relaxed">
-          <li>Если для имени <code className="bg-gray-100 px-1 rounded">@</code> или <code className="bg-gray-100 px-1 rounded">www</code> уже есть старые записи A/CNAME — удалите их.</li>
-          <li>Сохраните изменения у регистратора.</li>
-          <li>Подождите 10–30 минут — DNS кешируется в интернете.</li>
-          <li>Нажмите кнопку <span className="font-semibold">«Проверить статус»</span> ниже.</li>
-          <li>Когда статус станет «Подключён» — SSL-сертификат выдастся автоматически.</li>
+        <ol className="text-sm text-gray-800 space-y-2 pt-4 border-t border-gray-100 list-decimal list-inside leading-relaxed">
+          <li>Откройте <a href="https://www.reg.ru/user/account" target="_blank" rel="noopener" className="text-[#6A55F8] hover:underline">reg.ru</a> → «Мои домены» → <code className="bg-gray-100 px-1 rounded font-mono">{domain}</code> → «DNS-серверы и управление зоной».</li>
+          <li>Удалите старые записи A/CNAME для имени <code className="bg-gray-100 px-1 rounded">@</code> или <code className="bg-gray-100 px-1 rounded">www</code>, если они есть.</li>
+          <li>Нажмите «Добавить запись» и внесите {records.length === 1 ? 'запись' : 'обе записи'} из таблицы выше.</li>
+          <li>Подождите 10–30 минут и нажмите <span className="font-semibold">«Проверить статус»</span>.</li>
         </ol>
       </div>
-
-      {/* Гайд по конкретным регистраторам */}
-      <details className="bg-white border border-gray-200 rounded-lg">
-        <summary className="cursor-pointer p-4 text-sm font-semibold text-gray-900 hover:text-[#6A55F8]">
-          Пошаговый гайд для Reg.ru
-        </summary>
-        <div className="px-4 pb-4 text-xs text-gray-600 space-y-2 leading-relaxed">
-          <ol className="space-y-1.5 list-decimal list-inside">
-            <li>Откройте <a href="https://www.reg.ru/user/account" target="_blank" rel="noopener" className="text-[#6A55F8] hover:underline">reg.ru/user/account</a> и войдите.</li>
-            <li>«Мои домены и услуги» → нажмите на <code className="bg-gray-100 px-1 rounded">{domain}</code>.</li>
-            <li>В левом меню выберите <strong>«DNS-серверы и управление зоной»</strong>.</li>
-            <li>Если стоит «Не использовать DNS reg.ru» — переключите на <strong>«Использовать DNS-серверы reg.ru»</strong> и сохраните. Иначе настройки DNS не будут видны.</li>
-            <li>В таблице DNS-записей нажмите <strong>«Добавить запись»</strong>.</li>
-            <li>Выберите тип записи ({records.map(r => r.type).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}), скопируйте «Имя» и «Значение» из таблицы выше.</li>
-            <li>Сохраните. Повторите для каждой записи.</li>
-            <li>DNS обновится за 10–30 минут.</li>
-          </ol>
-          <p className="pt-2 text-gray-500">⚠️ Если в кабинете не активен раздел «Управление зоной» — проверьте, что в DNS-серверах выбрано «Бесплатные DNS-серверы Reg.ru» (ns1.reg.ru / ns2.reg.ru). Если стоят чужие NS — DNS управляется не в Reg.ru, и записи надо добавлять там же.</p>
-        </div>
-      </details>
     </div>
   )
 }
