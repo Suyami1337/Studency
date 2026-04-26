@@ -885,23 +885,20 @@ function LandingsList({
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Сайты и лендинги</h1>
+          <h1 className="text-xl font-bold text-gray-900">Сайты и лендинги</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             Создавайте посадочные страницы и отслеживайте их эффективность
           </p>
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-[#6A55F8] text-white text-sm font-medium rounded-xl hover:bg-[#5040D6] transition-colors shadow-sm shadow-[#6A55F8]/30"
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Создать сайт
+          + Создать сайт
         </button>
       </div>
 

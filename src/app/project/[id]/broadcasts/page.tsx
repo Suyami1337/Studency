@@ -668,20 +668,20 @@ export default function BroadcastsPage() {
     : 'Отправить'
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Рассылки</h1>
+          <h1 className="text-xl font-bold text-gray-900">Рассылки</h1>
           <p className="text-sm text-gray-500 mt-0.5">Массовая отправка сообщений по сегменту клиентов</p>
         </div>
         <button onClick={() => { resetForm(); setEditorId('new') }}
-          className="px-4 py-2 bg-[#6A55F8] text-white text-sm font-medium rounded-lg hover:bg-[#5845e0]">
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
           + Новая рассылка
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 mb-4 border-b border-gray-100">
+      <div className="flex items-center gap-1 border-b border-gray-100">
         {([
           { id: 'calendar' as const, label: '📅 Календарь' },
           { id: 'all' as const, label: 'Все' },
@@ -730,65 +730,63 @@ export default function BroadcastsPage() {
             return (
               <div key={b.id}
                 onClick={() => {
-                  // Черновик / запланированная — открываем редактор
                   if (b.status === 'draft' || b.status === 'scheduled') handleEdit(b)
-                  // Отправленная / отправляемая / ошибка — открываем детали
                   else setSelectedBroadcast(b)
                 }}
-                className="bg-white rounded-xl border border-gray-100 p-4 hover:border-[#6A55F8]/40 cursor-pointer transition-colors">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{b.name}</h3>
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${sl.color}`}>{sl.label}</span>
-                      {b.status === 'scheduled' && b.scheduled_at && (
-                        <span className="text-[10px] text-indigo-600">
-                          ⏰ {new Date(b.scheduled_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      )}
+                className="w-full bg-white rounded-xl border border-gray-100 p-4 transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md cursor-pointer">
+                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">📢</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{b.name}</p>
+                  <p className="text-xs text-gray-400 truncate mt-0.5">
+                    {b.text ? stripHtml(b.text) : segmentLabel(b)}
+                  </p>
+                </div>
+
+                <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+                  {b.sent_count > 0 ? (
+                    <>
+                      <div className="text-center">
+                        <p className="text-base font-bold text-gray-900 leading-tight">{b.sent_count}</p>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wide">отправлено</p>
+                      </div>
+                      <div className="text-center">
+                        <p className={`text-base font-bold leading-tight ${b.failed_count > 0 ? 'text-red-500' : 'text-gray-900'}`}>{b.failed_count}</p>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-wide">ошибок</p>
+                      </div>
+                    </>
+                  ) : b.status === 'scheduled' && b.scheduled_at ? (
+                    <div className="text-right">
+                      <p className="text-xs font-medium text-indigo-600 leading-tight">⏰ {new Date(b.scheduled_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">запланировано</p>
                     </div>
-                    {b.text && <p className="text-xs text-gray-500 truncate">{stripHtml(b.text)}</p>}
-                    <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-400">
-                      <span>{segmentLabel(b)}</span>
-                      {b.sent_count > 0 && (
-                        <span>Отправлено: {b.sent_count}/{b.total_recipients}</span>
-                      )}
-                      {b.failed_count > 0 && (
-                        <span className="text-red-500">Ошибок: {b.failed_count}</span>
-                      )}
-                      <span>{new Date(b.created_at).toLocaleString('ru')}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1 items-end">
-                    {b.status === 'draft' && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleSend(b.id) }}
-                        disabled={sendingId === b.id}
-                        className="px-3 py-1 text-xs bg-[#6A55F8] text-white rounded hover:bg-[#5845e0] disabled:opacity-50">
-                        {sendingId === b.id ? 'Отправка…' : 'Отправить'}
-                      </button>
-                    )}
-                    {b.status === 'scheduled' && (
-                      <>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleSend(b.id) }}
-                          disabled={sendingId === b.id}
-                          className="px-3 py-1 text-xs bg-[#6A55F8] text-white rounded hover:bg-[#5845e0] disabled:opacity-50">
-                          {sendingId === b.id ? 'Отправка…' : 'Отправить сейчас'}
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleCancel(b.id) }}
-                          className="text-[10px] text-gray-400 hover:text-amber-600">
-                          Отменить
-                        </button>
-                      </>
-                    )}
+                  ) : null}
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${sl.color}`}>{sl.label}</span>
+
+                  {b.status === 'draft' && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDelete(b.id) }}
-                      className="text-[10px] text-gray-400 hover:text-red-500">
-                      Удалить
+                      onClick={(e) => { e.stopPropagation(); handleSend(b.id) }}
+                      disabled={sendingId === b.id}
+                      className="px-3 py-1.5 text-xs bg-[#6A55F8] text-white rounded-lg hover:bg-[#5040D6] disabled:opacity-50 font-medium">
+                      {sendingId === b.id ? '…' : 'Отправить'}
                     </button>
-                  </div>
+                  )}
+                  {b.status === 'scheduled' && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSend(b.id) }}
+                      disabled={sendingId === b.id}
+                      className="px-3 py-1.5 text-xs bg-[#6A55F8] text-white rounded-lg hover:bg-[#5040D6] disabled:opacity-50 font-medium">
+                      {sendingId === b.id ? '…' : 'Сейчас'}
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(b.id) }}
+                    className="text-gray-300 hover:text-red-500 p-1 transition-colors"
+                    title="Удалить">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
                 </div>
               </div>
             )

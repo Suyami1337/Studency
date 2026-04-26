@@ -65,10 +65,10 @@ export default function ConversationsIndexPage() {
 
   if (accounts.length === 0 && !addOpen) {
     return (
-      <div className="max-w-3xl">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900">Переписки</h1>
-          <p className="text-sm text-gray-500 mt-1">Личные диалоги менеджера с клиентами в Telegram — прямо в платформе</p>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Переписки</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Личные диалоги менеджера с клиентами в Telegram — прямо в платформе</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <div className="text-4xl mb-3">✉️</div>
@@ -88,14 +88,14 @@ export default function ConversationsIndexPage() {
   }
 
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Переписки</h1>
-          <p className="text-sm text-gray-500 mt-1">Выбери аккаунт менеджера, в котором хочешь работать</p>
+          <h1 className="text-xl font-bold text-gray-900">Переписки</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Выбери аккаунт менеджера, в котором хочешь работать</p>
         </div>
         <button onClick={() => setAddOpen(true)}
-          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
           + Добавить аккаунт
         </button>
       </div>
