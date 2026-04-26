@@ -12,12 +12,23 @@ type Project = {
   created_at: string
 }
 
+type DomainConfig = {
+  misconfigured: boolean
+  configuredBy: string | null
+  nameservers: string[]
+  recommendedIPv4: string[]
+  recommendedCNAME: string | null
+  aValues: string[]
+  cnames: string[]
+}
+
 type DomainState = {
   subdomain: string
   custom_domain: string | null
   custom_domain_status: string | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   verification?: any
+  config?: DomainConfig | null
 }
 
 function AccountSettingsInner() {
@@ -352,7 +363,16 @@ function DomainTab() {
 
   if (loading) return <div className="text-sm text-gray-400 py-12 text-center">Загрузка...</div>
 
-  const status = state?.custom_domain_status ?? null
+  // Реальный статус: учитываем misconfigured из Vercel config.
+  // Vercel считает домен "verified" как только принял его в проект, но
+  // misconfigured=true пока DNS-записи не настроены у регистратора.
+  const isMisconfigured = state?.config?.misconfigured ?? true
+  const dbStatus = state?.custom_domain_status ?? null
+  const status: 'verified' | 'pending' | 'failed' | null =
+    dbStatus === 'verified' && !isMisconfigured ? 'verified'
+    : dbStatus === 'failed' ? 'failed'
+    : state?.custom_domain ? 'pending'
+    : null
   const statusLabel = status === 'verified' ? 'Подключён' : status === 'failed' ? 'Ошибка' : 'Ожидает DNS'
   const statusClass = status === 'verified' ? 'bg-green-50 text-green-700 border-green-200' : status === 'failed' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'
 
@@ -425,6 +445,7 @@ function DomainTab() {
               <DnsInstructions
                 domain={state.custom_domain}
                 verification={state.verification as Array<{ type: string; domain: string; value: string }> | null | undefined}
+                config={state.config ?? null}
               />
             )}
 
@@ -459,17 +480,23 @@ type DnsRecord = {
 }
 
 /**
- * Преобразует verification от Vercel в DNS-записи в формате Reg.ru.
- * Если verification пустой — собираем дефолтные записи (A для apex, CNAME для www/sub).
+ * Собирает DNS-записи которые юзеру нужно добавить.
+ * Приоритет: 1) verification от Vercel (TXT для подтверждения владения),
+ *            2) рекомендованные значения из config (точно правильные),
+ *            3) дефолтные значения как fallback.
  */
-function buildDnsRecords(domain: string, verification: Array<{ type: string; domain: string; value: string }> | null | undefined): DnsRecord[] {
+function buildDnsRecords(
+  domain: string,
+  verification: Array<{ type: string; domain: string; value: string }> | null | undefined,
+  config: DomainConfig | null | undefined,
+): DnsRecord[] {
   const out: DnsRecord[] = []
-  const isApex = !domain.includes('.', domain.indexOf('.') + 1) // example.ru = 1 точка → apex; www.example.ru = 2 точки
+  // apex — у него ровно одна точка (example.ru). У поддомена две и более (app.example.ru).
+  const isApex = domain.split('.').length === 2
 
-  // Vercel verification (TXT для подтверждения владения и пр.)
+  // 1) verification (TXT и пр. от Vercel)
   if (verification && verification.length > 0) {
     for (const v of verification) {
-      // Имя записи относительно домена
       let name = v.domain.replace(`.${domain}`, '')
       if (v.domain === domain) name = '@'
       if (name === domain) name = '@'
@@ -477,27 +504,34 @@ function buildDnsRecords(domain: string, verification: Array<{ type: string; dom
         type: v.type,
         name: name || '@',
         value: v.value,
-        hint: v.type === 'TXT' ? 'Подтверждение владения доменом' : undefined,
+        hint: v.type === 'TXT' ? 'Подтверждение владения доменом — Vercel требует это перед выдачей SSL' : undefined,
       })
     }
   }
 
-  // Дефолтные записи для самого домена (если verification их не вернул)
-  const hasMainRecord = out.some(r => r.name === '@' && (r.type === 'A' || r.type === 'CNAME'))
+  // 2) Главная запись (A или CNAME) — указывает домен на Vercel
+  const hasMainRecord = out.some(r => (r.name === '@' || r.name === domain.split('.')[0]) && (r.type === 'A' || r.type === 'CNAME'))
   if (!hasMainRecord) {
     if (isApex) {
-      out.push({
-        type: 'A',
-        name: '@',
-        value: '76.76.21.21',
-        hint: 'IP-адрес Vercel',
-      })
+      // Vercel рекомендует свой IP. Берём из config.recommendedIPv4 если есть.
+      const ips = config?.recommendedIPv4 && config.recommendedIPv4.length > 0
+        ? config.recommendedIPv4
+        : ['76.76.21.21']
+      for (const ip of ips) {
+        out.push({
+          type: 'A',
+          name: '@',
+          value: ip,
+          hint: 'Указывает домен на серверы Vercel',
+        })
+      }
     } else {
+      const cname = config?.recommendedCNAME ?? 'cname.vercel-dns.com.'
       out.push({
         type: 'CNAME',
         name: domain.split('.')[0],
-        value: 'cname.vercel-dns.com.',
-        hint: 'Указывает на Vercel',
+        value: cname,
+        hint: 'Указывает поддомен на Vercel',
       })
     }
   }
@@ -505,9 +539,33 @@ function buildDnsRecords(domain: string, verification: Array<{ type: string; dom
   return out
 }
 
-function DnsInstructions({ domain, verification }: { domain: string; verification: Array<{ type: string; domain: string; value: string }> | null | undefined }) {
-  const records = buildDnsRecords(domain, verification)
+/** Опознаём какой регистратор/DNS-сервис управляет доменом по nameservers. */
+function detectDnsProvider(nameservers: string[]): { name: string; isRegRu: boolean } | null {
+  if (!nameservers || nameservers.length === 0) return null
+  const ns = nameservers.join(' ').toLowerCase()
+  if (ns.includes('reg.ru')) return { name: 'Reg.ru', isRegRu: true }
+  if (ns.includes('beget')) return { name: 'Beget', isRegRu: false }
+  if (ns.includes('cloudflare')) return { name: 'Cloudflare', isRegRu: false }
+  if (ns.includes('octofunnel')) return { name: 'Octofunnel', isRegRu: false }
+  if (ns.includes('selectel')) return { name: 'Selectel', isRegRu: false }
+  if (ns.includes('yandex')) return { name: 'Яндекс DNS', isRegRu: false }
+  if (ns.includes('hostinger')) return { name: 'Hostinger', isRegRu: false }
+  return { name: nameservers[0].split('.').slice(-2).join('.'), isRegRu: false }
+}
+
+function DnsInstructions({
+  domain,
+  verification,
+  config,
+}: {
+  domain: string
+  verification: Array<{ type: string; domain: string; value: string }> | null | undefined
+  config: DomainConfig | null | undefined
+}) {
+  const records = buildDnsRecords(domain, verification, config)
   const [copied, setCopied] = useState<string | null>(null)
+  const provider = detectDnsProvider(config?.nameservers ?? [])
+  const isMisconfigured = config?.misconfigured ?? true
 
   function copy(text: string, key: string) {
     navigator.clipboard?.writeText(text)
@@ -516,69 +574,99 @@ function DnsInstructions({ domain, verification }: { domain: string; verificatio
   }
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 space-y-4">
-      <div>
-        <h3 className="text-sm font-semibold text-blue-900 mb-1">Что сделать в Reg.ru (или у вашего регистратора)</h3>
-        <p className="text-xs text-blue-800/80">Зайдите в личный кабинет → раздел «Домены» → выберите <code className="bg-white px-1 rounded font-mono">{domain}</code> → «DNS-серверы и управление зоной» → добавьте записи ниже:</p>
+    <div className="space-y-3">
+      {/* Статус-полоса */}
+      <div className={`rounded-lg p-4 border ${isMisconfigured ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+        <div className="flex items-start gap-3">
+          <div className="text-xl shrink-0">{isMisconfigured ? '⏳' : '🔄'}</div>
+          <div className="min-w-0">
+            <h3 className={`text-sm font-semibold mb-1 ${isMisconfigured ? 'text-amber-900' : 'text-blue-900'}`}>
+              {isMisconfigured ? 'Домен зарегистрирован, но DNS ещё не настроены' : 'Ждём подтверждения DNS'}
+            </h3>
+            <p className={`text-xs ${isMisconfigured ? 'text-amber-800/90' : 'text-blue-800/90'}`}>
+              Чтобы домен заработал — добавьте DNS-записи ниже у вашего регистратора.
+            </p>
+          </div>
+        </div>
       </div>
 
-      <ol className="space-y-3 text-sm text-blue-900">
-        <li>
-          <span className="font-semibold">1.</span> Откройте раздел DNS-управления для домена <code className="bg-white px-1 rounded font-mono">{domain}</code>.
-        </li>
-        <li>
-          <span className="font-semibold">2.</span> Если уже есть записи типа <code className="bg-white px-1 rounded font-mono">A</code> или <code className="bg-white px-1 rounded font-mono">CNAME</code> для имени <code className="bg-white px-1 rounded font-mono">@</code> или <code className="bg-white px-1 rounded font-mono">www</code> — удалите их.
-        </li>
-        <li>
-          <span className="font-semibold">3.</span> Добавьте {records.length === 1 ? 'запись' : 'записи'}:
-        </li>
-      </ol>
+      {/* Предупреждение если DNS не у Reg.ru */}
+      {provider && !provider.isRegRu && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-xs text-orange-900">
+          <p className="font-semibold mb-1">⚠️ Внимание: DNS управляется в <strong>{provider.name}</strong>, а не в Reg.ru</p>
+          <p className="text-orange-800/90 leading-relaxed">
+            У вашего домена сейчас прописаны nameservers: <code className="bg-white px-1 rounded font-mono text-[11px]">{(config?.nameservers || []).join(', ')}</code>.
+            DNS-записи нужно добавлять там, где они сейчас управляются — в {provider.name}, а не в Reg.ru.
+            Либо переключите домен в Reg.ru на reg.ru NS-серверы (ns1.reg.ru / ns2.reg.ru) и тогда настраивайте в Reg.ru.
+          </p>
+        </div>
+      )}
 
-      <div className="space-y-2.5">
-        {records.map((r, i) => (
-          <div key={i} className="bg-white rounded-lg border border-blue-200 p-3">
-            <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
-              <span className="px-2 py-1 rounded bg-blue-100 text-blue-700 text-xs font-bold font-mono w-14 text-center">{r.type}</span>
-              <div className="min-w-0">
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">Имя / Subdomain</div>
-                    <div className="flex items-center gap-1.5">
-                      <code className="font-mono text-gray-900">{r.name}</code>
-                      <button onClick={() => copy(r.name, `n${i}`)} className="text-[10px] text-blue-600 hover:underline">{copied === `n${i}` ? '✓' : 'копировать'}</button>
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">Значение / Value</div>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <code className="font-mono text-gray-900 truncate">{r.value}</code>
-                      <button onClick={() => copy(r.value, `v${i}`)} className="text-[10px] text-blue-600 hover:underline shrink-0">{copied === `v${i}` ? '✓' : 'копировать'}</button>
-                    </div>
+      {/* DNS-записи */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 mb-1">Какие записи добавить</h3>
+          <p className="text-xs text-gray-500">Зайдите в личный кабинет {provider?.name || 'вашего регистратора'} → DNS-управление для <code className="bg-gray-100 px-1 rounded font-mono">{domain}</code> → добавьте {records.length === 1 ? 'эту запись' : 'эти записи'}:</p>
+        </div>
+
+        <div className="space-y-2">
+          {records.map((r, i) => (
+            <div key={i} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="px-2 py-0.5 rounded bg-[#6A55F8] text-white text-[11px] font-bold font-mono">{r.type}</span>
+                {r.hint && <span className="text-[11px] text-gray-500">{r.hint}</span>}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Имя / Subdomain</div>
+                  <div className="flex items-center gap-2 bg-white rounded-md border border-gray-200 px-3 py-2">
+                    <code className="font-mono text-sm text-gray-900 flex-1 truncate">{r.name}</code>
+                    <button onClick={() => copy(r.name, `n${i}`)} className="text-[11px] text-[#6A55F8] hover:underline shrink-0">
+                      {copied === `n${i}` ? '✓ скопировано' : 'копировать'}
+                    </button>
                   </div>
                 </div>
-                {r.hint && <p className="text-[11px] text-gray-500 mt-1.5">{r.hint}</p>}
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Значение / Value</div>
+                  <div className="flex items-center gap-2 bg-white rounded-md border border-gray-200 px-3 py-2 min-w-0">
+                    <code className="font-mono text-sm text-gray-900 flex-1 truncate">{r.value}</code>
+                    <button onClick={() => copy(r.value, `v${i}`)} className="text-[11px] text-[#6A55F8] hover:underline shrink-0">
+                      {copied === `v${i}` ? '✓ скопировано' : 'копировать'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div className="text-xs text-blue-800/90 pt-1 border-t border-blue-200/60 space-y-1.5">
-        <p><span className="font-semibold">4.</span> Сохраните изменения у регистратора.</p>
-        <p><span className="font-semibold">5.</span> Подождите 10–30 минут (DNS кешируется), потом нажмите кнопку <span className="font-semibold">«Проверить статус»</span> ниже.</p>
-        <p><span className="font-semibold">6.</span> Когда статус станет «Подключён» — SSL-сертификат Vercel выдаст автоматически.</p>
-      </div>
-
-      <details className="text-xs text-blue-800/80">
-        <summary className="cursor-pointer font-semibold hover:text-blue-900">Как именно это сделать в Reg.ru</summary>
-        <ol className="mt-2 space-y-1 list-decimal list-inside text-[12px] leading-relaxed">
-          <li>Откройте <a href="https://www.reg.ru" target="_blank" rel="noopener" className="underline">reg.ru</a> и войдите в личный кабинет.</li>
-          <li>В разделе «Мои домены и услуги» нажмите на ваш домен <code className="bg-white px-1 rounded">{domain}</code>.</li>
-          <li>В меню слева выберите «DNS-серверы и управление зоной» (или просто «DNS»).</li>
-          <li>Если домен использует не reg.ru DNS-серверы — переключите на reg.ru DNS (обычно ns1.reg.ru / ns2.reg.ru).</li>
-          <li>Нажмите «Добавить запись», выберите тип (A / CNAME / TXT), вставьте имя и значение из таблицы выше.</li>
-          <li>Повторите для каждой записи. Сохраните.</li>
+        <ol className="text-xs text-gray-700 space-y-1.5 pt-3 border-t border-gray-100 list-decimal list-inside leading-relaxed">
+          <li>Если для имени <code className="bg-gray-100 px-1 rounded">@</code> или <code className="bg-gray-100 px-1 rounded">www</code> уже есть старые записи A/CNAME — удалите их.</li>
+          <li>Сохраните изменения у регистратора.</li>
+          <li>Подождите 10–30 минут — DNS кешируется в интернете.</li>
+          <li>Нажмите кнопку <span className="font-semibold">«Проверить статус»</span> ниже.</li>
+          <li>Когда статус станет «Подключён» — SSL-сертификат выдастся автоматически.</li>
         </ol>
+      </div>
+
+      {/* Гайд по конкретным регистраторам */}
+      <details className="bg-white border border-gray-200 rounded-lg">
+        <summary className="cursor-pointer p-4 text-sm font-semibold text-gray-900 hover:text-[#6A55F8]">
+          Пошаговый гайд для Reg.ru
+        </summary>
+        <div className="px-4 pb-4 text-xs text-gray-600 space-y-2 leading-relaxed">
+          <ol className="space-y-1.5 list-decimal list-inside">
+            <li>Откройте <a href="https://www.reg.ru/user/account" target="_blank" rel="noopener" className="text-[#6A55F8] hover:underline">reg.ru/user/account</a> и войдите.</li>
+            <li>«Мои домены и услуги» → нажмите на <code className="bg-gray-100 px-1 rounded">{domain}</code>.</li>
+            <li>В левом меню выберите <strong>«DNS-серверы и управление зоной»</strong>.</li>
+            <li>Если стоит «Не использовать DNS reg.ru» — переключите на <strong>«Использовать DNS-серверы reg.ru»</strong> и сохраните. Иначе настройки DNS не будут видны.</li>
+            <li>В таблице DNS-записей нажмите <strong>«Добавить запись»</strong>.</li>
+            <li>Выберите тип записи ({records.map(r => r.type).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}), скопируйте «Имя» и «Значение» из таблицы выше.</li>
+            <li>Сохраните. Повторите для каждой записи.</li>
+            <li>DNS обновится за 10–30 минут.</li>
+          </ol>
+          <p className="pt-2 text-gray-500">⚠️ Если у вас домен куплен в Reg.ru, но DNS управляется через другой сервис (как сейчас — {provider?.name || 'другой провайдер'}), нужно либо переключить NS на reg.ru, либо настраивать DNS там, где он сейчас управляется.</p>
+        </div>
       </details>
     </div>
   )

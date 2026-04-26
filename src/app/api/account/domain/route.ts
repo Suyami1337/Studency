@@ -32,12 +32,14 @@ export async function GET() {
 
   let status = a.account.custom_domain_status
   let verification: unknown = null
+  let config: unknown = null
   if (a.account.custom_domain) {
     try {
       const r = await checkVercelDomain(a.account.custom_domain)
       if (r.status !== 'not_found') {
         status = r.status
         verification = r.verification ?? null
+        config = r.config ?? null
         if (status !== a.account.custom_domain_status) {
           await a.supabase.from('account_domains').update({ custom_domain_status: status }).eq('user_id', a.user.id)
         }
@@ -49,6 +51,7 @@ export async function GET() {
     custom_domain: a.account.custom_domain,
     custom_domain_status: status,
     verification,
+    config,
   })
 }
 
@@ -124,6 +127,7 @@ export async function PATCH(request: NextRequest) {
       custom_domain: domain,
       status: vercelResult.status,
       verification: vercelResult.verification,
+      config: vercelResult.config,
     })
   }
 
