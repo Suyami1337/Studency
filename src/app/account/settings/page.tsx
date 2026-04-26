@@ -539,20 +539,6 @@ function buildDnsRecords(
   return out
 }
 
-/** Опознаём какой регистратор/DNS-сервис управляет доменом по nameservers. */
-function detectDnsProvider(nameservers: string[]): { name: string; isRegRu: boolean } | null {
-  if (!nameservers || nameservers.length === 0) return null
-  const ns = nameservers.join(' ').toLowerCase()
-  if (ns.includes('reg.ru')) return { name: 'Reg.ru', isRegRu: true }
-  if (ns.includes('beget')) return { name: 'Beget', isRegRu: false }
-  if (ns.includes('cloudflare')) return { name: 'Cloudflare', isRegRu: false }
-  if (ns.includes('octofunnel')) return { name: 'Octofunnel', isRegRu: false }
-  if (ns.includes('selectel')) return { name: 'Selectel', isRegRu: false }
-  if (ns.includes('yandex')) return { name: 'Яндекс DNS', isRegRu: false }
-  if (ns.includes('hostinger')) return { name: 'Hostinger', isRegRu: false }
-  return { name: nameservers[0].split('.').slice(-2).join('.'), isRegRu: false }
-}
-
 function DnsInstructions({
   domain,
   verification,
@@ -564,7 +550,6 @@ function DnsInstructions({
 }) {
   const records = buildDnsRecords(domain, verification, config)
   const [copied, setCopied] = useState<string | null>(null)
-  const provider = detectDnsProvider(config?.nameservers ?? [])
   const isMisconfigured = config?.misconfigured ?? true
 
   function copy(text: string, key: string) {
@@ -584,29 +569,17 @@ function DnsInstructions({
               {isMisconfigured ? 'Домен зарегистрирован, но DNS ещё не настроены' : 'Ждём подтверждения DNS'}
             </h3>
             <p className={`text-xs ${isMisconfigured ? 'text-amber-800/90' : 'text-blue-800/90'}`}>
-              Чтобы домен заработал — добавьте DNS-записи ниже у вашего регистратора.
+              Чтобы домен заработал — добавьте DNS-записи ниже в личном кабинете Reg.ru.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Предупреждение если DNS не у Reg.ru */}
-      {provider && !provider.isRegRu && (
-        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-xs text-orange-900">
-          <p className="font-semibold mb-1">⚠️ Внимание: DNS управляется в <strong>{provider.name}</strong>, а не в Reg.ru</p>
-          <p className="text-orange-800/90 leading-relaxed">
-            У вашего домена сейчас прописаны nameservers: <code className="bg-white px-1 rounded font-mono text-[11px]">{(config?.nameservers || []).join(', ')}</code>.
-            DNS-записи нужно добавлять там, где они сейчас управляются — в {provider.name}, а не в Reg.ru.
-            Либо переключите домен в Reg.ru на reg.ru NS-серверы (ns1.reg.ru / ns2.reg.ru) и тогда настраивайте в Reg.ru.
-          </p>
-        </div>
-      )}
-
       {/* DNS-записи */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Какие записи добавить</h3>
-          <p className="text-xs text-gray-500">Зайдите в личный кабинет {provider?.name || 'вашего регистратора'} → DNS-управление для <code className="bg-gray-100 px-1 rounded font-mono">{domain}</code> → добавьте {records.length === 1 ? 'эту запись' : 'эти записи'}:</p>
+          <p className="text-xs text-gray-500">Зайдите в личный кабинет Reg.ru → раздел DNS-управления для <code className="bg-gray-100 px-1 rounded font-mono">{domain}</code> → добавьте {records.length === 1 ? 'эту запись' : 'эти записи'}:</p>
         </div>
 
         <div className="space-y-2">
@@ -665,7 +638,7 @@ function DnsInstructions({
             <li>Сохраните. Повторите для каждой записи.</li>
             <li>DNS обновится за 10–30 минут.</li>
           </ol>
-          <p className="pt-2 text-gray-500">⚠️ Если у вас домен куплен в Reg.ru, но DNS управляется через другой сервис (как сейчас — {provider?.name || 'другой провайдер'}), нужно либо переключить NS на reg.ru, либо настраивать DNS там, где он сейчас управляется.</p>
+          <p className="pt-2 text-gray-500">⚠️ Если в кабинете не активен раздел «Управление зоной» — проверьте, что в DNS-серверах выбрано «Бесплатные DNS-серверы Reg.ru» (ns1.reg.ru / ns2.reg.ru). Если стоят чужие NS — DNS управляется не в Reg.ru, и записи надо добавлять там же.</p>
         </div>
       </details>
     </div>
