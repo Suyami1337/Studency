@@ -204,7 +204,7 @@ function SourcesTab({ projectId }: { projectId: string }) {
 
   const appUrl = typeof window !== 'undefined'
     ? window.location.origin
-    : process.env.NEXT_PUBLIC_APP_URL || 'https://studency.vercel.app'
+    : process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru'
 
   async function loadSources() {
     const res = await fetch(`/api/traffic-sources?projectId=${projectId}`)

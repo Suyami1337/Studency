@@ -11,7 +11,7 @@ import { ROOT_DOMAIN } from '@/lib/subdomain'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://studency.vercel.app'
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru'
 
 export async function GET(
   request: NextRequest,

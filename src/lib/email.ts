@@ -2,14 +2,14 @@
 // Docs: https://resend.com/docs
 //
 // Required env var: RESEND_API_KEY
-// Optional env var: RESEND_MASTER_DOMAIN (default: 'studency.app')
+// Optional env var: RESEND_MASTER_DOMAIN (default: 'studency.ru')
 // Optional env var: UNSUBSCRIBE_SECRET (for unsubscribe token HMAC)
 // Optional env var: NEXT_PUBLIC_APP_URL (base URL for unsubscribe links)
 //
 // Архитектура:
 // Все клиенты шлют с одного мастер-домена, но каждый проект имеет свой
 // "friendly name" как отправитель. Почтовый клиент видит:
-//   От: Школа Ивана <noreply@studency.app>
+//   От: Школа Ивана <noreply@studency.ru>
 //
 // Это избавляет клиентов от необходимости настраивать свои DNS/DKIM.
 // Для тех кому нужна полная брендированность — есть возможность
@@ -21,7 +21,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 const RESEND_API = 'https://api.resend.com/emails'
 
 function getMasterDomain(): string {
-  return process.env.RESEND_MASTER_DOMAIN ?? 'studency.app'
+  return process.env.RESEND_MASTER_DOMAIN ?? 'studency.ru'
 }
 
 function getFromAddress(): string {
@@ -57,7 +57,7 @@ export type SendEmailOptions = {
   unsubscribeUrl?: string
   /** Добавить ли футер с unsubscribe и от кого (по умолчанию true) */
   addFooter?: boolean
-  /** Base URL платформы (например https://studency.app) — для построения unsubscribe ссылок */
+  /** Base URL платформы (например https://studency.ru) — для построения unsubscribe ссылок */
   platformUrl?: string
 }
 
@@ -158,7 +158,7 @@ export function buildUnsubscribeToken(projectId: string, email: string): string 
 
 export function buildUnsubscribeUrl(projectId: string, email: string, baseUrl?: string): string {
   const token = buildUnsubscribeToken(projectId, email)
-  const base = baseUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://studency.vercel.app'
+  const base = baseUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://studency.ru'
   return `${base}/api/email/unsubscribe?token=${encodeURIComponent(token)}`
 }
 
