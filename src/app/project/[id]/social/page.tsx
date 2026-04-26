@@ -148,7 +148,7 @@ function TelegramOverview({ projectId, accounts, loading, onReload }: {
           </button>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {accounts.map(acc => <ChannelPreview key={acc.id} projectId={projectId} account={acc} />)}
         </div>
       )}
@@ -162,31 +162,41 @@ function TelegramOverview({ projectId, accounts, loading, onReload }: {
 
 function ChannelPreview({ projectId, account }: { projectId: string; account: SocialAccount }) {
   const meta = account.metadata as { subscribers_count?: number; description?: string }
+  const title = account.external_title ?? account.external_username ?? 'Без названия'
   return (
     <Link
       href={`/project/${projectId}/social/telegram/${account.id}`}
-      className="bg-white rounded-xl border border-gray-100 hover:border-[#6A55F8]/40 hover:shadow-sm transition-all p-4 flex items-center gap-3"
+      className="w-full bg-white rounded-xl border border-gray-100 p-4 transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md"
     >
       <Avatar
-        name={account.external_title ?? account.external_username ?? 'Канал'}
+        name={title}
         seed={account.id}
         photoUrl={account.external_avatar_url}
         size="lg"
       />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="font-semibold text-gray-900 truncate">{account.external_title ?? account.external_username ?? 'Без названия'}</p>
-          {account.mtproto_status === 'connected' && (
-            <span className="text-[10px] uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-semibold">MTProto</span>
-          )}
-          {account.mtproto_status === 'error' && (
-            <span className="text-[10px] uppercase bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-semibold">error</span>
-          )}
-        </div>
-        {account.external_username && <p className="text-xs text-gray-400">{account.external_username}</p>}
-        <p className="text-xs text-gray-500 mt-1">{(meta.subscribers_count ?? 0).toLocaleString('ru-RU')} подписчиков</p>
+        <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{title}</p>
+        <p className="text-xs text-gray-400 font-mono truncate mt-0.5">
+          {account.external_username ? account.external_username : 'Telegram-канал'}
+        </p>
       </div>
-      <span className="text-gray-300 text-lg">→</span>
+      <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+        <div className="text-center">
+          <p className="text-base font-bold text-gray-900 leading-tight">{(meta.subscribers_count ?? 0).toLocaleString('ru-RU')}</p>
+          <p className="text-[10px] text-gray-400 uppercase tracking-wide">подписчиков</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3 flex-shrink-0">
+        {account.mtproto_status === 'connected' && (
+          <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">MTProto</span>
+        )}
+        {account.mtproto_status === 'error' && (
+          <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-red-50 text-red-700 border border-red-200">Ошибка</span>
+        )}
+        <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </div>
     </Link>
   )
 }

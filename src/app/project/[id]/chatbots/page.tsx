@@ -3012,22 +3012,23 @@ export default function ChatbotsPage() {
           <p className="text-sm text-gray-500 mb-6">Создай первый сценарий для этого бота</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {displayScenarios.map(s => (
             <button key={s.id} onClick={() => selectScenario(s.id)}
-              className="w-full bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/30 hover:shadow-sm transition-all text-left">
-              <div className="flex items-center gap-4">
-                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl">💬</div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-gray-900">{s.name}</h3>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      s.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>{s.status === 'active' ? 'Активен' : 'Черновик'}</span>
-                  </div>
-                </div>
+              className="w-full bg-white rounded-xl border border-gray-100 p-4 text-left transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md">
+              <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">💬</div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{s.name}</p>
+                <p className="text-xs text-gray-400 mt-0.5">сценарий чат-бота</p>
               </div>
-              <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                  s.status === 'active' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'
+                }`}>{s.status === 'active' ? 'Активен' : 'Черновик'}</span>
+                <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
             </button>
           ))}
         </div>
@@ -3077,29 +3078,35 @@ function BotsListView({ bots, stats, loading, onSelect }: {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="space-y-2">
           {bots.map(b => {
             const s = stats.get(b.id) ?? { scenarios: 0, subscribers: 0 }
             return (
               <button key={b.id} onClick={() => onSelect(b.id)}
-                className="bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between hover:border-[#6A55F8]/40 hover:shadow-sm transition-all text-left">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-12 h-12 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-2xl flex-shrink-0">🤖</div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className="font-semibold text-gray-900 truncate">{b.name}</h3>
-                      {b.is_active === false && (
-                        <span className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-gray-100 text-gray-500">Отключён</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-500 truncate">@{b.bot_username}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-[11px] text-gray-400">
-                      <span>💬 {s.scenarios} {s.scenarios === 1 ? 'сценарий' : s.scenarios < 5 ? 'сценария' : 'сценариев'}</span>
-                      <span>👥 {s.subscribers} {s.subscribers === 1 ? 'подписчик' : s.subscribers < 5 ? 'подписчика' : 'подписчиков'}</span>
-                    </div>
+                className="w-full bg-white rounded-xl border border-gray-100 p-4 text-left transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md">
+                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">🤖</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{b.name}</p>
+                  <p className="text-xs text-gray-400 font-mono truncate mt-0.5">@{b.bot_username}</p>
+                </div>
+                <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{s.scenarios}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">сценариев</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{s.subscribers}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">подписчиков</p>
                   </div>
                 </div>
-                <svg className="w-5 h-5 text-gray-300 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${b.is_active === false ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+                    {b.is_active === false ? 'Отключён' : 'Активен'}
+                  </span>
+                  <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
               </button>
             )
           })}

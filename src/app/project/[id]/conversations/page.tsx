@@ -100,52 +100,46 @@ export default function ConversationsIndexPage() {
         </button>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {accounts.map(acc => {
           const isPending = acc.status === 'pending_import'
-          const displayName = acc.title ?? acc.telegram_first_name ?? acc.telegram_username ?? 'Аккаунт'
-          const header = (
+          const displayName = acc.title ?? acc.telegram_first_name ?? acc.telegram_username ?? 'Без названия'
+          const subtitle = acc.telegram_username
+            ? `@${acc.telegram_username.replace(/^@/, '')}`
+            : (isPending ? 'Настройка не завершена' : (acc.last_sync_at ? `Обновлено ${new Date(acc.last_sync_at).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано'))
+
+          const badge = isPending ? (
+            <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Настройка</span>
+          ) : acc.status === 'error' ? (
+            <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-red-50 text-red-700 border border-red-200" title={acc.last_error ?? ''}>Ошибка</span>
+          ) : !acc.initial_import_done ? (
+            <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">Импорт</span>
+          ) : (
+            <span className="rounded-full px-2.5 py-1 text-[11px] font-medium bg-green-50 text-green-700 border border-green-200">Активен</span>
+          )
+
+          const inner = (
             <>
-              <Avatar
-                name={displayName}
-                seed={acc.telegram_user_id ?? acc.id}
-                size="lg"
-              />
+              <Avatar name={displayName} seed={acc.telegram_user_id ?? acc.id} size="lg" />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-semibold text-gray-900 truncate">
-                    {acc.title ?? acc.telegram_first_name ?? acc.telegram_username ?? 'Без названия'}
-                  </p>
-                  {acc.telegram_username && (
-                    <span className="text-xs text-gray-400">@{acc.telegram_username.replace(/^@/, '')}</span>
-                  )}
-                  {acc.status === 'error' && (
-                    <span className="text-[10px] uppercase bg-red-50 text-red-700 border border-red-200 px-1.5 py-0.5 rounded font-semibold" title={acc.last_error ?? ''}>Ошибка</span>
-                  )}
-                  {isPending && (
-                    <span className="text-[10px] uppercase bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-semibold">Настройка не завершена</span>
-                  )}
-                  {!isPending && !acc.initial_import_done && acc.status === 'active' && (
-                    <span className="text-[10px] uppercase bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-semibold">Импорт</span>
-                  )}
-                </div>
-                {acc.description && <p className="text-xs text-gray-500 truncate mt-0.5">{acc.description}</p>}
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {isPending
-                    ? 'Выбери режим работы чтобы начать'
-                    : (acc.last_sync_at ? `Обновлено ${new Date(acc.last_sync_at).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано')
-                  }
-                </p>
+                <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{displayName}</p>
+                <p className="text-xs text-gray-400 font-mono truncate mt-0.5">{subtitle}</p>
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {badge}
+                <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
             </>
           )
 
+          const baseClass = 'w-full bg-white rounded-xl border border-gray-100 p-4 transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md'
+
           if (isPending) {
             return (
-              <button key={acc.id} onClick={() => rescuePending(acc.id)}
-                className="w-full bg-white rounded-xl border border-amber-200 hover:border-amber-300 hover:shadow-sm transition-all p-4 flex items-center gap-4 text-left">
-                {header}
-                <span className="text-amber-600 text-sm font-medium whitespace-nowrap">Активировать →</span>
+              <button key={acc.id} onClick={() => rescuePending(acc.id)} className={`${baseClass} text-left`}>
+                {inner}
               </button>
             )
           }
@@ -153,9 +147,8 @@ export default function ConversationsIndexPage() {
           return (
             <Link key={acc.id} href={`/project/${projectId}/conversations/${acc.id}`}
               onClick={() => { if (typeof window !== 'undefined') localStorage.setItem(`conversations_last_${projectId}`, acc.id) }}
-              className="bg-white rounded-xl border border-gray-100 hover:border-[#6A55F8]/40 hover:shadow-sm transition-all p-4 flex items-center gap-4 block">
-              {header}
-              <span className="text-gray-300 text-lg">→</span>
+              className={baseClass}>
+              {inner}
             </Link>
           )
         })}
