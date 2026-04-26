@@ -169,6 +169,17 @@ export async function middleware(request: NextRequest) {
     const isAdminPath = ADMIN_PATHS.has(firstSeg)
     const isAuthed = hasAuthCookie(request)
 
+    // /account — настройки аккаунта (level 1) рендерятся на любом host'е
+    if (firstSeg === 'account') {
+      if (!isAuthed) {
+        const fullUrl = `${request.nextUrl.protocol}//${host}${pathname}${request.nextUrl.search}`
+        const loginUrl = new URL(`https://${ROOT_DOMAIN}/login`)
+        loginUrl.searchParams.set('next', fullUrl)
+        return NextResponse.redirect(loginUrl, 302)
+      }
+      return NextResponse.next()
+    }
+
     // Root path авторизованного юзера → admin dashboard проекта
     if (pathname === '/' && isAuthed) {
       const projectId = await resolveProjectIdBySubdomain(sub)

@@ -152,7 +152,7 @@ export default function SettingsPage() {
   const projectId = params.id as string
   const supabase = createClient()
 
-  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'domain' | 'fields'>('integrations')
+  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'domain' | 'fields' | 'danger'>('integrations')
   const [bots, setBots] = useState<TelegramBot[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -211,6 +211,7 @@ export default function SettingsPage() {
     { id: 'fields' as const, label: 'Поля клиента' },
     { id: 'profile' as const, label: 'Профиль' },
     { id: 'domain' as const, label: 'Домен' },
+    { id: 'danger' as const, label: 'Опасная зона' },
   ]
 
   return (
@@ -294,6 +295,107 @@ export default function SettingsPage() {
       )}
 
       {activeTab === 'domain' && <DomainTab projectId={projectId} />}
+
+      {activeTab === 'danger' && <DangerTab projectId={projectId} />}
+    </div>
+  )
+}
+
+// =============================================================================
+// DANGER TAB — удаление проекта
+// =============================================================================
+function DangerTab({ projectId }: { projectId: string }) {
+  const [projectName, setProjectName] = useState('')
+  const [confirmText, setConfirmText] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState('')
+  const supabase = createClient()
+
+  useEffect(() => {
+    supabase.from('projects').select('name').eq('id', projectId).single().then(({ data }) => {
+      setProjectName(data?.name ?? '')
+    })
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [projectId])
+
+  async function handleDelete() {
+    setDeleting(true)
+    setError('')
+    const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      setError(j.error || 'Не удалось удалить проект')
+      setDeleting(false)
+      return
+    }
+    // На субдомене удалённого проекта оставаться нельзя — отправляем на главную с проектами
+    window.location.assign(`https://${ROOT_DOMAIN}/projects`)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-red-200 p-5">
+        <h2 className="text-base font-semibold text-red-700 mb-1">Удалить проект</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Будут удалены все данные проекта: клиенты, лендинги, боты, заказы, рассылки,
+          подключённые домены. Действие необратимо.
+        </p>
+
+        {!confirming ? (
+          <button
+            onClick={() => setConfirming(true)}
+            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
+          >
+            Удалить проект
+          </button>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                Введите название проекта <code className="bg-gray-100 px-1 rounded font-mono">{projectName}</code> для подтверждения
+              </label>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={e => setConfirmText(e.target.value)}
+                autoFocus
+                placeholder={projectName}
+                className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
+              />
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={handleDelete}
+                disabled={confirmText !== projectName || deleting}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting ? 'Удаляем...' : 'Подтвердить удаление'}
+              </button>
+              <button
+                onClick={() => { setConfirming(false); setConfirmText(''); setError('') }}
+                className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Настройки аккаунта</h2>
+        <p className="text-sm text-gray-600 mb-3">
+          Управление аккаунтом и удаление аккаунта целиком — на странице настроек аккаунта.
+        </p>
+        <a
+          href="/account/settings"
+          className="inline-block px-4 py-2 rounded-lg bg-white border border-gray-200 hover:border-[#6A55F8]/30 text-sm font-medium text-gray-700 hover:text-[#6A55F8] transition-colors"
+        >
+          Перейти в настройки аккаунта →
+        </a>
+      </div>
     </div>
   )
 }

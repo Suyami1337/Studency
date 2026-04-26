@@ -148,9 +148,20 @@ export default function ProjectsPage() {
             <h1 className="text-2xl font-bold text-gray-900">Мои проекты</h1>
             <p className="text-sm text-gray-500">Выберите проект или создайте новый</p>
           </div>
-          <button onClick={handleLogout} className="text-sm text-gray-400 hover:text-gray-600 transition-colors">
-            Выйти
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href="/account/settings"
+              className="px-3 py-2 rounded-lg bg-white border border-gray-200 hover:border-[#6A55F8]/30 text-sm font-medium text-gray-700 hover:text-[#6A55F8] transition-colors"
+            >
+              ⚙️ Аккаунт
+            </a>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+            >
+              Выйти
+            </button>
+          </div>
         </div>
 
         <div className="space-y-3">

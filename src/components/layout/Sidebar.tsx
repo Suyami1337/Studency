@@ -134,7 +134,7 @@ export default function Sidebar({ projectName }: { projectName?: string }) {
         ))}
       </nav>
 
-      <div className="px-3 py-3 border-t border-gray-100">
+      <div className="px-3 py-3 border-t border-gray-100 space-y-0.5">
         {bottomItems.map((item) => {
           const isActive = active === item.id
           return (
@@ -153,6 +153,22 @@ export default function Sidebar({ projectName }: { projectName?: string }) {
             </Link>
           )
         })}
+
+        <Link
+          href="/account/settings"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-all"
+        >
+          <span className="text-base">👤</span>
+          <span>Аккаунт</span>
+        </Link>
+
+        <a
+          href="/api/auth/global-logout"
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all"
+        >
+          <span className="text-base">🚪</span>
+          <span>Выйти</span>
+        </a>
       </div>
     </aside>
   )
