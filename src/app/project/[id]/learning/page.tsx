@@ -730,9 +730,9 @@ export default function LearningPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Обучение</h1>
-          <p className="text-sm text-gray-500">Курсы и учебные материалы</p>
+          <p className="text-sm text-gray-500 mt-0.5">Курсы и учебные материалы</p>
         </div>
-        <button onClick={() => setAdding(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium">+ Создать курс</button>
+        <button onClick={() => setAdding(true)} className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">+ Создать курс</button>
       </div>
 
       <Modal
@@ -771,18 +771,35 @@ export default function LearningPage() {
           <p className="text-sm text-gray-500">Создайте первый курс</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
           {courses.map(course => (
             <button key={course.id} onClick={() => selectCourse(course.id)}
-              className="bg-white rounded-xl border border-gray-100 p-5 text-left hover:border-[#6A55F8]/30 hover:shadow-sm transition-all">
-              <div className="flex items-start justify-between mb-2">
-                <h3 className="font-semibold text-gray-900">{course.name}</h3>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${course.is_published ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+              className="w-full bg-white rounded-xl border border-gray-100 p-4 text-left transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md">
+              <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">📚</div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{course.name}</p>
+                <p className="text-xs text-gray-400 truncate mt-0.5">
+                  {(() => {
+                    const mc = course.module_count ?? 0
+                    if (course.description) return course.description
+                    return `${mc} ${mc === 1 ? 'модуль' : mc < 5 ? 'модуля' : 'модулей'}`
+                  })()}
+                </p>
+              </div>
+              <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+                <div className="text-center">
+                  <p className="text-base font-bold text-gray-900 leading-tight">{course.module_count ?? 0}</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">модулей</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${course.is_published ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-500'}`}>
                   {course.is_published ? 'Опубликован' : 'Черновик'}
                 </span>
+                <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
-              {course.description && <p className="text-sm text-gray-500 mb-2 line-clamp-2">{course.description}</p>}
-              <p className="text-xs text-gray-400">{course.module_count} модулей</p>
             </button>
           ))}
         </div>

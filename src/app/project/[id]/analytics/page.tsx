@@ -106,10 +106,15 @@ function OverviewTab({ projectId }: { projectId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadAll() }, [projectId])
 
-  if (loading) return <div className="p-6"><SkeletonList count={3} /></div>
+  if (loading) return <div className="space-y-6"><SkeletonList count={3} /></div>
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Аналитика</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Сводка по клиентам, заказам, выручке и сайтам</p>
+      </div>
+
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard label="Клиентов" value={totalCustomers} icon="👥" />
         <StatCard label="Заказов" value={totalOrders} icon="🧾" />

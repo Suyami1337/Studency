@@ -960,29 +960,36 @@ export default function ProductsPage() {
           <p className="text-sm text-gray-500">Создайте первый продукт, нажав кнопку выше</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.map(p => (
-            <button
-              key={p.id}
-              onClick={() => selectProduct(p.id)}
-              className="text-left bg-white rounded-xl border border-gray-100 p-5 hover:border-[#8B7BFA] hover:shadow-md transition-all group"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-lg font-bold"
-                  style={{ backgroundColor: '#6A55F8' }}
-                >
-                  {p.name[0]?.toUpperCase()}
+        <div className="space-y-2">
+          {products.map(p => {
+            const tariffCount = tariffCounts[p.id] ?? 0
+            return (
+              <button
+                key={p.id}
+                onClick={() => selectProduct(p.id)}
+                className="w-full bg-white rounded-xl border border-gray-100 p-4 text-left transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md"
+              >
+                <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">📦</div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{p.name}</p>
+                  <p className="text-xs text-gray-400 truncate mt-0.5">
+                    {p.description ? p.description : pluralTariff(tariffCount)}
+                  </p>
                 </div>
-                <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
-              <h3 className="font-semibold text-gray-900 mb-1">{p.name}</h3>
-              {p.description && <p className="text-sm text-gray-500 mb-2 line-clamp-2">{p.description}</p>}
-              <p className="text-xs text-gray-400">{pluralTariff(tariffCounts[p.id] ?? 0)}</p>
-            </button>
-          ))}
+                <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
+                  <div className="text-center">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{tariffCount}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">тарифов</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <svg className="w-4 h-4 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </button>
+            )
+          })}
         </div>
       )}
     </div>

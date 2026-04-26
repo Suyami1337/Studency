@@ -1139,13 +1139,11 @@ export default function SitesPage() {
   }
 
   return (
-    <div className="p-6">
-      <LandingsList
-        projectId={projectId}
-        publicHost={publicHost}
-        onSelect={(l) => selectLanding(l.id)}
-        onLandingsLoaded={setLandingsList}
-      />
-    </div>
+    <LandingsList
+      projectId={projectId}
+      publicHost={publicHost}
+      onSelect={(l) => selectLanding(l.id)}
+      onLandingsLoaded={setLandingsList}
+    />
   )
 }
