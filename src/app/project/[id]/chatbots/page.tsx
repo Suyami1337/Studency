@@ -515,7 +515,39 @@ function MessageCard({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const _suppress = { onAddButton, onDeleteButton, onUpdateButton } // оставлено для обратной совместимости — не используется внутри карточки
 
-  const buttonsDirty = Object.keys(buttonDraft).length > 0 || newButtons.length > 0 || deletedButtonIds.size > 0
+  // Когда props.buttons обновятся (после reload родителя), автоматически чистим
+  // draft от полей, чьи значения уже совпадают с saved. Это устраняет race
+  // condition при котором сразу после save UI мог моргнуть старым значением.
+  React.useEffect(() => {
+    setButtonDraft(prev => {
+      let changed = false
+      const next: typeof prev = {}
+      for (const [id, data] of Object.entries(prev)) {
+        const saved = buttons.find(b => b.id === id)
+        if (!saved) { changed = true; continue }
+        const filtered: Partial<Button> = {}
+        let hasDiff = false
+        for (const [k, v] of Object.entries(data)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if ((saved as any)[k] !== v) { (filtered as any)[k] = v; hasDiff = true }
+        }
+        if (hasDiff) next[id] = filtered
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [buttons])
+
+  // Считаем что draft "грязный" только если хоть одно поле реально отличается
+  // от saved. Это защищает от ложных isDirty=true когда save прошёл, но draft
+  // ещё не успел очиститься useEffect'ом.
+  const buttonDraftDirty = Object.entries(buttonDraft).some(([id, data]) => {
+    const saved = buttons.find(b => b.id === id)
+    if (!saved) return false
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return Object.entries(data).some(([k, v]) => (saved as any)[k] !== v)
+  })
+  const buttonsDirty = buttonDraftDirty || newButtons.length > 0 || deletedButtonIds.size > 0
   const isDirty = Object.keys(draft).length > 0 || followupsDirty || buttonsDirty
   const e = { ...msg, ...draft } // effective message values
 
@@ -641,6 +673,7 @@ function MessageCard({
         await supabase.from('scenario_buttons').delete().eq('id', id)
       }
       for (const [id, data] of Object.entries(buttonDraft)) {
+        if (Object.keys(data).length === 0) continue
         await supabase.from('scenario_buttons').update(data).eq('id', id)
       }
       // insert новых — берём максимальный order_position у оставшихся как стартовый offset
@@ -662,7 +695,9 @@ function MessageCard({
         })
         pos++
       }
-      setButtonDraft({})
+      // newButtons и deletedButtonIds сразу чистим — они не имеют смысла после save.
+      // buttonDraft НЕ чистим — useEffect почистит сам когда parent.load() вернёт
+      // обновлённые buttons. Это исключает race condition с моргающим UI.
       setNewButtons([])
       setDeletedButtonIds(new Set())
       // триггерим reload родителя — новые кнопки получат реальные id
