@@ -77,13 +77,23 @@ export async function middleware(request: NextRequest) {
   // Главный домен (studency.ru / www / localhost / vercel.app)
   // ─────────────────────────────────────────────────────────────────────
   if (isRootHost(host)) {
+    // Публичные маршруты — не требуют авторизации, не редиректятся на /login.
+    // ВАЖНО: /btn/ (трекинг кликов из бота), /go/ (короткие ссылки),
+    // /gate/ (subscription gate), /s/ (legacy slug), /unsubscribe — все
+    // должны быть доступны клиентам бота без логина.
     if (
       pathname.startsWith('/_next') ||
       pathname.startsWith('/api') ||
       pathname.startsWith('/s/') ||
+      pathname.startsWith('/btn/') ||
+      pathname.startsWith('/go/') ||
+      pathname.startsWith('/gate/') ||
+      pathname.startsWith('/unsubscribe') ||
       pathname.startsWith('/pub') ||
       pathname.startsWith('/templates/') ||
-      pathname === '/favicon.ico'
+      pathname === '/favicon.ico' ||
+      pathname === '/robots.txt' ||
+      pathname === '/sitemap.xml'
     ) {
       return NextResponse.next()
     }
