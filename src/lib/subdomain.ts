@@ -13,7 +13,11 @@ const RESERVED = new Set([
   'legal', 'pricing', 'auth', 'login', 'signup', 'register', 'logout',
   'dashboard', 'settings', 'account', 'billing', 'invoice',
   // Наши служебные пути (не должны конфликтовать с роутами)
-  's', 'pub', 'go', 'unsubscribe', 'gate', 'btn',
+  's', 'pub', 'go', 'unsubscribe', 'gate', 'btn', 'project', 'projects',
+  // Admin-разделы лк проекта — не могут быть subdomain'ом, иначе пути ломаются
+  'sites', 'crm', 'chatbots', 'funnels', 'analytics', 'users',
+  'media', 'videos', 'learning', 'journal', 'broadcasts',
+  'conversations', 'orders',
   // Зарезервировано на будущее
   'studency', 'studencyapp', 'platform',
 ])
