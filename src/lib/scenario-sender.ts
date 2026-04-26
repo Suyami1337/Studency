@@ -254,7 +254,7 @@ export async function sendScenarioMessage(
         const gateText = msg.text || 'Подпишись на канал, чтобы получить следующее сообщение 👇'
         // Оборачиваем через прокси /gate/<msgId> чтобы трекать клики
         // ?to=<username> включает fast-path (редирект без БД-lookup, лог асинхронно)
-        const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+        const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru').replace(/\/$/, '')
         const qs = new URLSearchParams()
         qs.set('to', username!)
         if (customer?.id) qs.set('c', customer.id)
@@ -318,7 +318,7 @@ export async function sendScenarioMessage(
     .order('order_position')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru').replace(/\/$/, '')
 
   // Находим customer_id для прокси-трекинга кликов.
   // В chatbot_conversations.customer_id обычно уже заполнен webhook'ом при /start,

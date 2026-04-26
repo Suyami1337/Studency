@@ -84,7 +84,7 @@ export async function GET(_request: NextRequest) {
               }
             }
           } catch { /* ignore */ }
-          const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.studency.ru').replace(/\/$/, '')
+          const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://studency.ru').replace(/\/$/, '')
           const { loadFollowupButtons } = await import('@/lib/scenario-sender')
           const fuButtons = await loadFollowupButtons(supabase, followup.id, customerIdForClicks, appUrl)
           await sendFollowupContent(item.bot_token, item.chat_id, followup, fuButtons)

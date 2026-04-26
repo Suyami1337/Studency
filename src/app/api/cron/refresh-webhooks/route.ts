@@ -34,8 +34,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Строим base URL так же как в /api/telegram/setup
-  let baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
-  baseUrl = baseUrl.replace('://studency.ru', '://www.studency.ru').replace(/\/$/, '')
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin).replace(/\/$/, '')
 
   let updated = 0
   let failed = 0

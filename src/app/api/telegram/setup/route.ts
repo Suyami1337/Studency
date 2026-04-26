@@ -38,10 +38,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
-    // Set webhook — используем www-версию домена (studency.ru редиректит 307, Telegram не следует)
-    let baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
-    // Если домен без www — добавляем www чтобы избежать 307 redirect
-    baseUrl = baseUrl.replace('://studency.ru', '://www.studency.ru')
+    // Set webhook — используем NEXT_PUBLIC_APP_URL (https://studency.ru без www).
+    // Раньше тут была костыльная замена на www-версию, но сейчас www редиректит
+    // на non-www, и Telegram теряет updates на 308 redirect.
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin).replace(/\/$/, '')
     const webhookUrl = `${baseUrl}/api/telegram/webhook?token=${token}`
 
     const webhookResult = await setTelegramWebhook(token, webhookUrl)
