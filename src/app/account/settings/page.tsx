@@ -304,14 +304,20 @@ function DomainTab() {
   const [domainSaving, setDomainSaving] = useState(false)
   const [domainError, setDomainError] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState<{ kind: 'ok' | 'wait'; text: string } | null>(null)
 
-  async function load() {
-    setLoading(true)
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true)
     const res = await fetch('/api/account/domain')
     const j = await res.json()
-    setState(j)
-    setSubInput(j.subdomain ?? '')
-    setLoading(false)
+    setState(prev => {
+      // Если данные не изменились — не пере-сетим (избегаем лишний перерендер).
+      if (prev && JSON.stringify(prev) === JSON.stringify(j)) return prev
+      return j
+    })
+    setSubInput(prev => prev || (j.subdomain ?? ''))
+    if (!opts?.silent) setLoading(false)
+    return j as DomainState
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
@@ -330,7 +336,7 @@ function DomainTab() {
     if (!res.ok) { setSubError(j.error || 'Не удалось сохранить'); setSubSaving(false); return }
     setEditingSub(false)
     setSubSaving(false)
-    await load()
+    await load({ silent: true })
   }
 
   async function attachDomain() {
@@ -346,13 +352,21 @@ function DomainTab() {
     if (!res.ok) { setDomainError(j.error || 'Не удалось добавить домен'); setDomainSaving(false); return }
     setDomainInput('')
     setDomainSaving(false)
-    await load()
+    await load({ silent: true })
   }
 
   async function refreshDomainStatus() {
     setRefreshing(true)
-    await load()
+    setRefreshMsg(null)
+    const fresh = await load({ silent: true })
+    const isVerified = fresh?.custom_domain_status === 'verified' && !fresh?.config?.misconfigured
+    if (isVerified) {
+      setRefreshMsg({ kind: 'ok', text: '✓ Домен успешно подключён!' })
+    } else {
+      setRefreshMsg({ kind: 'wait', text: 'DNS пока не отвечают. Попробуйте через 1–2 минуты.' })
+    }
     setRefreshing(false)
+    setTimeout(() => setRefreshMsg(null), 6000)
   }
 
   async function detachDomain() {
@@ -455,11 +469,33 @@ function DomainTab() {
               </div>
             )}
 
-            <div className="flex gap-2">
-              <button onClick={refreshDomainStatus} disabled={refreshing} className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50">
-                {refreshing ? 'Проверяем...' : 'Проверить статус'}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={refreshDomainStatus}
+                disabled={refreshing}
+                className="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-60 inline-flex items-center gap-2 transition-colors"
+              >
+                {refreshing && (
+                  <svg className="w-3.5 h-3.5 animate-spin text-[#6A55F8]" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+                    <path d="M12 2a10 10 0 0110 10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                  </svg>
+                )}
+                {refreshing ? 'Проверяем DNS...' : 'Проверить статус'}
               </button>
               <button onClick={detachDomain} className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg">Отключить</button>
+
+              {refreshMsg && (
+                <span
+                  className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-opacity ${
+                    refreshMsg.kind === 'ok'
+                      ? 'bg-green-50 text-green-700 border border-green-200'
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {refreshMsg.text}
+                </span>
+              )}
             </div>
           </div>
         )}
