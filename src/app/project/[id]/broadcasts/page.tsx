@@ -727,6 +727,14 @@ export default function BroadcastsPage() {
         <div className="space-y-2">
           {filteredBroadcasts.map(b => {
             const sl = statusLabel(b.status)
+            const dateLabel = b.sent_at
+              ? `Отправлено ${new Date(b.sent_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+              : b.scheduled_at
+              ? `⏰ ${new Date(b.scheduled_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+              : `Создано ${new Date(b.created_at).toLocaleString('ru', { day: '2-digit', month: 'short' })}`
+            const conversion = b.sent_count > 0 && b.total_recipients > 0
+              ? Math.round((b.sent_count / b.total_recipients) * 100)
+              : null
             return (
               <div key={b.id}
                 onClick={() => {
@@ -735,36 +743,45 @@ export default function BroadcastsPage() {
                 }}
                 className="w-full bg-white rounded-xl border border-gray-100 p-4 transition-all group flex items-center gap-4 hover:border-[#6A55F8]/40 hover:shadow-md cursor-pointer">
                 <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-[#6A55F8] text-xl flex-shrink-0">📢</div>
+
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{b.name}</p>
-                  <p className="text-xs text-gray-400 truncate mt-0.5">
-                    {b.text ? stripHtml(b.text) : segmentLabel(b)}
-                  </p>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className="font-semibold text-gray-900 truncate group-hover:text-[#6A55F8] transition-colors">{b.name}</p>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${sl.color}`}>{sl.label}</span>
+                  </div>
+                  {b.text && (
+                    <p className="text-xs text-gray-500 truncate">{stripHtml(b.text)}</p>
+                  )}
+                  <div className="flex items-center gap-3 text-[11px] text-gray-400 mt-1 flex-wrap">
+                    <span>{b.channel === 'telegram' ? '💬 Telegram' : b.channel === 'email' ? '✉️ Email' : '📢 TG + Email'}</span>
+                    <span>·</span>
+                    <span>{segmentLabel(b)}</span>
+                    <span>·</span>
+                    <span>{dateLabel}</span>
+                  </div>
                 </div>
 
-                <div className="hidden sm:flex items-center gap-6 flex-shrink-0">
-                  {b.sent_count > 0 ? (
-                    <>
-                      <div className="text-center">
-                        <p className="text-base font-bold text-gray-900 leading-tight">{b.sent_count}</p>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide">отправлено</p>
-                      </div>
-                      <div className="text-center">
-                        <p className={`text-base font-bold leading-tight ${b.failed_count > 0 ? 'text-red-500' : 'text-gray-900'}`}>{b.failed_count}</p>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide">ошибок</p>
-                      </div>
-                    </>
-                  ) : b.status === 'scheduled' && b.scheduled_at ? (
-                    <div className="text-right">
-                      <p className="text-xs font-medium text-indigo-600 leading-tight">⏰ {new Date(b.scheduled_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide mt-0.5">запланировано</p>
-                    </div>
-                  ) : null}
+                <div className="hidden md:flex items-center gap-5 flex-shrink-0">
+                  <div className="text-center min-w-[50px]">
+                    <p className="text-base font-bold text-gray-900 leading-tight">{b.total_recipients || 0}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">получателей</p>
+                  </div>
+                  <div className="text-center min-w-[50px]">
+                    <p className="text-base font-bold text-gray-900 leading-tight">
+                      {b.sent_count}
+                      {conversion !== null && b.total_recipients > 0 && (
+                        <span className="text-[10px] font-normal text-gray-400 ml-1">({conversion}%)</span>
+                      )}
+                    </p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">отправлено</p>
+                  </div>
+                  <div className="text-center min-w-[50px]">
+                    <p className={`text-base font-bold leading-tight ${b.failed_count > 0 ? 'text-red-500' : 'text-gray-300'}`}>{b.failed_count}</p>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">ошибок</p>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${sl.color}`}>{sl.label}</span>
-
                   {b.status === 'draft' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleSend(b.id) }}

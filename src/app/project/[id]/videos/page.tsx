@@ -116,15 +116,15 @@ export default function VideosPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Видеохостинг</h1>
+          <h1 className="text-xl font-bold text-gray-900">Видеохостинг</h1>
           <p className="text-sm text-gray-500 mt-0.5">Загрузка и аналитика видео</p>
         </div>
         {tab === 'videos' && (
-          <label className="px-4 py-2 bg-[#6A55F8] text-white text-sm font-medium rounded-lg hover:bg-[#5845e0] cursor-pointer flex items-center gap-2">
+          <label className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer">
             <input
               ref={fileInputRef}
               type="file"
@@ -139,7 +139,7 @@ export default function VideosPage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-100 mb-5">
+      <div className="border-b border-gray-100">
         <div className="flex gap-1">
           {[
             { id: 'videos', label: '🎬 Видео' },

@@ -563,17 +563,16 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Заказы</h1>
+          <h1 className="text-xl font-bold text-gray-900">Заказы</h1>
           <p className="text-sm text-gray-500 mt-0.5">{orders.length} заказ{orders.length === 1 ? '' : orders.length < 5 ? 'а' : 'ов'}</p>
         </div>
         <button
           onClick={() => setShowCreate(v => !v)}
-          className="px-4 py-2.5 rounded-xl text-sm font-medium text-white shadow-sm"
-          style={{ backgroundColor: '#6A55F8' }}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           + Создать заказ
         </button>

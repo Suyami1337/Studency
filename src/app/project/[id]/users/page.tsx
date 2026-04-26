@@ -637,19 +637,18 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Клиенты</h1>
+          <h1 className="text-xl font-bold text-gray-900">Клиенты</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {customers.length} {customers.length === 1 ? 'клиент' : customers.length < 5 ? 'клиента' : 'клиентов'}
           </p>
         </div>
         <button
           onClick={() => setShowCreate(v => !v)}
-          className="px-4 py-2.5 rounded-xl text-sm font-medium text-white shadow-sm"
-          style={{ backgroundColor: '#6A55F8' }}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           + Добавить клиента
         </button>

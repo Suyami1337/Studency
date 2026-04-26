@@ -198,15 +198,15 @@ export default function JournalPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-gray-900">Журнал событий</h1>
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Журнал событий</h1>
         <p className="text-sm text-gray-500 mt-0.5">Все действия клиентов в реальном времени</p>
       </div>
 
       {/* Filters bar */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 mb-4 space-y-3">
+      <div className="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
         {/* Search + Source */}
         <div className="flex gap-3 flex-wrap">
           <input

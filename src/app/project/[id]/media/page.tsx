@@ -169,15 +169,15 @@ export default function MediaPage() {
   ]
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Хранилище</h1>
-        <p className="text-sm text-gray-500">Все файлы проекта — фото, видео, аудио, документы</p>
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">Хранилище</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Все файлы проекта — фото, видео, аудио, документы</p>
       </div>
 
       {/* Storage usage */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5 mb-5">
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-gray-700">Использовано места</span>
           <span className="text-sm text-gray-500">
@@ -194,7 +194,7 @@ export default function MediaPage() {
       </div>
 
       {/* Filters + Upload */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           {types.map(t => (
             <button
