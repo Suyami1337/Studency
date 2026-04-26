@@ -37,23 +37,21 @@ export async function GET(
   const { data: project } = await projectQuery.maybeSingle()
   if (!project) return notFoundResponse()
 
-  // Path → slug. Пустой путь = главная страница (первый published лендинг).
+  // Лендинги доступны ТОЛЬКО по конкретному slug'у. Пустой путь (root
+  // субдомена) = 404 — у школы нет автоматической главной страницы,
+  // ученики приходят по конкретной ссылке которую им дали.
   const slug = (path && path.length > 0 ? path[0] : '').toLowerCase()
+  if (!slug) return notFoundResponse()
 
-  let landingQuery = supabase
+  const { data: landing } = await supabase
     .from('landings')
     .select('id, slug, status, name, meta_title, meta_description, is_mini_app, project_id, is_blocks_based, html_content')
     .eq('project_id', project.id)
     .eq('status', 'published')
+    .eq('slug', slug)
+    .limit(1)
+    .maybeSingle()
 
-  if (slug) {
-    landingQuery = landingQuery.eq('slug', slug).limit(1)
-  } else {
-    // Главная — первый созданный published landing проекта
-    landingQuery = landingQuery.order('created_at', { ascending: true }).limit(1)
-  }
-
-  const { data: landing } = await landingQuery.maybeSingle()
   if (!landing) return notFoundResponse()
 
   return renderLandingResponse(landing as PublicLanding, supabase, BASE_URL)
