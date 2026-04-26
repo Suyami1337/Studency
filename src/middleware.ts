@@ -163,12 +163,14 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Admin-routing на subdomain'е (только для авторизованных)
+  // Admin-routing на subdomain'е
   if (sub) {
     const firstSeg = pathname.split('/').filter(Boolean)[0] || ''
+    const isAdminPath = ADMIN_PATHS.has(firstSeg)
+    const isAuthed = hasAuthCookie(request)
 
     // Root path авторизованного юзера → admin dashboard проекта
-    if (pathname === '/' && hasAuthCookie(request)) {
+    if (pathname === '/' && isAuthed) {
       const projectId = await resolveProjectIdBySubdomain(sub)
       if (projectId) {
         const url = request.nextUrl.clone()
@@ -178,13 +180,21 @@ export async function middleware(request: NextRequest) {
     }
 
     // Admin-разделы (sites, crm, etc) для авторизованных
-    if (ADMIN_PATHS.has(firstSeg) && hasAuthCookie(request)) {
+    if (isAdminPath && isAuthed) {
       const projectId = await resolveProjectIdBySubdomain(sub)
       if (projectId) {
         const url = request.nextUrl.clone()
         url.pathname = `/project/${projectId}${pathname}`
         return NextResponse.rewrite(url)
       }
+    }
+
+    // Admin-разделы для НЕавторизованного → редирект на main login с next
+    if (isAdminPath && !isAuthed) {
+      const fullUrl = `${request.nextUrl.protocol}//${host}${pathname}${request.nextUrl.search}`
+      const loginUrl = new URL(`https://${ROOT_DOMAIN}/login`)
+      loginUrl.searchParams.set('next', fullUrl)
+      return NextResponse.redirect(loginUrl, 302)
     }
   }
 

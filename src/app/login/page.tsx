@@ -1,16 +1,35 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  const next = searchParams.get('next') || ''
+
+  // Если next ведёт на наш subdomain (sub.studency.ru/...) — после логина
+  // нужен handoff (cookie на main не виден на subdomain). Иначе обычный push.
+  function isSubdomainNext(url: string): boolean {
+    try {
+      const u = new URL(url)
+      const root = (process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru').toLowerCase()
+      const h = u.hostname.toLowerCase()
+      const suffix = `.${root}`
+      if (!h.endsWith(suffix)) return false
+      const sub = h.slice(0, h.length - suffix.length)
+      return Boolean(sub) && !sub.includes('.') && sub !== 'www'
+    } catch {
+      return false
+    }
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -24,6 +43,17 @@ export default function LoginPage() {
         ? 'Неверный email или пароль'
         : error.message)
       setLoading(false)
+      return
+    }
+
+    if (next && isSubdomainNext(next)) {
+      // Cookie main-домена не доступна на subdomain'е — отправляем через handoff
+      window.location.assign(`/api/auth/handoff-redirect?next=${encodeURIComponent(next)}`)
+      return
+    }
+
+    if (next && next.startsWith('/')) {
+      router.push(next)
       return
     }
 
@@ -43,6 +73,12 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
           <h2 className="text-lg font-semibold text-gray-900 mb-6">Вход в аккаунт</h2>
+
+          {next && isSubdomainNext(next) && (
+            <div className="mb-4 p-3 rounded-lg bg-[#F0EDFF] border border-[#D9D2FF] text-sm text-[#4A3FB8]">
+              Войдите, чтобы продолжить — после входа вернём вас обратно.
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
@@ -86,11 +122,24 @@ export default function LoginPage() {
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
             <p className="text-sm text-gray-500">
               Нет аккаунта?{' '}
-              <a href="/register" className="text-[#6A55F8] font-medium hover:underline">Зарегистрироваться</a>
+              <a
+                href={next ? `/register?next=${encodeURIComponent(next)}` : '/register'}
+                className="text-[#6A55F8] font-medium hover:underline"
+              >
+                Зарегистрироваться
+              </a>
             </p>
           </div>
         </form>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   )
 }

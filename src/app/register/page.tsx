@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
-export default function RegisterPage() {
+function RegisterForm() {
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -12,7 +12,10 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const _router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+  const next = searchParams.get('next') || ''
+  const loginHref = next ? `/login?next=${encodeURIComponent(next)}` : '/login'
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
@@ -53,7 +56,7 @@ export default function RegisterPage() {
             <p className="text-sm text-gray-500 mb-6">
               Мы отправили письмо на <strong>{email}</strong>. Перейдите по ссылке для подтверждения аккаунта.
             </p>
-            <a href="/login" className="text-sm text-[#6A55F8] font-medium hover:underline">Перейти на страницу входа →</a>
+            <a href={loginHref} className="text-sm text-[#6A55F8] font-medium hover:underline">Перейти на страницу входа →</a>
           </div>
         </div>
       </div>
@@ -128,11 +131,19 @@ export default function RegisterPage() {
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
             <p className="text-sm text-gray-500">
               Уже есть аккаунт?{' '}
-              <a href="/login" className="text-[#6A55F8] font-medium hover:underline">Войти</a>
+              <a href={loginHref} className="text-[#6A55F8] font-medium hover:underline">Войти</a>
             </p>
           </div>
         </form>
       </div>
     </div>
+  )
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   )
 }

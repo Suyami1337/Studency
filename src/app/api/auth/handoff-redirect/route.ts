@@ -18,11 +18,28 @@ const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru'
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
-  const projectId = url.searchParams.get('projectId') || ''
-  const path = url.searchParams.get('path') || '/'
+  let projectId = url.searchParams.get('projectId') || ''
+  let path = url.searchParams.get('path') || '/'
+  const nextParam = url.searchParams.get('next') || ''
 
-  if (!projectId) {
-    return NextResponse.redirect(new URL('/projects', request.url))
+  // Альтернативный режим: получили полный URL (sub.studency.ru/<path>) —
+  // парсим subdomain, path, дальше резолвим projectId по subdomain.
+  let subdomainFromNext: string | null = null
+  if (!projectId && nextParam) {
+    try {
+      const nu = new URL(nextParam)
+      const h = nu.hostname.toLowerCase()
+      const suffix = `.${ROOT_DOMAIN}`
+      if (h.endsWith(suffix)) {
+        const sub = h.slice(0, h.length - suffix.length)
+        if (sub && !sub.includes('.')) {
+          subdomainFromNext = sub
+          path = (nu.pathname || '/') + (nu.search || '')
+        }
+      }
+    } catch {
+      // некорректный next → игнорируем
+    }
   }
 
   // Auth check — нужна актуальная session
@@ -30,7 +47,26 @@ export async function GET(request: NextRequest) {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) {
     const loginUrl = new URL('/login', request.url)
+    if (nextParam) loginUrl.searchParams.set('next', nextParam)
     return NextResponse.redirect(loginUrl)
+  }
+
+  // Если пришли через next → резолвим projectId по subdomain
+  if (!projectId && subdomainFromNext) {
+    const svcResolve = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    )
+    const { data: byId } = await svcResolve
+      .from('projects')
+      .select('id')
+      .eq('subdomain', subdomainFromNext)
+      .maybeSingle()
+    if (byId?.id) projectId = byId.id as string
+  }
+
+  if (!projectId) {
+    return NextResponse.redirect(new URL('/projects', request.url))
   }
 
   // Юзер должен иметь доступ к проекту
