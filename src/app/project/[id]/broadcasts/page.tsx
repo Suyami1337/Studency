@@ -1297,7 +1297,7 @@ export default function BroadcastsPage() {
                         {filteredDeliveries.map(d => {
                           const name = d.customers?.full_name || d.customers?.telegram_username || 'Без имени'
                           const uname = d.customers?.telegram_username
-                          const href = d.customer_id ? `/project/${projectId}/users?open=${d.customer_id}` : null
+                          const href = d.customer_id ? `/project/${projectId}/users/${d.customer_id}` : null
                           // Формируем человекочитаемую ошибку для Telegram-отказов
                           const errLow = (d.error ?? '').toLowerCase()
                           const isBlocked = errLow.includes('forbidden') || errLow.includes("can't initiate conversation") || errLow.includes('bot was blocked')

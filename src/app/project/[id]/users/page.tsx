@@ -1,514 +1,476 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useParams, useSearchParams, useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
+import { Modal } from '@/components/ui/Modal'
+import FiltersBar, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT } from '@/components/users/FiltersBar'
+import {
+  COLUMNS, ColumnId, CustomerRow, FilterCondition, Segment, SortDirection,
+  applyFilters, sortRows, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR,
+  formatDateTime, formatRelative, formatMoney, exportToCSV, downloadCSV, cellValue,
+} from '@/lib/users/config'
 
-type Customer = {
-  id: string
-  full_name: string | null
-  email: string | null
-  phone: string | null
-  telegram_username: string | null
-  telegram_id: string | null
-  instagram: string | null
-  vk: string | null
-  whatsapp: string | null
-  tags: string[] | null
-  is_blocked: boolean
-  source_name: string | null
-  source_slug: string | null
-  visitor_token: string | null
-  created_at: string
-  bot_subscribed?: boolean | null
-  bot_blocked?: boolean | null
-  bot_subscribed_at?: string | null
-  bot_blocked_at?: string | null
-  bot_blocked_source?: 'webhook' | 'sync' | 'broadcast' | null
-  channel_subscribed?: boolean | null
-}
+const STORAGE_KEY = (pid: string) => `studency.users.activeSegment.${pid}`
 
-type Order = {
-  id: string
-  product_name: string | null
-  tariff_name: string | null
-  amount: number
-  paid_amount: number
-  status: string
-  created_at: string
-}
-
-type CustomerAction = {
-  id: string
-  action: string
-  data: Record<string, unknown> | null
-  created_at: string
-}
-
-type CustomerNote = {
-  id: string
-  text: string
-  created_at: string
-}
-
-const STATUS_CONFIG: Record<string, { label: string; color: string; textColor: string }> = {
-  new:         { label: 'Новый',     color: '#EDE9FF', textColor: '#6A55F8' },
-  in_progress: { label: 'В работе', color: '#FEF3C7', textColor: '#F59E0B' },
-  paid:        { label: 'Оплачен',  color: '#D1FAE5', textColor: '#10B981' },
-  partial:     { label: 'Частично', color: '#CFFAFE', textColor: '#06B6D4' },
-  refund:      { label: 'Возврат',  color: '#FEE2E2', textColor: '#EF4444' },
-  cancelled:   { label: 'Отменён', color: '#F1F5F9', textColor: '#94A3B8' },
-}
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
-
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
-
-const ACTION_LABELS: Record<string, string> = {
-  bot_start:             '🤖 Запустил бота',
-  bot_message:           '💬 Написал в бота',
-  bot_button_click:      '👆 Нажал кнопку в боте',
-  landing_visit:         '🌐 Открыл лендинг',
-  landing_button_click:  '🖱️ Клик по кнопке на сайте',
-  button_click:          '🖱️ Клик по кнопке',
-  link_click:            '🔗 Перешёл по ссылке',
-  form_submit:           '📝 Отправил форму',
-  page_view:             '👁️ Просмотр страницы',
-  source_linked:         '📍 Источник определён',
-  order_created:         '🛒 Создан заказ',
-  order_paid:            '💳 Оплатил заказ',
-  order_refund:          '↩️ Возврат',
-  lesson_started:        '📚 Начал урок',
-  lesson_completed:      '✅ Завершил урок',
-  funnel_stage_entered:  '➡️ Перешёл в этап воронки',
-  note_added:            '📌 Добавлена заметка',
-  manual_action:         '✏️ Ручное действие',
-}
-
-function actionLabel(action: string, data: Record<string, unknown> | null): string {
-  const base = ACTION_LABELS[action] || action
-  if (!data) return base
-  const extra: string[] = []
-  if (data.button_text) extra.push(String(data.button_text))
-  if (data.source_name) extra.push(String(data.source_name))
-  if (data.landing_name) extra.push(String(data.landing_name))
-  if (data.bot_name) extra.push(String(data.bot_name))
-  if (data.stage_name) extra.push(String(data.stage_name))
-  return extra.length ? `${base}: ${extra.join(', ')}` : base
-}
-
-function formatMoney(n: number) {
-  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(n)
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? { label: status, color: '#F1F5F9', textColor: '#64748B' }
-  return (
-    <span className="rounded-full px-2.5 py-0.5 text-xs font-medium" style={{ backgroundColor: cfg.color, color: cfg.textColor }}>
-      {cfg.label}
-    </span>
-  )
-}
-
-// ─── Customer Detail ──────────────────────────────────────────────────────────
-
-function CustomerDetail({ customer, onBack, onUpdated, onDeleted }: { customer: Customer; onBack: () => void; onUpdated: (c: Customer) => void; onDeleted?: (id: string) => void }) {
+export default function UsersPage() {
   const supabase = createClient()
-  const [current, setCurrent] = useState<Customer>(customer)
-  const [orders, setOrders] = useState<Order[]>([])
-  const [actions, setActions] = useState<CustomerAction[]>([])
-  const [notes, setNotes] = useState<CustomerNote[]>([])
-  const [newNote, setNewNote] = useState('')
-  const [addingNote, setAddingNote] = useState(false)
-  const [editMode, setEditMode] = useState(false)
-  const [editData, setEditData] = useState<Partial<Customer>>({})
-  const [saving, setSaving] = useState(false)
-  const [toggling, setToggling] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState('')
+  const params = useParams()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const projectId = params.id as string
 
-  async function load() {
-    const [oRes, aRes, nRes] = await Promise.all([
-      supabase.from('orders').select('id, product_name, tariff_name, amount, paid_amount, status, created_at').eq('customer_id', customer.id).order('created_at', { ascending: false }),
-      supabase.from('customer_actions').select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }).limit(20),
-      supabase.from('customer_notes').select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
+  const [customers, setCustomers] = useState<CustomerRow[]>([])
+  const [segments, setSegments] = useState<Segment[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [filters, setFilters] = useState<FilterCondition[]>([])
+  const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(DEFAULT_VISIBLE_COLUMNS)
+  const [sort, setSort] = useState<{ column: ColumnId; direction: SortDirection }>(DEFAULT_SORT)
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showCreate, setShowCreate] = useState(false)
+  const [bulkAction, setBulkAction] = useState<null | 'tag' | 'broadcast' | 'export'>(null)
+
+  // Старая ссылка ?open=customerId → редирект на /users/<id>
+  useEffect(() => {
+    const open = searchParams.get('open')
+    if (open) router.replace(`/project/${projectId}/users/${open}`)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projectId])
+
+  async function loadAll() {
+    setLoading(true)
+    const [cRes, aRes, sRes] = await Promise.all([
+      supabase
+        .from('customers')
+        .select('*')
+        .eq('project_id', projectId),
+      supabase
+        .from('customer_aggregates')
+        .select('customer_id, last_activity_at, orders_count, revenue, has_paid, in_funnel')
+        .eq('project_id', projectId),
+      supabase
+        .from('customer_segments')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: true }),
     ])
-    if (oRes.data) setOrders(oRes.data as Order[])
-    if (aRes.data) setActions(aRes.data as CustomerAction[])
-    if (nRes.data) setNotes(nRes.data as CustomerNote[])
+    type AggregateRow = { customer_id: string; last_activity_at: string | null; orders_count: number; revenue: number; has_paid: boolean; in_funnel: boolean }
+    const aggMap = new Map<string, AggregateRow>(
+      ((aRes.data ?? []) as AggregateRow[]).map(a => [a.customer_id, a])
+    )
+    const merged = ((cRes.data ?? []) as CustomerRow[]).map(c => ({
+      ...c,
+      ...(aggMap.get(c.id) ?? {}),
+    })) as CustomerRow[]
+    setCustomers(merged)
+    setSegments(((sRes.data ?? []) as Segment[]))
+
+    // Восстановим активный сегмент из localStorage
+    const saved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY(projectId)) : null
+    const savedSeg = saved ? (sRes.data ?? []).find((s: Segment) => s.id === saved) : null
+    if (savedSeg) {
+      applySegment(savedSeg as Segment)
+    }
+    setLoading(false)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [customer.id])
+  useEffect(() => { loadAll() }, [projectId])
 
-  function startEdit() {
-    setEditData({
-      full_name: current.full_name,
-      email: current.email,
-      phone: current.phone,
-      telegram_username: current.telegram_username,
-      instagram: current.instagram,
-      vk: current.vk,
-      whatsapp: current.whatsapp,
-    })
-    setEditMode(true)
-  }
-
-  async function saveEdit() {
-    setSaving(true)
-    const { data } = await supabase.from('customers').update(editData).eq('id', current.id).select().single()
-    if (data) { setCurrent(data as Customer); onUpdated(data as Customer) }
-    setSaving(false)
-    setEditMode(false)
-  }
-
-  async function toggleBlock() {
-    setToggling(true)
-    const { data } = await supabase.from('customers').update({ is_blocked: !current.is_blocked }).eq('id', current.id).select().single()
-    if (data) { setCurrent(data as Customer); onUpdated(data as Customer) }
-    setToggling(false)
-  }
-
-  async function handleDelete() {
-    if (!deleteConfirm) { setDeleteConfirm(true); return }
-    setDeleting(true)
-    setDeleteError('')
-
-    try {
-      // Удаляем последовательно через API (service role)
-      const res = await fetch(`/api/customers/${current.id}/delete`, { method: 'POST' })
-      const json = await res.json().catch(() => ({}))
-
-      if (!res.ok) {
-        // Показываем реальную ошибку
-        const msg = json?.error || `HTTP ${res.status}`
-        setDeleteError(msg)
-        setDeleting(false)
-        return
-      }
-
-      onDeleted?.(current.id)
-      onBack()
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Неизвестная ошибка'
-      setDeleteError(msg)
-      setDeleting(false)
+  function applySegment(s: Segment | null) {
+    if (s) {
+      setFilters(s.filters)
+      setVisibleColumns(s.visible_columns.length > 0 ? s.visible_columns : DEFAULT_VISIBLE_COLUMNS)
+      setSort(s.sort)
+      setActiveSegmentId(s.id)
+      if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY(projectId), s.id)
+    } else {
+      setFilters([])
+      setVisibleColumns(DEFAULT_VISIBLE_COLUMNS)
+      setSort(DEFAULT_SORT)
+      setActiveSegmentId(null)
+      if (typeof window !== 'undefined') localStorage.removeItem(STORAGE_KEY(projectId))
     }
   }
 
-  async function addNote() {
-    if (!newNote.trim()) return
-    setAddingNote(true)
-    const text = newNote.trim()
-    setNewNote('')
-    const { data } = await supabase.from('customer_notes').insert({ customer_id: current.id, text }).select().single()
-    if (data) setNotes(prev => [data as CustomerNote, ...prev])
-    setAddingNote(false)
+  // dirty: текущее состояние отличается от активного сегмента
+  const isDirty = useMemo(() => {
+    if (!activeSegmentId) return false
+    const s = segments.find(x => x.id === activeSegmentId)
+    if (!s) return false
+    return (
+      JSON.stringify(s.filters) !== JSON.stringify(filters) ||
+      JSON.stringify(s.visible_columns) !== JSON.stringify(visibleColumns) ||
+      s.sort.column !== sort.column ||
+      s.sort.direction !== sort.direction
+    )
+  }, [activeSegmentId, segments, filters, visibleColumns, sort])
+
+  async function saveCurrentSegment() {
+    if (!activeSegmentId) return
+    const { data } = await supabase
+      .from('customer_segments')
+      .update({
+        filters,
+        visible_columns: visibleColumns,
+        sort,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', activeSegmentId)
+      .select()
+      .single()
+    if (data) setSegments(prev => prev.map(s => s.id === data.id ? (data as Segment) : s))
   }
 
-  const contactFields = [
-    { key: 'email', label: 'Email', type: 'email' },
-    { key: 'phone', label: 'Телефон', type: 'tel' },
-    { key: 'telegram_username', label: 'Telegram', type: 'text' },
-    { key: 'instagram', label: 'Instagram', type: 'text' },
-    { key: 'vk', label: 'ВКонтакте', type: 'text' },
-    { key: 'whatsapp', label: 'WhatsApp', type: 'text' },
-  ] as const
+  async function saveAsNewSegment() {
+    const name = window.prompt('Имя нового сегмента:')
+    if (!name?.trim()) return
+    const { data } = await supabase
+      .from('customer_segments')
+      .insert({
+        project_id: projectId,
+        name: name.trim(),
+        filters,
+        visible_columns: visibleColumns,
+        sort,
+      })
+      .select()
+      .single()
+    if (data) {
+      const seg = data as Segment
+      setSegments(prev => [...prev, seg])
+      setActiveSegmentId(seg.id)
+      if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY(projectId), seg.id)
+    }
+  }
 
+  async function deleteSegment(id: string) {
+    await supabase.from('customer_segments').delete().eq('id', id)
+    setSegments(prev => prev.filter(s => s.id !== id))
+    if (activeSegmentId === id) applySegment(null)
+  }
+
+  async function renameSegment(id: string, name: string) {
+    const { data } = await supabase
+      .from('customer_segments')
+      .update({ name, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single()
+    if (data) setSegments(prev => prev.map(s => s.id === id ? (data as Segment) : s))
+  }
+
+  function resetToSegment() {
+    const s = segments.find(x => x.id === activeSegmentId)
+    if (s) applySegment(s)
+  }
+
+  // ── Filtering & sorting ──
+  const visibleRows = useMemo(() => {
+    const filtered = applyFilters(customers, filters)
+    return sortRows(filtered, sort.column, sort.direction)
+  }, [customers, filters, sort])
+
+  // ── Selection ──
+  function toggleSelected(id: string) {
+    const next = new Set(selectedIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedIds(next)
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === visibleRows.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(visibleRows.map(r => r.id)))
+    }
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+  }
+
+  const selectedRows = useMemo(
+    () => visibleRows.filter(r => selectedIds.has(r.id)),
+    [visibleRows, selectedIds]
+  )
+
+  // ── Render ──
   return (
-    <div className="space-y-6">
-      {/* Back */}
+    <div className="space-y-5">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
-          Назад к клиентам
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">Пользователи</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {loading ? '…' : (
+              filters.length === 0 && !activeSegmentId
+                ? `Всего: ${customers.length}`
+                : `Показано ${visibleRows.length} из ${customers.length}`
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          + Добавить пользователя
         </button>
-        <div className="flex gap-2 items-center">
-          {!editMode && (
-            <button onClick={startEdit} className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-300 transition-colors">
-              Редактировать
-            </button>
-          )}
-          <button
-            onClick={toggleBlock}
-            disabled={toggling}
-            className="text-sm px-3 py-1.5 rounded-lg border font-medium transition-colors disabled:opacity-50"
-            style={current.is_blocked
-              ? { backgroundColor: '#D1FAE5', color: '#10B981', borderColor: '#10B981' }
-              : { backgroundColor: '#FEE2E2', color: '#EF4444', borderColor: '#EF4444' }}
-          >
-            {toggling ? '...' : current.is_blocked ? 'Разблокировать' : 'Заблокировать'}
-          </button>
-
-          {/* Полное удаление */}
-          {deleteConfirm ? (
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
-                <span className="text-xs text-red-600 font-medium">Удалить навсегда?</span>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="text-xs font-semibold text-white bg-red-500 hover:bg-red-600 rounded px-2 py-0.5 disabled:opacity-50 transition-colors"
-                >
-                  {deleting ? 'Удаляю...' : 'Да'}
-                </button>
-                <button
-                  onClick={() => { setDeleteConfirm(false); setDeleteError('') }}
-                  className="text-xs text-gray-400 hover:text-gray-600 px-1 transition-colors"
-                >
-                  Отмена
-                </button>
-              </div>
-              {deleteError && (
-                <p className="text-xs text-red-500 max-w-xs text-right">{deleteError}</p>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={handleDelete}
-              className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 transition-colors"
-              title="Удалить клиента полностью"
-            >
-              🗑 Удалить
-            </button>
-          )}
-        </div>
       </div>
 
-      {/* Contact card */}
-      <div className="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-lg" style={{ backgroundColor: '#6A55F8' }}>
-            {(current.full_name || current.email || '?').charAt(0).toUpperCase()}
-          </div>
-          <div>
-            {editMode ? (
-              <input
-                type="text"
-                value={editData.full_name ?? ''}
-                onChange={e => setEditData(d => ({ ...d, full_name: e.target.value }))}
-                className="text-xl font-semibold text-gray-900 border-b border-[#6A55F8] focus:outline-none bg-transparent"
-              />
-            ) : (
-              <h2 className="text-xl font-semibold text-gray-900">{current.full_name}</h2>
-            )}
-            {current.is_blocked && (
-              <span className="text-xs text-red-500 font-medium">Заблокирован</span>
-            )}
-          </div>
-        </div>
+      {/* Filters & segments */}
+      <FiltersBar
+        segments={segments}
+        activeSegmentId={activeSegmentId}
+        isDirty={isDirty}
+        filters={filters}
+        visibleColumns={visibleColumns}
+        sort={sort}
+        onChangeFilters={setFilters}
+        onChangeColumns={setVisibleColumns}
+        onChangeSort={setSort}
+        onSelectSegment={id => {
+          if (id === null) applySegment(null)
+          else {
+            const s = segments.find(x => x.id === id)
+            if (s) applySegment(s)
+          }
+        }}
+        onSaveCurrent={saveCurrentSegment}
+        onSaveAsNew={saveAsNewSegment}
+        onResetToSegment={resetToSegment}
+        onDeleteSegment={deleteSegment}
+        onRenameSegment={renameSegment}
+      />
 
-        <div className="grid grid-cols-2 gap-4">
-          {contactFields.map(({ key, label, type }) => (
-            <div key={key}>
-              <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-              {editMode ? (
-                <input
-                  type={type}
-                  value={(editData[key] as string) ?? ''}
-                  onChange={e => setEditData(d => ({ ...d, [key]: e.target.value || null }))}
-                  placeholder={`${label}...`}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-                />
-              ) : key === 'telegram_username' && current.telegram_username ? (
-                <a href={`https://t.me/${current.telegram_username}`} target="_blank" rel="noreferrer"
-                  className="text-sm font-medium text-[#6A55F8] hover:underline"
-                  title="Открыть чат в Telegram">
-                  @{current.telegram_username}
-                </a>
-              ) : (
-                <p className="text-sm font-medium text-gray-800">{(current[key] as string | null) ?? '—'}</p>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Telegram-статусы */}
-        {(current.telegram_id || current.bot_subscribed !== undefined) && (
-          <div className="flex items-center flex-wrap gap-2 pt-1">
-            {current.bot_subscribed === true && !current.bot_blocked && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                🤖 Подписан на бота
-              </span>
-            )}
-            {current.bot_blocked && (() => {
-              const when = current.bot_blocked_at ? new Date(current.bot_blocked_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : null
-              const exact = current.bot_blocked_source === 'webhook'
-              const label = when
-                ? exact ? `🚫 Заблокировал бота ${when}` : `🚫 Заблокировал бота (обнаружено ${when})`
-                : '🚫 Заблокировал бота'
-              const tooltip = exact
-                ? 'Точное время — Telegram уведомил нас в момент блокировки'
-                : 'Приблизительное время — клиент мог заблокировать раньше, это момент когда мы обнаружили'
-              return (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
-                  title={tooltip}>
-                  {label}
-                </span>
-              )
-            })()}
-            {current.bot_subscribed === false && !current.bot_blocked && current.telegram_id && (() => {
-              const when = current.bot_blocked_at ? new Date(current.bot_blocked_at).toLocaleString('ru', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : null
-              const exact = current.bot_blocked_source === 'webhook'
-              const label = when
-                ? exact ? `⚪ Отписан от бота ${when}` : `⚪ Отписан от бота (обнаружено ${when})`
-                : '⚪ Отписан от бота'
-              return (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
-                  {label}
-                </span>
-              )
-            })()}
-            {current.channel_subscribed === true && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                📣 Подписан на канал
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Источник трафика */}
-        {current.source_name && (
-          <div className="flex items-center gap-2 pt-1">
-            <span className="text-xs text-gray-400">Источник:</span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
-              📍 {current.source_name}
-            </span>
-          </div>
-        )}
-
-        {current.telegram_id && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">Telegram ID:</span>
-            <span className="text-xs font-mono text-gray-600">{current.telegram_id}</span>
-          </div>
-        )}
-
-        {current.tags && current.tags.length > 0 && (
-          <div>
-            <p className="text-xs text-gray-400 mb-1.5">Теги</p>
-            <div className="flex flex-wrap gap-1.5">
-              {current.tags.map(tag => (
-                <span key={tag} className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: '#F0EDFF', color: '#6A55F8' }}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {editMode && (
-          <div className="flex gap-2 pt-2">
-            <button onClick={saveEdit} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={{ backgroundColor: '#6A55F8' }}>
-              {saving ? 'Сохраняю...' : 'Сохранить'}
-            </button>
-            <button onClick={() => setEditMode(false)} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">
-              Отмена
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Orders */}
-      <div className="bg-white rounded-xl border border-gray-100 p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">Заказы</h3>
-        {orders.length === 0 ? (
-          <p className="text-sm text-gray-400">Заказов нет</p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
-                <th className="pb-2 font-medium">Продукт</th>
-                <th className="pb-2 font-medium">Тариф</th>
-                <th className="pb-2 font-medium">Сумма</th>
-                <th className="pb-2 font-medium">Оплачено</th>
-                <th className="pb-2 font-medium">Статус</th>
-                <th className="pb-2 font-medium">Дата</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map(o => (
-                <tr key={o.id} className="border-b border-gray-50 last:border-0">
-                  <td className="py-2 text-gray-800">{o.product_name ?? '—'}</td>
-                  <td className="py-2 text-gray-500">{o.tariff_name ?? '—'}</td>
-                  <td className="py-2 font-medium text-gray-900">{formatMoney(o.amount)}</td>
-                  <td className="py-2 text-gray-600">{formatMoney(o.paid_amount)}</td>
-                  <td className="py-2"><StatusBadge status={o.status} /></td>
-                  <td className="py-2 text-gray-400">{formatDate(o.created_at)}</td>
+      {/* Table */}
+      {loading ? (
+        <SkeletonList count={3} />
+      ) : visibleRows.length === 0 ? (
+        <EmptyState empty={customers.length === 0} />
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100 sticky top-0">
+                <tr className="text-left text-xs text-gray-500">
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === visibleRows.length && visibleRows.length > 0}
+                      ref={el => {
+                        if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < visibleRows.length
+                      }}
+                      onChange={toggleSelectAll}
+                      className="rounded border-gray-300"
+                    />
+                  </th>
+                  {visibleColumns.map(colId => {
+                    const def = COLUMNS.find(c => c.id === colId)
+                    if (!def) return null
+                    const isSorted = sort.column === colId
+                    return (
+                      <th
+                        key={colId}
+                        className={`px-4 py-3 font-medium ${def.sortable ? 'cursor-pointer hover:text-gray-800' : ''}`}
+                        onClick={def.sortable ? () => {
+                          setSort(prev => ({
+                            column: colId,
+                            direction: prev.column === colId && prev.direction === 'desc' ? 'asc' : 'desc',
+                          }))
+                        } : undefined}
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {def.label}
+                          {def.sortable && isSorted && (
+                            <span className="text-[#6A55F8]">{sort.direction === 'asc' ? '↑' : '↓'}</span>
+                          )}
+                        </span>
+                      </th>
+                    )
+                  })}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Action log */}
-      <div className="bg-white rounded-xl border border-gray-100 p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">История действий</h3>
-        {actions.length === 0 ? (
-          <p className="text-sm text-gray-400">Действий пока нет</p>
-        ) : (
-          <div className="space-y-1.5">
-            {actions.map(a => (
-              <div key={a.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                <div className="w-1.5 h-1.5 mt-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#6A55F8' }} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-800">{actionLabel(a.action, a.data)}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(a.created_at)}</p>
-                </div>
-              </div>
-            ))}
+              </thead>
+              <tbody>
+                {visibleRows.map(c => {
+                  const isSelected = selectedIds.has(c.id)
+                  return (
+                    <tr
+                      key={c.id}
+                      onClick={() => router.push(`/project/${projectId}/users/${c.id}`)}
+                      className={`border-b border-gray-50 last:border-0 cursor-pointer transition-colors ${
+                        isSelected ? 'bg-[#F0EDFF]' : 'hover:bg-[#FAFAFD]'
+                      }`}
+                    >
+                      <td className="px-4 py-3 w-10" onClick={e => { e.stopPropagation(); toggleSelected(c.id) }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="rounded border-gray-300"
+                        />
+                      </td>
+                      {visibleColumns.map(colId => (
+                        <td key={colId} className="px-4 py-3 text-gray-700">
+                          <Cell row={c} colId={colId} />
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
-
-      {/* Notes */}
-      <div className="bg-white rounded-xl border border-gray-100 p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">Заметки</h3>
-        <div className="space-y-2 mb-4">
-          {notes.length === 0 && <p className="text-sm text-gray-400">Заметок пока нет</p>}
-          {notes.map(n => (
-            <div key={n.id} className="p-3 rounded-lg bg-gray-50 text-sm">
-              <p className="text-gray-800">{n.text}</p>
-              <p className="text-xs text-gray-400 mt-1">{formatDate(n.created_at)}</p>
-            </div>
-          ))}
         </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Добавить заметку..."
-            value={newNote}
-            onChange={e => setNewNote(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addNote()}
-            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-          />
+      )}
+
+      {/* Bulk actions bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white border border-gray-200 shadow-2xl rounded-2xl py-3 px-4 flex items-center gap-3 z-40">
+          <span className="text-sm font-medium text-gray-700">
+            Выбрано: <span className="text-[#6A55F8]">{selectedIds.size}</span>
+          </span>
+          <div className="h-6 w-px bg-gray-200" />
           <button
-            onClick={addNote}
-            disabled={addingNote || !newNote.trim()}
-            className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-            style={{ backgroundColor: '#6A55F8' }}
+            onClick={() => setBulkAction('tag')}
+            className="text-sm px-3 py-1.5 rounded-lg bg-[#F0EDFF] text-[#6A55F8] font-medium hover:bg-[#E5DFFF]"
           >
-            {addingNote ? '...' : 'Добавить'}
+            🏷 Добавить тег
+          </button>
+          <button
+            onClick={() => setBulkAction('broadcast')}
+            className="text-sm px-3 py-1.5 rounded-lg bg-[#F0EDFF] text-[#6A55F8] font-medium hover:bg-[#E5DFFF]"
+          >
+            📨 Запустить рассылку
+          </button>
+          <button
+            onClick={() => setBulkAction('export')}
+            className="text-sm px-3 py-1.5 rounded-lg bg-[#F0EDFF] text-[#6A55F8] font-medium hover:bg-[#E5DFFF]"
+          >
+            📥 Экспорт CSV
+          </button>
+          <div className="h-6 w-px bg-gray-200" />
+          <button
+            onClick={clearSelection}
+            className="text-sm text-gray-500 hover:text-gray-800"
+          >
+            Снять выделение
           </button>
         </div>
-      </div>
+      )}
+
+      {/* Create modal */}
+      {showCreate && (
+        <CreateCustomerModal
+          projectId={projectId}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => { setShowCreate(false); loadAll() }}
+        />
+      )}
+
+      {/* Bulk action modals */}
+      {bulkAction === 'tag' && (
+        <BulkAddTagModal
+          rows={selectedRows}
+          onClose={() => setBulkAction(null)}
+          onApplied={() => {
+            setBulkAction(null)
+            clearSelection()
+            loadAll()
+          }}
+        />
+      )}
+      {bulkAction === 'broadcast' && (
+        <BulkBroadcastModal
+          projectId={projectId}
+          rows={selectedRows}
+          onClose={() => setBulkAction(null)}
+        />
+      )}
+      {bulkAction === 'export' && (() => {
+        const csv = exportToCSV(selectedRows, visibleColumns)
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+        downloadCSV(csv, `users-${stamp}.csv`)
+        setBulkAction(null)
+        return null
+      })()}
     </div>
   )
 }
 
-// ─── Create Customer Form ─────────────────────────────────────────────────────
+// ─── Cell ───
+function Cell({ row, colId }: { row: CustomerRow; colId: ColumnId }) {
+  switch (colId) {
+    case 'name':
+      return (
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0" style={{ backgroundColor: '#6A55F8' }}>
+            {(row.full_name || row.email || row.telegram_username || '?').charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="font-medium text-gray-900 truncate">{row.full_name || 'Без имени'}</div>
+            {row.is_blocked && <div className="text-xs text-red-500">Заблокирован</div>}
+          </div>
+        </div>
+      )
+    case 'client_type': {
+      const t = deriveClientType(row)
+      const c = CLIENT_TYPE_COLOR[t]
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+          style={{ backgroundColor: c.bg, color: c.fg }}>
+          {CLIENT_TYPE_LABELS[t]}
+        </span>
+      )
+    }
+    case 'email':    return <span className="text-gray-600">{row.email || '—'}</span>
+    case 'phone':    return <span className="text-gray-600">{row.phone || '—'}</span>
+    case 'telegram': return row.telegram_username
+      ? <a onClick={e => e.stopPropagation()} href={`https://t.me/${row.telegram_username}`} target="_blank" rel="noreferrer" className="text-[#6A55F8] hover:underline">@{row.telegram_username}</a>
+      : <span className="text-gray-400">—</span>
+    case 'tags':     return row.tags && row.tags.length > 0 ? (
+      <div className="flex flex-wrap gap-1">
+        {row.tags.slice(0, 2).map(t => (
+          <span key={t} className="px-1.5 py-0.5 rounded text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">{t}</span>
+        ))}
+        {row.tags.length > 2 && <span className="text-xs text-gray-400">+{row.tags.length - 2}</span>}
+      </div>
+    ) : <span className="text-gray-400">—</span>
+    case 'created_at':       return <span className="text-gray-500">{formatDateTime(row.created_at)}</span>
+    case 'last_activity_at': return <span className="text-gray-500" title={formatDateTime(row.last_activity_at ?? row.created_at)}>{formatRelative(row.last_activity_at ?? row.created_at)}</span>
+    case 'source':           return <span className="text-gray-600">{row.source_name || '—'}</span>
+    case 'orders_count':     return <span className="text-gray-700 font-medium">{row.orders_count ?? 0}</span>
+    case 'revenue':          return <span className="text-gray-900 font-medium">{formatMoney(row.revenue ?? 0)}</span>
+    case 'bot_subscribed':   return row.bot_subscribed ? <span>✅</span> : <span className="text-gray-300">—</span>
+    case 'channel_subscribed': return row.channel_subscribed ? <span>✅</span> : <span className="text-gray-300">—</span>
+    case 'in_funnel':        return row.in_funnel ? <span>✅</span> : <span className="text-gray-300">—</span>
+    default: return <span>{String(cellValue(row, colId))}</span>
+  }
+}
 
-function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: string; onCreated: () => void; onCancel: () => void }) {
+// ─── Empty state ───
+function EmptyState({ empty }: { empty: boolean }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
+      <div className="text-4xl mb-3">👤</div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-1">
+        {empty ? 'Пользователей пока нет' : 'Ничего не найдено'}
+      </h3>
+      <p className="text-sm text-gray-500">
+        {empty ? 'Они появятся автоматически когда зайдут на ваш сайт или в бота'
+              : 'Попробуйте изменить или сбросить фильтры'}
+      </p>
+    </div>
+  )
+}
+
+// ─── Create modal ───
+function CreateCustomerModal({ projectId, onClose, onCreated }: { projectId: string; onClose: () => void; onCreated: () => void }) {
   const supabase = createClient()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -518,15 +480,17 @@ function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: str
   const [error, setError] = useState('')
 
   async function submit() {
-    if (!name.trim()) return setError('Введите имя клиента')
+    if (!name.trim() && !email.trim() && !phone.trim() && !telegram.trim()) {
+      return setError('Заполните хотя бы одно поле')
+    }
     setSaving(true)
     setError('')
     const { error: err } = await supabase.from('customers').insert({
       project_id: projectId,
-      full_name: name.trim(),
-      email: email || null,
-      phone: phone || null,
-      telegram_username: telegram || null,
+      full_name: name.trim() || null,
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      telegram_username: telegram.trim().replace(/^@/, '') || null,
       is_blocked: false,
     })
     setSaving(false)
@@ -535,210 +499,145 @@ function CreateCustomerForm({ projectId, onCreated, onCancel }: { projectId: str
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
-      <h3 className="font-semibold text-gray-900">Новый клиент</h3>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <input
-            type="text"
-            placeholder="Имя *"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
-          />
-        </div>
-        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]" />
-        <input type="tel" placeholder="Телефон" value={phone} onChange={e => setPhone(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]" />
-        <input type="text" placeholder="Telegram" value={telegram} onChange={e => setTelegram(e.target.value)}
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]" />
+    <Modal
+      isOpen
+      onClose={onClose}
+      title="Новый пользователь"
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">Отмена</button>
+          <button
+            onClick={submit}
+            disabled={saving}
+            className="px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+            style={{ backgroundColor: '#6A55F8' }}
+          >
+            {saving ? 'Создаю…' : 'Создать'}
+          </button>
+        </>
+      }
+    >
+      <div className="p-5 space-y-3">
+        <Input label="Имя" value={name} onChange={setName} />
+        <Input label="Email" value={email} onChange={setEmail} type="email" />
+        <Input label="Телефон" value={phone} onChange={setPhone} type="tel" />
+        <Input label="Telegram" value={telegram} onChange={setTelegram} />
+        {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
-      {error && <p className="text-sm text-red-500">{error}</p>}
-      <div className="flex gap-2">
-        <button onClick={submit} disabled={saving} className="px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={{ backgroundColor: '#6A55F8' }}>
-          {saving ? 'Создаю...' : 'Создать клиента'}
-        </button>
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">
-          Отмена
-        </button>
-      </div>
-    </div>
+    </Modal>
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+function Input({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+  return (
+    <label className="block">
+      <span className="text-xs text-gray-500">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#6A55F8]"
+      />
+    </label>
+  )
+}
 
-export default function UsersPage() {
+// ─── Bulk: add tag ───
+function BulkAddTagModal({ rows, onClose, onApplied }: { rows: CustomerRow[]; onClose: () => void; onApplied: () => void }) {
   const supabase = createClient()
-  const params = useParams()
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  const projectId = params.id as string
+  const [tag, setTag] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
-  const [customers, setCustomers] = useState<Customer[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
-
-  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
-  const urlCustomerId = searchParams.get('open')
-  const openCustomerId = localSelectedId ?? urlCustomerId
-  const selected = openCustomerId ? customers.find(c => c.id === openCustomerId) ?? null : null
-
-  function selectCustomer(id: string) {
-    setLocalSelectedId(id)
-    const p = new URLSearchParams(searchParams.toString())
-    p.set('open', id)
-    router.replace(`?${p.toString()}`, { scroll: false })
-  }
-  function clearSelection() {
-    setLocalSelectedId(null)
-    const p = new URLSearchParams(searchParams.toString())
-    p.delete('open')
-    router.replace(`?${p.toString()}`, { scroll: false })
-  }
-
-  async function loadCustomers() {
-    const { data } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('created_at', { ascending: false })
-    if (data) setCustomers(data as Customer[])
-    setLoading(false)
-  }
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadCustomers() }, [projectId])
-
-  function updateCustomer(updated: Customer) {
-    setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c))
-  }
-
-  function removeCustomer(id: string) {
-    setCustomers(prev => prev.filter(c => c.id !== id))
-  }
-
-  const filtered = customers.filter(c => {
-    const q = search.toLowerCase()
-    return !q
-      || (c.full_name || '').toLowerCase().includes(q)
-      || (c.email ?? '').toLowerCase().includes(q)
-      || (c.telegram_username ?? '').toLowerCase().includes(q)
-  })
-
-  if (selected) {
-    return (
-      <div className="p-6 max-w-3xl mx-auto">
-        <CustomerDetail customer={selected} onBack={clearSelection} onUpdated={updateCustomer} onDeleted={removeCustomer} />
-      </div>
-    )
+  async function apply() {
+    const t = tag.trim()
+    if (!t) return setError('Введите название тега')
+    setSaving(true)
+    setError('')
+    // Применяем по одному, чтобы корректно дополнять массив
+    let okCount = 0
+    for (const r of rows) {
+      const next = Array.from(new Set([...(r.tags ?? []), t]))
+      const { error: e } = await supabase.from('customers').update({ tags: next }).eq('id', r.id)
+      if (!e) okCount++
+    }
+    setSaving(false)
+    if (okCount === 0) return setError('Не удалось применить тег')
+    onApplied()
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Клиенты</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {customers.length} {customers.length === 1 ? 'клиент' : customers.length < 5 ? 'клиента' : 'клиентов'}
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreate(v => !v)}
-          className="bg-[#6A55F8] hover:bg-[#5040D6] text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          + Добавить клиента
-        </button>
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={`Добавить тег ${rows.length} ${rows.length === 1 ? 'пользователю' : 'пользователям'}`}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">Отмена</button>
+          <button onClick={apply} disabled={saving} className="px-5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={{ backgroundColor: '#6A55F8' }}>
+            {saving ? 'Применяю…' : 'Добавить тег'}
+          </button>
+        </>
+      }
+    >
+      <div className="p-5 space-y-3">
+        <Input label="Название тега" value={tag} onChange={setTag} />
+        {error && <p className="text-sm text-red-500">{error}</p>}
       </div>
+    </Modal>
+  )
+}
 
-      {showCreate && (
-        <CreateCustomerForm
-          projectId={projectId}
-          onCreated={() => { setShowCreate(false); loadCustomers() }}
-          onCancel={() => setShowCreate(false)}
-        />
-      )}
+// ─── Bulk: broadcast (preview + переход в /broadcasts с предзаполненной выборкой) ───
+function BulkBroadcastModal({ projectId, rows, onClose }: { projectId: string; rows: CustomerRow[]; onClose: () => void }) {
+  const router = useRouter()
+  const withTelegram = rows.filter(r => r.telegram_id || r.telegram_username).length
+  const withEmail = rows.filter(r => r.email).length
 
-      {/* Search */}
-      <input
-        type="text"
-        placeholder="Поиск по имени, email или Telegram..."
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        className="w-full max-w-md border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-      />
+  function go(channel: 'telegram' | 'email') {
+    const ids = rows.map(r => r.id).join(',')
+    // Передаём список через URL параметр; страница рассылок может его прочитать
+    router.push(`/project/${projectId}/broadcasts?segment=manual&ids=${ids}&channel=${channel}`)
+    onClose()
+  }
 
-      {/* Table */}
-      {loading ? (
-        <SkeletonList count={3} />
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <div className="text-4xl mb-3">👤</div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-1">
-            {customers.length === 0 ? 'Клиентов пока нет' : 'Ничего не найдено'}
-          </h3>
-          <p className="text-sm text-gray-500">
-            {customers.length === 0
-              ? 'Добавьте первого клиента, нажав кнопку выше'
-              : 'Попробуйте изменить поисковый запрос'}
-          </p>
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={`Рассылка по ${rows.length} ${rows.length === 1 ? 'пользователю' : 'пользователям'}`}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">Отмена</button>
+        </>
+      }
+    >
+      <div className="p-5 space-y-3 text-sm">
+        <p className="text-gray-700">Кому из выделенных можно отправить:</p>
+        <ul className="space-y-1 text-gray-700">
+          <li>📨 Telegram: <b>{withTelegram}</b></li>
+          <li>✉️ Email: <b>{withEmail}</b></li>
+        </ul>
+        <p className="text-xs text-gray-500">Сейчас вас перенесёт в раздел «Рассылки» с предзаполненной выборкой получателей.</p>
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={() => go('telegram')}
+            disabled={withTelegram === 0}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
+            style={{ backgroundColor: '#6A55F8' }}
+          >
+            📨 Telegram
+          </button>
+          <button
+            onClick={() => go('email')}
+            disabled={withEmail === 0}
+            className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
+            style={{ backgroundColor: '#6A55F8' }}
+          >
+            ✉️ Email
+          </button>
         </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100">
-              <tr className="text-left text-xs text-gray-400">
-                <th className="px-4 py-3 font-medium">Имя</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Телефон</th>
-                <th className="px-4 py-3 font-medium">Telegram</th>
-                <th className="px-4 py-3 font-medium">Теги</th>
-                <th className="px-4 py-3 font-medium">Создан</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(c => (
-                <tr
-                  key={c.id}
-                  onClick={() => selectCustomer(c.id)}
-                  className="border-b border-gray-50 last:border-0 hover:bg-[#F0EDFF] cursor-pointer transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0" style={{ backgroundColor: '#6A55F8' }}>
-                        {(c.full_name || c.email || '?').charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-900">{c.full_name || 'Без имени'}</div>
-                        {c.is_blocked && <div className="text-xs text-red-500">Заблокирован</div>}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{c.email ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{c.phone ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">{c.telegram_username ? `@${c.telegram_username}` : '—'}</td>
-                  <td className="px-4 py-3">
-                    {c.tags && c.tags.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {c.tags.slice(0, 2).map(tag => (
-                          <span key={tag} className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#F0EDFF', color: '#6A55F8' }}>
-                            {tag}
-                          </span>
-                        ))}
-                        {c.tags.length > 2 && <span className="text-xs text-gray-400">+{c.tags.length - 2}</span>}
-                      </div>
-                    ) : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(c.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      </div>
+    </Modal>
   )
 }

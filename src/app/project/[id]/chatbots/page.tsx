@@ -3215,7 +3215,7 @@ export default function ChatbotsPage() {
                       const isBlocked = !!conv.chat_blocked
                       const blockedAt = conv.customers?.bot_blocked_at
                       const blockedExact = conv.customers?.bot_blocked_source === 'webhook'
-                      const href = conv.customers?.id ? `/project/${projectId}/users?open=${conv.customers.id}` : null
+                      const href = conv.customers?.id ? `/project/${projectId}/users/${conv.customers.id}` : null
                       return (
                         <tr key={conv.id} className="hover:bg-gray-50/50">
                           <td className="px-5 py-3">

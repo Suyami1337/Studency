@@ -513,7 +513,7 @@ function CustomerPanel({ projectId, customerId, onClose }: {
             )}
           </div>
 
-          <Link href={`/project/${projectId}/users?open=${customer.id}`}
+          <Link href={`/project/${projectId}/users/${customer.id}`}
             target="_blank"
             className="block text-center text-xs text-[#6A55F8] hover:underline py-2 border-t border-gray-100">
             Открыть полностью в CRM ↗
