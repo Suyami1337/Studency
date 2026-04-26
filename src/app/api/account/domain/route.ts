@@ -23,17 +23,22 @@ async function getAccount() {
   return { ok: true as const, supabase, user, account }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const a = await getAccount()
   if (!a.ok) return NextResponse.json({ error: a.error }, { status: a.status })
   if (!a.account) {
     return NextResponse.json({ subdomain: null, custom_domain: null })
   }
 
+  // ?check=1 — медленный режим: дёргаем Vercel API за актуальным config.
+  // По умолчанию — быстрый ответ из БД (мгновенно).
+  const wantCheck = new URL(request.url).searchParams.get('check') === '1'
+
   let status = a.account.custom_domain_status
   let verification: unknown = null
   let config: unknown = null
-  if (a.account.custom_domain) {
+
+  if (wantCheck && a.account.custom_domain) {
     try {
       const r = await checkVercelDomain(a.account.custom_domain)
       if (r.status !== 'not_found') {
@@ -46,6 +51,7 @@ export async function GET() {
       }
     } catch { /* ignore */ }
   }
+
   return NextResponse.json({
     subdomain: a.account.subdomain,
     custom_domain: a.account.custom_domain,

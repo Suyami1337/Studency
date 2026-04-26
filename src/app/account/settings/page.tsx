@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { ROOT_DOMAIN, validateSubdomain } from '@/lib/subdomain'
 
@@ -31,11 +31,24 @@ type DomainState = {
   config?: DomainConfig | null
 }
 
+type Tab = 'profile' | 'domain' | 'projects' | 'danger'
+
 function AccountSettingsInner() {
   const supabase = createClient()
+  const router = useRouter()
   const searchParams = useSearchParams()
-  const initialTab = (searchParams.get('tab') as 'profile' | 'domain' | 'projects' | 'danger') || 'profile'
-  const [activeTab, setActiveTab] = useState<'profile' | 'domain' | 'projects' | 'danger'>(initialTab)
+  const tabParam = searchParams.get('tab') as Tab | null
+  const validTabs: Tab[] = ['profile', 'domain', 'projects', 'danger']
+  const initialTab: Tab = tabParam && validTabs.includes(tabParam) ? tabParam : 'profile'
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
+
+  // Синхронизируем таб с URL — после reload остаёмся в том же разделе
+  function selectTab(t: Tab) {
+    setActiveTab(t)
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('tab', t)
+    router.replace(`?${p.toString()}`, { scroll: false })
+  }
 
   const [email, setEmail] = useState('')
   const [fullName, setFullName] = useState('')
@@ -133,7 +146,7 @@ function AccountSettingsInner() {
           {tabs.map(t => (
             <button
               key={t.id}
-              onClick={() => setActiveTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
                 activeTab === t.id ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
@@ -306,21 +319,35 @@ function DomainTab() {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<{ kind: 'ok' | 'wait'; text: string } | null>(null)
 
-  async function load(opts?: { silent?: boolean }) {
+  async function load(opts?: { silent?: boolean; check?: boolean }) {
     if (!opts?.silent) setLoading(true)
-    const res = await fetch('/api/account/domain')
+    const url = opts?.check ? '/api/account/domain?check=1' : '/api/account/domain'
+    const res = await fetch(url)
     const j = await res.json()
     setState(prev => {
       // Если данные не изменились — не пере-сетим (избегаем лишний перерендер).
+      // При check=1 сохраняем уже имеющийся config, если новый пустой (Vercel недоступен).
       if (prev && JSON.stringify(prev) === JSON.stringify(j)) return prev
+      // Если запрос был без check — сохраняем имеющийся config из предыдущего состояния
+      if (!opts?.check && prev?.config && !j.config) {
+        return { ...j, config: prev.config, verification: prev.verification }
+      }
       return j
     })
     setSubInput(prev => prev || (j.subdomain ?? ''))
     if (!opts?.silent) setLoading(false)
     return j as DomainState
   }
+  useEffect(() => {
+    // Быстрый рендер: данные из БД мгновенно (без Vercel API).
+    // Затем в фоне дёргаем check=1 для актуального config.
+    (async () => {
+      await load()
+      // background check (не блокируем UI)
+      load({ silent: true, check: true })
+    })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [])
+  }, [])
 
   async function saveSubdomain() {
     const sub = subInput.toLowerCase().trim()
@@ -358,7 +385,7 @@ function DomainTab() {
   async function refreshDomainStatus() {
     setRefreshing(true)
     setRefreshMsg(null)
-    const fresh = await load({ silent: true })
+    const fresh = await load({ silent: true, check: true })
     const isVerified = fresh?.custom_domain_status === 'verified' && !fresh?.config?.misconfigured
     if (isVerified) {
       setRefreshMsg({ kind: 'ok', text: '✓ Домен успешно подключён!' })
