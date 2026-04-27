@@ -117,6 +117,12 @@ function LoginForm() {
             >
               {loading ? 'Входим...' : 'Войти'}
             </button>
+
+            <div className="text-center">
+              <a href="/forgot" className="text-sm text-gray-500 hover:text-[#6A55F8] hover:underline">
+                Забыли пароль?
+              </a>
+            </div>
           </div>
 
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
