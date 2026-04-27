@@ -153,7 +153,7 @@ export default function SettingsPage() {
   const projectId = params.id as string
   const supabase = createClient()
 
-  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'fields' | 'team' | 'danger'>('integrations')
+  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'fields' | 'team' | 'roles' | 'danger'>('integrations')
   const [bots, setBots] = useState<TelegramBot[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -209,7 +209,8 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'integrations' as const, label: 'Интеграции' },
-    { id: 'team' as const, label: 'Команда и роли' },
+    { id: 'team' as const, label: 'Команда' },
+    { id: 'roles' as const, label: 'Роли' },
     { id: 'fields' as const, label: 'Поля клиента' },
     { id: 'profile' as const, label: 'Профиль' },
     { id: 'danger' as const, label: 'Опасная зона' },
@@ -282,7 +283,9 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {activeTab === 'team' && <TeamSection projectId={projectId} />}
+      {activeTab === 'team' && <TeamSection projectId={projectId} mode="members" />}
+
+      {activeTab === 'roles' && <TeamSection projectId={projectId} mode="roles" />}
 
       {activeTab === 'fields' && <CustomFieldsTab projectId={projectId} />}
 

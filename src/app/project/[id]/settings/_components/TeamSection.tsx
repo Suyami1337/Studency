@@ -51,11 +51,7 @@ type Permission = {
   sort_order: number
 }
 
-type Tab = 'members' | 'roles'
-
-export default function TeamSection({ projectId }: { projectId: string }) {
-
-  const [tab, setTab] = useState<Tab>('members')
+export default function TeamSection({ projectId, mode = 'members' }: { projectId: string; mode?: 'members' | 'roles' }) {
   const [members, setMembers] = useState<Member[]>([])
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [roles, setRoles] = useState<Role[]>([])
@@ -220,8 +216,10 @@ export default function TeamSection({ projectId }: { projectId: string }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-500">Участники проекта, приглашения и настройка прав ролей.</p>
-        {tab === 'members' && (
+        <p className="text-sm text-gray-500">
+          {mode === 'members' ? 'Участники проекта и приглашения.' : 'Конструктор ролей: галочки прав по разделам платформы.'}
+        </p>
+        {mode === 'members' && (
           <button
             onClick={() => setShowInvite(true)}
             className="px-4 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium"
@@ -231,26 +229,11 @@ export default function TeamSection({ projectId }: { projectId: string }) {
         )}
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {[
-          { key: 'members' as Tab, label: 'Участники' },
-          { key: 'roles' as Tab, label: 'Роли и доступы' },
-        ].map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${tab === t.key ? 'border-[#6A55F8] text-[#6A55F8]' : 'border-transparent text-gray-500 hover:text-gray-900'}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
       )}
 
-      {tab === 'members' && (
+      {mode === 'members' && (
         <>
           <MembersTab
             members={members}
@@ -269,7 +252,7 @@ export default function TeamSection({ projectId }: { projectId: string }) {
         </>
       )}
 
-      {tab === 'roles' && (
+      {mode === 'roles' && (
         <RolesTab
           roles={roles}
           permissions={permissions}
