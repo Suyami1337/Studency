@@ -31,6 +31,29 @@ const STASH_COOKIE = 'studency-impersonator-stash'
 const MARKER_COOKIE = 'studency-impersonating'
 const STASH_TTL_SECONDS = 60 * 60 * 4 // 4 часа
 
+// Иерархия ролей. Можно impersonate ТОЛЬКО того, у кого rank СТРОГО НИЖЕ
+// твоего. Кастомные роли получают rank по access_type:
+//   admin_panel custom → 40 (между admin и student)
+//   student_panel custom → 20
+//   no_access custom → 0
+function getRoleRank(roleCode: string, accessType: string): number {
+  switch (roleCode) {
+    case 'owner': return 100
+    case 'super_admin': return 80
+    case 'admin': return 60
+    case 'curator':
+    case 'sales':
+    case 'marketer': return 40
+    case 'student': return 20
+    case 'lead':
+    case 'guest': return 0
+  }
+  // Кастомная роль
+  if (accessType === 'admin_panel') return 40
+  if (accessType === 'student_panel') return 20
+  return 0
+}
+
 export async function POST(request: Request) {
   const supabase = await createServerSupabase()
   const userResp = await supabase.auth.getUser()
@@ -63,7 +86,7 @@ export async function POST(request: Request) {
     { auth: { autoRefreshToken: false, persistSession: false } },
   )
 
-  // Защита: target должен быть в этом проекте, и мы должны иметь право его impersonate.
+  // Защита: target должен быть active member этого проекта.
   const { data: targetMember } = await svc
     .from('project_members')
     .select('id, status, roles!inner(code, access_type, label)')
@@ -71,24 +94,35 @@ export async function POST(request: Request) {
     .eq('user_id', targetUserId)
     .maybeSingle()
   if (!targetMember) return NextResponse.json({ error: 'target is not a member of this project' }, { status: 404 })
+  if ((targetMember as { status: string }).status !== 'active') {
+    return NextResponse.json({ error: 'target is not active in this project' }, { status: 400 })
+  }
 
   type RoleNode = { code: string; access_type: string; label: string }
   const targetRole = Array.isArray((targetMember as unknown as { roles: RoleNode | RoleNode[] }).roles)
     ? ((targetMember as unknown as { roles: RoleNode[] }).roles[0])
     : ((targetMember as unknown as { roles: RoleNode }).roles)
 
-  // Нельзя impersonate владельца проекта если ты не владелец
-  if (targetRole.code === 'owner') {
-    const { data: myMember } = await svc
-      .from('project_members')
-      .select('roles!inner(code)')
-      .eq('project_id', projectId).eq('user_id', cur.id).maybeSingle()
-    const myRole = Array.isArray((myMember as unknown as { roles: RoleNode | RoleNode[] } | null)?.roles)
-      ? ((myMember as unknown as { roles: RoleNode[] }).roles[0]?.code)
-      : ((myMember as unknown as { roles: RoleNode } | null)?.roles?.code)
-    if (myRole !== 'owner') {
-      return NextResponse.json({ error: 'only owner can impersonate owner' }, { status: 403 })
-    }
+  // Иерархия ролей: можно impersonate ТОЛЬКО того кто строго ниже тебя.
+  const { data: myMember } = await svc
+    .from('project_members')
+    .select('roles!inner(code, access_type)')
+    .eq('project_id', projectId).eq('user_id', cur.id).maybeSingle()
+  const myRole = Array.isArray((myMember as unknown as { roles: RoleNode | RoleNode[] } | null)?.roles)
+    ? ((myMember as unknown as { roles: RoleNode[] }).roles[0])
+    : ((myMember as unknown as { roles: RoleNode } | null)?.roles)
+  if (!myRole) {
+    return NextResponse.json({ error: 'you are not a member of this project' }, { status: 403 })
+  }
+
+  const myRank = getRoleRank(myRole.code, myRole.access_type)
+  const targetRank = getRoleRank(targetRole.code, targetRole.access_type)
+
+  if (targetRank >= myRank) {
+    return NextResponse.json({
+      error: 'cannot impersonate user with equal or higher role',
+      hint: `Ваша роль на уровне ${myRank}, целевая на уровне ${targetRank}. Войти можно только под ту, что ниже.`,
+    }, { status: 403 })
   }
 
   // Получаем email target user-а через admin API

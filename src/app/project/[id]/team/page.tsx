@@ -427,6 +427,24 @@ function DangerZone({ members, onLeave, onTransfer }: {
   )
 }
 
+// Иерархия ролей — должна совпадать с серверной в /api/team/impersonate.
+function getRoleRank(roleCode: string, accessType: string): number {
+  switch (roleCode) {
+    case 'owner': return 100
+    case 'super_admin': return 80
+    case 'admin': return 60
+    case 'curator':
+    case 'sales':
+    case 'marketer': return 40
+    case 'student': return 20
+    case 'lead':
+    case 'guest': return 0
+  }
+  if (accessType === 'admin_panel') return 40
+  if (accessType === 'student_panel') return 20
+  return 0
+}
+
 function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCancelInvite, onImpersonate }: {
   members: Member[]
   invitations: Invitation[]
@@ -436,6 +454,8 @@ function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCan
   onCancelInvite: (id: string) => void
   onImpersonate: (userId: string, label: string) => void
 }) {
+  const me = members.find(m => m.is_self)
+  const myRank = me ? getRoleRank(me.role_code, me.access_type) : 0
   return (
     <div className="space-y-6">
       <div>
@@ -470,11 +490,11 @@ function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCan
                     ))}
                   </select>
                 )}
-                {!m.is_self && (
+                {!m.is_self && m.status === 'active' && getRoleRank(m.role_code, m.access_type) < myRank && (
                   <button
                     onClick={() => onImpersonate(m.user_id, m.full_name || m.email || 'участника')}
                     className="text-xs px-2 py-1 rounded-md text-amber-700 hover:bg-amber-50 border border-amber-200"
-                    title="Войти от его лица"
+                    title="Войти от его лица для тестирования"
                   >
                     👁 Войти как
                   </button>

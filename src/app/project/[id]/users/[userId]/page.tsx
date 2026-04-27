@@ -45,26 +45,23 @@ export default function UserCardPage() {
   useEffect(() => { load() }, [userId])
 
   function startEdit() {
+    // Кнопка ✎ рядом с именем в шапке. Редактируется ТОЛЬКО full_name —
+    // остальные контакты (email/phone/telegram/...) защищены от случайной
+    // правки и редактируются только через вкладку «Поля» (per-field).
     if (!customer) return
-    setEditData({
-      full_name: customer.full_name,
-      email: customer.email,
-      phone: customer.phone,
-      telegram_username: customer.telegram_username,
-      instagram: customer.instagram,
-      vk: customer.vk,
-      whatsapp: customer.whatsapp,
-    })
+    setEditData({ full_name: customer.full_name })
     setEditMode(true)
   }
 
   async function saveEdit() {
     if (!customer) return
     setSaving(true)
-    const { data } = await supabase.from('customers').update(editData).eq('id', customer.id).select().single()
+    const update: Partial<CustomerRow> = { full_name: editData.full_name ?? null }
+    const { data } = await supabase.from('customers').update(update).eq('id', customer.id).select().single()
     if (data) setCustomer(prev => prev ? { ...prev, ...(data as CustomerRow) } : prev)
     setSaving(false)
     setEditMode(false)
+    setEditData({})
   }
 
   async function toggleBlock() {
@@ -133,19 +130,38 @@ export default function UserCardPage() {
             </div>
             <div className="min-w-0 flex-1">
               {editMode ? (
-                <input
-                  type="text"
-                  value={editData.full_name ?? ''}
-                  onChange={e => setEditData(d => ({ ...d, full_name: e.target.value }))}
-                  placeholder="Имя"
-                  className="text-2xl font-semibold text-gray-900 border-b border-[#6A55F8] focus:outline-none bg-transparent w-full"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editData.full_name ?? ''}
+                    onChange={e => setEditData(d => ({ ...d, full_name: e.target.value }))}
+                    placeholder="Имя"
+                    onKeyDown={e => { if (e.key === 'Escape') { setEditMode(false); setEditData({}) } }}
+                    className="text-2xl font-semibold text-gray-900 border-b border-[#6A55F8] focus:outline-none bg-transparent flex-1"
+                  />
+                  <button onClick={saveEdit} disabled={saving} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-[#6A55F8] text-white hover:bg-[#5040D6] disabled:opacity-50">
+                    {saving ? '…' : 'Сохранить'}
+                  </button>
+                  <button onClick={() => { setEditMode(false); setEditData({}) }} className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
+                    Отмена
+                  </button>
+                </div>
               ) : (() => {
                 const isCodeOnly = !customer.full_name && !customer.telegram_username
                 return (
-                  <h1 className={`text-2xl font-semibold truncate ${isCodeOnly ? 'text-gray-500 font-mono' : 'text-gray-900'}`}>
-                    {customerDisplayName(customer)}
-                  </h1>
+                  <div className="group flex items-center gap-2">
+                    <h1 className={`text-2xl font-semibold truncate ${isCodeOnly ? 'text-gray-500 font-mono' : 'text-gray-900'}`}>
+                      {customerDisplayName(customer)}
+                    </h1>
+                    <button
+                      onClick={startEdit}
+                      className="text-sm text-gray-300 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Изменить имя"
+                    >
+                      ✎
+                    </button>
+                  </div>
                 )
               })()}
               {customer.public_code && (customer.full_name || customer.telegram_username) && (
@@ -203,11 +219,6 @@ export default function UserCardPage() {
               >
                 ✈ Открыть Telegram
               </a>
-            )}
-            {!editMode && (
-              <button onClick={startEdit} className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-300">
-                ✏ Редактировать
-              </button>
             )}
             <button
               onClick={toggleBlock}
@@ -270,15 +281,6 @@ export default function UserCardPage() {
           </div>
         )}
 
-        {editMode && (
-          <EditFormFields
-            data={editData}
-            onChange={setEditData}
-            saving={saving}
-            onSave={saveEdit}
-            onCancel={() => setEditMode(false)}
-          />
-        )}
       </div>
 
       {/* Tabs */}
@@ -423,50 +425,6 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
     <div className="bg-[#FAFAFD] rounded-xl px-3 py-2.5" title={hint}>
       <div className="text-xs text-gray-400">{label}</div>
       <div className="text-sm font-semibold text-gray-900 mt-0.5">{value}</div>
-    </div>
-  )
-}
-
-function EditFormFields({
-  data, onChange, saving, onSave, onCancel,
-}: {
-  data: Partial<CustomerRow>
-  onChange: (d: Partial<CustomerRow>) => void
-  saving: boolean
-  onSave: () => void
-  onCancel: () => void
-}) {
-  const fields: { key: keyof CustomerRow; label: string; type: string }[] = [
-    { key: 'email', label: 'Email', type: 'email' },
-    { key: 'phone', label: 'Телефон', type: 'tel' },
-    { key: 'telegram_username', label: 'Telegram', type: 'text' },
-    { key: 'instagram', label: 'Instagram', type: 'text' },
-    { key: 'vk', label: 'ВКонтакте', type: 'text' },
-    { key: 'whatsapp', label: 'WhatsApp', type: 'text' },
-  ]
-  return (
-    <div className="border-t border-gray-100 pt-4 space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        {fields.map(f => (
-          <label key={f.key} className="block">
-            <span className="text-xs text-gray-500">{f.label}</span>
-            <input
-              type={f.type}
-              value={(data[f.key] as string) ?? ''}
-              onChange={e => onChange({ ...data, [f.key]: e.target.value || null })}
-              className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-            />
-          </label>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <button onClick={onSave} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={{ backgroundColor: '#6A55F8' }}>
-          {saving ? 'Сохраняю…' : 'Сохранить'}
-        </button>
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-gray-500 hover:text-gray-700">
-          Отмена
-        </button>
-      </div>
     </div>
   )
 }
@@ -964,14 +922,209 @@ function TouchpointsTab({ customerId }: { customerId: string }) {
 type CustomField = { id: string; field_key: string; field_label: string; field_type: 'text' | 'number' | 'boolean' | 'select' | 'date'; field_options: { options?: string[] } | null }
 type FieldValue = { field_id: string; value_text: string | null; value_number: number | null; value_boolean: boolean | null; value_date: string | null }
 
+// Per-field редактор контактов: read-only по умолчанию, отдельная кнопка
+// «Редактировать» рядом с каждым полем. Случайно стереть телефон или email
+// невозможно — нужно явно нажать карандаш, потом «Сохранить».
+function ContactFieldRow({
+  label, type, placeholder, value, onSave, isLink, linkPrefix,
+}: {
+  label: string
+  type: string
+  placeholder?: string
+  value: string | null
+  onSave: (newValue: string | null) => Promise<{ ok: boolean; error?: string }>
+  isLink?: boolean
+  linkPrefix?: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  function startEdit() {
+    setDraft(value ?? '')
+    setError('')
+    setEditing(true)
+  }
+  async function commit() {
+    setSaving(true)
+    setError('')
+    const trimmed = draft.trim()
+    const result = await onSave(trimmed === '' ? null : trimmed)
+    setSaving(false)
+    if (!result.ok) {
+      setError(result.error ?? 'Не удалось сохранить')
+      return
+    }
+    setEditing(false)
+  }
+  function cancel() {
+    setDraft('')
+    setEditing(false)
+    setError('')
+  }
+
+  return (
+    <div className="block">
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      {editing ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            type={type}
+            autoFocus
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            placeholder={placeholder}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') cancel() }}
+            className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none"
+          />
+          <button onClick={commit} disabled={saving} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-[#6A55F8] text-white hover:bg-[#5040D6] disabled:opacity-50">
+            {saving ? '…' : 'Сохранить'}
+          </button>
+          <button onClick={cancel} className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
+            Отмена
+          </button>
+        </div>
+      ) : (
+        <div className="group flex items-center gap-2 min-h-[34px]">
+          {value ? (
+            isLink && linkPrefix ? (
+              <a href={`${linkPrefix}${value}`} target="_blank" rel="noopener noreferrer" className="text-sm text-[#6A55F8] hover:underline truncate flex-1">
+                {value}
+              </a>
+            ) : (
+              <span className="text-sm text-gray-900 truncate flex-1">{value}</span>
+            )
+          ) : (
+            <span className="text-sm text-gray-300 italic flex-1">не указан</span>
+          )}
+          <button
+            onClick={startEdit}
+            className="text-xs text-gray-400 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            title="Редактировать"
+          >
+            ✎
+          </button>
+        </div>
+      )}
+      {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
+    </div>
+  )
+}
+
+// Per-field редактор для кастомных полей (text/number/date/boolean/select).
+function CustomFieldRow({
+  field, value, onSave,
+}: {
+  field: CustomField
+  value: FieldValue | undefined
+  onSave: (next: Partial<FieldValue>) => Promise<{ ok: boolean; error?: string }>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<Partial<FieldValue>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  function startEdit() {
+    setDraft({
+      value_text: value?.value_text ?? null,
+      value_number: value?.value_number ?? null,
+      value_boolean: value?.value_boolean ?? null,
+      value_date: value?.value_date ?? null,
+    })
+    setError('')
+    setEditing(true)
+  }
+  async function commit() {
+    setSaving(true)
+    setError('')
+    const result = await onSave(draft)
+    setSaving(false)
+    if (!result.ok) { setError(result.error ?? 'Не удалось сохранить'); return }
+    setEditing(false)
+  }
+  function cancel() {
+    setDraft({})
+    setEditing(false)
+    setError('')
+  }
+
+  function readView(): React.ReactNode {
+    if (field.field_type === 'text' || field.field_type === 'select') {
+      return value?.value_text ? <span className="text-sm text-gray-900">{value.value_text}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
+    }
+    if (field.field_type === 'number') {
+      return value?.value_number !== null && value?.value_number !== undefined ? <span className="text-sm text-gray-900">{value.value_number}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
+    }
+    if (field.field_type === 'boolean') {
+      if (value?.value_boolean === null || value?.value_boolean === undefined) return <span className="text-sm text-gray-300 italic">не указано</span>
+      return <span className="text-sm text-gray-900">{value.value_boolean ? 'Да' : 'Нет'}</span>
+    }
+    if (field.field_type === 'date') {
+      return value?.value_date ? <span className="text-sm text-gray-900">{new Date(value.value_date).toLocaleDateString('ru')}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
+    }
+    return <span className="text-sm text-gray-300 italic">—</span>
+  }
+
+  function editView(): React.ReactNode {
+    if (field.field_type === 'text') {
+      return <input type="text" autoFocus value={draft.value_text ?? ''} onChange={e => setDraft(d => ({ ...d, value_text: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
+    }
+    if (field.field_type === 'number') {
+      return <input type="number" autoFocus value={draft.value_number ?? ''} onChange={e => setDraft(d => ({ ...d, value_number: e.target.value === '' ? null : Number(e.target.value) }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
+    }
+    if (field.field_type === 'boolean') {
+      return (
+        <select autoFocus value={draft.value_boolean === null || draft.value_boolean === undefined ? '' : draft.value_boolean ? 'true' : 'false'} onChange={e => setDraft(d => ({ ...d, value_boolean: e.target.value === '' ? null : e.target.value === 'true' }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none">
+          <option value="">—</option>
+          <option value="true">Да</option>
+          <option value="false">Нет</option>
+        </select>
+      )
+    }
+    if (field.field_type === 'date') {
+      return <input type="date" autoFocus value={(draft.value_date ?? '').slice(0, 10)} onChange={e => setDraft(d => ({ ...d, value_date: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
+    }
+    if (field.field_type === 'select') {
+      return (
+        <select autoFocus value={draft.value_text ?? ''} onChange={e => setDraft(d => ({ ...d, value_text: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none">
+          <option value="">—</option>
+          {(field.field_options?.options ?? []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      )
+    }
+    return null
+  }
+
+  return (
+    <div className="block">
+      <div className="text-xs text-gray-500 mb-1">{field.field_label}</div>
+      {editing ? (
+        <div className="flex items-center gap-1.5">
+          {editView()}
+          <button onClick={commit} disabled={saving} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-[#6A55F8] text-white hover:bg-[#5040D6] disabled:opacity-50">
+            {saving ? '…' : 'Сохранить'}
+          </button>
+          <button onClick={cancel} className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
+            Отмена
+          </button>
+        </div>
+      ) : (
+        <div className="group flex items-center gap-2 min-h-[34px]">
+          <div className="flex-1 truncate">{readView()}</div>
+          <button onClick={startEdit} className="text-xs text-gray-400 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" title="Редактировать">✎</button>
+        </div>
+      )}
+      {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
+    </div>
+  )
+}
+
 function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
   const supabase = createClient()
   const [fields, setFields] = useState<CustomField[]>([])
   const [values, setValues] = useState<Map<string, FieldValue>>(new Map())
   const [loading, setLoading] = useState(true)
-  const [draftValues, setDraftValues] = useState<Map<string, Partial<FieldValue>>>(new Map())
-  const [contactDraft, setContactDraft] = useState<Partial<CustomerRow>>({})
-  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -990,82 +1143,77 @@ function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer.id])
 
-  function getValue(f: CustomField): FieldValue {
-    const draft = draftValues.get(f.id)
-    const stored = values.get(f.id)
-    return {
-      field_id: f.id,
-      value_text:    draft?.value_text    ?? stored?.value_text    ?? null,
-      value_number:  draft?.value_number  ?? stored?.value_number  ?? null,
-      value_boolean: draft?.value_boolean ?? stored?.value_boolean ?? null,
-      value_date:    draft?.value_date    ?? stored?.value_date    ?? null,
-    }
+  async function saveContact(key: keyof CustomerRow, newValue: string | null): Promise<{ ok: boolean; error?: string }> {
+    const { data, error } = await supabase.from('customers').update({ [key]: newValue }).eq('id', customer.id).select().single()
+    if (error) return { ok: false, error: error.message }
+    if (data) onUpdated(data as Partial<CustomerRow>)
+    return { ok: true }
   }
 
-  function updateDraft(fieldId: string, patch: Partial<FieldValue>) {
-    setDraftValues(prev => {
+  async function saveField(fieldId: string, draft: Partial<FieldValue>): Promise<{ ok: boolean; error?: string }> {
+    const { error } = await supabase.from('customer_field_values').upsert({
+      customer_id: customer.id,
+      field_id: fieldId,
+      value_text: draft.value_text ?? null,
+      value_number: draft.value_number ?? null,
+      value_boolean: draft.value_boolean ?? null,
+      value_date: draft.value_date ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'customer_id,field_id' })
+    if (error) return { ok: false, error: error.message }
+    setValues(prev => {
       const next = new Map(prev)
-      next.set(fieldId, { ...(next.get(fieldId) ?? {}), ...patch })
-      return next
-    })
-  }
-
-  const hasContactChanges = Object.keys(contactDraft).length > 0
-  const hasFieldChanges = draftValues.size > 0
-  const isDirty = hasContactChanges || hasFieldChanges
-
-  async function saveAll() {
-    setSaving(true)
-    if (hasContactChanges) {
-      const { data } = await supabase.from('customers').update(contactDraft).eq('id', customer.id).select().single()
-      if (data) onUpdated(data as Partial<CustomerRow>)
-      setContactDraft({})
-    }
-    for (const [fieldId, draft] of draftValues) {
-      await supabase.from('customer_field_values').upsert({
-        customer_id: customer.id,
+      next.set(fieldId, {
         field_id: fieldId,
         value_text: draft.value_text ?? null,
         value_number: draft.value_number ?? null,
         value_boolean: draft.value_boolean ?? null,
         value_date: draft.value_date ?? null,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'customer_id,field_id' })
-    }
-    // reload values
-    const vRes = await supabase.from('customer_field_values').select('field_id, value_text, value_number, value_boolean, value_date').eq('customer_id', customer.id)
-    setValues(new Map(((vRes.data ?? []) as FieldValue[]).map(v => [v.field_id, v])))
-    setDraftValues(new Map())
-    setSaving(false)
+      })
+      return next
+    })
+    return { ok: true }
   }
 
   if (loading) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
 
-  const contactFields: { key: keyof CustomerRow; label: string; type: string }[] = [
-    { key: 'full_name', label: 'Имя', type: 'text' },
-    { key: 'email', label: 'Email', type: 'email' },
-    { key: 'phone', label: 'Телефон', type: 'tel' },
-    { key: 'telegram_username', label: 'Telegram', type: 'text' },
-    { key: 'instagram', label: 'Instagram', type: 'text' },
-    { key: 'vk', label: 'ВКонтакте', type: 'text' },
-    { key: 'whatsapp', label: 'WhatsApp', type: 'text' },
+  type ContactField = {
+    key: keyof CustomerRow
+    label: string
+    type: string
+    placeholder?: string
+    isLink?: boolean
+    linkPrefix?: string
+  }
+  const contactFields: ContactField[] = [
+    { key: 'full_name', label: 'Имя', type: 'text', placeholder: 'Иван Иванов' },
+    { key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com' },
+    { key: 'phone', label: 'Телефон', type: 'tel', placeholder: '+7 999 123-45-67' },
+    { key: 'telegram_username', label: 'Telegram', type: 'text', placeholder: 'username (без @)', isLink: true, linkPrefix: 'https://t.me/' },
+    { key: 'instagram', label: 'Instagram', type: 'text', placeholder: 'username', isLink: true, linkPrefix: 'https://instagram.com/' },
+    { key: 'vk', label: 'ВКонтакте', type: 'text', placeholder: 'id или username', isLink: true, linkPrefix: 'https://vk.com/' },
+    { key: 'whatsapp', label: 'WhatsApp', type: 'tel', placeholder: '+7 999 123-45-67' },
   ]
 
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Контакты</h3>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="flex items-center gap-2 mb-3">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Контакты</h3>
+          <span className="text-xs text-gray-400">· наведите на поле и нажмите ✎ чтобы изменить</span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-4">
           {contactFields.map(f => (
-            <label key={f.key} className="block">
-              <span className="text-xs text-gray-500">{f.label}</span>
-              <input
-                type={f.type}
-                value={(contactDraft[f.key] !== undefined ? contactDraft[f.key] : customer[f.key]) as string ?? ''}
-                onChange={e => setContactDraft(d => ({ ...d, [f.key]: e.target.value || null }))}
-                className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-              />
-            </label>
+            <ContactFieldRow
+              key={f.key}
+              label={f.label}
+              type={f.type}
+              placeholder={f.placeholder}
+              isLink={f.isLink}
+              linkPrefix={f.linkPrefix}
+              value={(customer[f.key] as string) ?? null}
+              onSave={(v) => saveContact(f.key, v)}
+            />
           ))}
         </div>
       </div>
@@ -1073,63 +1221,19 @@ function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: 
       {fields.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Дополнительные поля</h3>
-          <div className="grid grid-cols-2 gap-3">
-            {fields.map(f => {
-              const v = getValue(f)
-              return (
-                <label key={f.id} className="block">
-                  <span className="text-xs text-gray-500">{f.field_label}</span>
-                  {f.field_type === 'text' && (
-                    <input type="text" value={v.value_text ?? ''} onChange={e => updateDraft(f.id, { value_text: e.target.value || null })}
-                      className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                  )}
-                  {f.field_type === 'number' && (
-                    <input type="number" value={v.value_number ?? ''} onChange={e => updateDraft(f.id, { value_number: e.target.value === '' ? null : Number(e.target.value) })}
-                      className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                  )}
-                  {f.field_type === 'boolean' && (
-                    <select
-                      value={v.value_boolean === null ? '' : v.value_boolean ? 'true' : 'false'}
-                      onChange={e => updateDraft(f.id, { value_boolean: e.target.value === '' ? null : e.target.value === 'true' })}
-                      className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-                    >
-                      <option value="">—</option>
-                      <option value="true">Да</option>
-                      <option value="false">Нет</option>
-                    </select>
-                  )}
-                  {f.field_type === 'date' && (
-                    <input type="date" value={(v.value_date ?? '').slice(0, 10)} onChange={e => updateDraft(f.id, { value_date: e.target.value || null })}
-                      className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]" />
-                  )}
-                  {f.field_type === 'select' && (
-                    <select
-                      value={v.value_text ?? ''}
-                      onChange={e => updateDraft(f.id, { value_text: e.target.value || null })}
-                      className="mt-0.5 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#6A55F8]"
-                    >
-                      <option value="">—</option>
-                      {(f.field_options?.options ?? []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
-                  )}
-                </label>
-              )
-            })}
+          <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+            {fields.map(f => (
+              <CustomFieldRow
+                key={f.id}
+                field={f}
+                value={values.get(f.id)}
+                onSave={(draft) => saveField(f.id, draft)}
+              />
+            ))}
           </div>
         </div>
       )}
 
-      {isDirty && (
-        <div className="flex items-center gap-2 sticky bottom-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-          <span className="text-xs text-amber-700 font-medium">Изменения не сохранены</span>
-          <button onClick={saveAll} disabled={saving} className="ml-auto text-sm font-medium text-white px-3 py-1 rounded-lg disabled:opacity-50" style={{ backgroundColor: '#6A55F8' }}>
-            {saving ? 'Сохраняю…' : 'Сохранить'}
-          </button>
-          <button onClick={() => { setContactDraft({}); setDraftValues(new Map()) }} className="text-sm text-gray-500 hover:text-gray-800">
-            Сбросить
-          </button>
-        </div>
-      )}
     </div>
   )
 }
