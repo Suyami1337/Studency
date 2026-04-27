@@ -73,24 +73,19 @@ export async function POST(request: NextRequest) {
         data: { order_id: orderId, amount: sum },
       })
 
-      // Open product access (if order has tariff_id → tariff_access)
+      // Авто-выдача доступа через RPC grant_tariff_access (миграция 47).
+      // expires_at рассчитывается в БД по tariffs.access_type/access_days/access_until_date.
       if (order.tariff_id) {
-        const { data: tariff } = await supabase
-          .from('tariffs').select('product_id, duration_days').eq('id', order.tariff_id).single()
-
-        if (tariff?.product_id) {
-          const expiresAt = tariff.duration_days
-            ? new Date(Date.now() + tariff.duration_days * 24 * 60 * 60 * 1000).toISOString()
-            : null
-
-          await supabase.from('tariff_access').upsert({
-            customer_id: order.customer_id,
-            product_id: tariff.product_id,
-            tariff_id: order.tariff_id,
-            granted_at: new Date().toISOString(),
-            expires_at: expiresAt,
-          }, { onConflict: 'customer_id,tariff_id' })
-        }
+        const { error: grantErr } = await supabase.rpc('grant_tariff_access', {
+          p_project_id: order.project_id,
+          p_customer_id: order.customer_id,
+          p_tariff_id: order.tariff_id,
+          p_source: 'order',
+          p_source_order_id: orderId,
+          p_granted_by: null,
+          p_notes: 'Автовыдача после оплаты Prodamus',
+        })
+        if (grantErr) console.error('prodamus grant_tariff_access error:', grantErr)
       }
 
       // CRM автоматизация

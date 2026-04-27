@@ -10,7 +10,7 @@ import {
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
-type TabId = 'activity' | 'orders' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
+type TabId = 'activity' | 'orders' | 'access' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
 
 export default function UserCardPage() {
   const supabase = createClient()
@@ -287,6 +287,7 @@ export default function UserCardPage() {
           {([
             { id: 'activity',    label: 'Активность',   icon: '📊' },
             { id: 'orders',      label: 'Заказы',       icon: '🛒' },
+            { id: 'access',      label: 'Доступы',      icon: '🔑' },
             { id: 'funnels',     label: 'Воронки',      icon: '🎯' },
             { id: 'touchpoints', label: 'Точки входа',  icon: '📍' },
             { id: 'fields',      label: 'Поля',         icon: '📋' },
@@ -308,6 +309,7 @@ export default function UserCardPage() {
         <div className="p-5">
           {tab === 'activity' && <ActivityTimeline customerId={customer.id} />}
           {tab === 'orders' && <OrdersTab customerId={customer.id} />}
+          {tab === 'access' && <AccessTab projectId={customer.project_id} customerId={customer.id} />}
           {tab === 'funnels' && <FunnelsTab customerId={customer.id} />}
           {tab === 'touchpoints' && <TouchpointsTab customerId={customer.id} />}
           {tab === 'fields' && <FieldsTab customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />}
@@ -555,6 +557,240 @@ function OrdersTab({ customerId }: { customerId: string }) {
         })}
       </tbody>
     </table>
+  )
+}
+
+// ─── AccessTab ───
+type AccessRow = {
+  id: string
+  granted_at: string
+  expires_at: string | null
+  status: string
+  is_expired: boolean
+  source: string
+  source_order_id: string | null
+  notes: string | null
+  tariff_id: string
+  tariff_name: string
+  tariff_price: number
+  product_name: string
+  access_type: string
+}
+
+type TariffOption = {
+  id: string
+  name: string
+  price: number
+  product_name: string
+  access_type: string
+  access_days: number | null
+  is_active: boolean
+  product_active: boolean
+}
+
+function AccessTab({ projectId, customerId }: { projectId: string; customerId: string }) {
+  const [access, setAccess] = useState<AccessRow[] | null>(null)
+  const [tariffs, setTariffs] = useState<TariffOption[]>([])
+  const [error, setError] = useState('')
+  const [showGrant, setShowGrant] = useState(false)
+  const [grantTariffId, setGrantTariffId] = useState('')
+  const [grantMode, setGrantMode] = useState<'free' | 'create_paid_order'>('free')
+  const [grantNotes, setGrantNotes] = useState('')
+  const [granting, setGranting] = useState(false)
+
+  async function load() {
+    setError('')
+    const [a, t] = await Promise.all([
+      fetch(`/api/projects/${projectId}/customers/${customerId}/access`).then(r => r.json()),
+      fetch(`/api/projects/${projectId}/tariffs`).then(r => r.json()),
+    ])
+    setAccess(a.access ?? [])
+    setTariffs((t.tariffs ?? []).filter((x: TariffOption) => x.is_active && x.product_active))
+    if (!grantTariffId && t.tariffs?.[0]) setGrantTariffId(t.tariffs[0].id)
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [customerId])
+
+  async function handleGrant(e: React.FormEvent) {
+    e.preventDefault()
+    if (!grantTariffId) return
+    setGranting(true)
+    setError('')
+    const res = await fetch(`/api/projects/${projectId}/customers/${customerId}/access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tariff_id: grantTariffId, mode: grantMode, notes: grantNotes || undefined }),
+    })
+    setGranting(false)
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось выдать доступ')
+      return
+    }
+    setShowGrant(false)
+    setGrantNotes('')
+    await load()
+  }
+
+  async function handleRevoke(accessId: string, label: string) {
+    if (!confirm(`Отозвать доступ к «${label}»? Клиент сразу потеряет доступ к курсам этого тарифа.`)) return
+    const res = await fetch(`/api/projects/${projectId}/customer-access/${accessId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось отозвать')
+      return
+    }
+    await load()
+  }
+
+  function formatExpires(row: AccessRow): string {
+    if (!row.expires_at) return 'Бессрочно'
+    const d = new Date(row.expires_at)
+    if (row.is_expired) return `Истёк ${d.toLocaleDateString('ru')}`
+    return `до ${d.toLocaleDateString('ru')}`
+  }
+
+  function statusBadge(row: AccessRow) {
+    if (row.status === 'revoked') return { bg: '#FEE2E2', fg: '#EF4444', label: 'Отозван' }
+    if (row.is_expired) return { bg: '#FEF3C7', fg: '#F59E0B', label: 'Истёк' }
+    return { bg: '#D1FAE5', fg: '#10B981', label: 'Активен' }
+  }
+
+  if (access === null) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-3">
+        <p className="text-xs text-gray-500">
+          {access.length === 0 ? 'Доступов нет' : `${access.length} ${access.length === 1 ? 'доступ' : 'доступов'}`}
+        </p>
+        <button
+          onClick={() => setShowGrant(true)}
+          className="px-3 py-1.5 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium"
+        >
+          + Выдать доступ
+        </button>
+      </div>
+
+      {error && <div className="mb-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>}
+
+      {access.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          <div className="text-3xl mb-2">🔑</div>
+          <div className="text-sm">Доступов к продуктам пока нет</div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {access.map(a => {
+            const badge = statusBadge(a)
+            return (
+              <div key={a.id} className="bg-[#FAFAFD] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-gray-900 truncate">{a.product_name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                    <span>{a.tariff_name}</span>
+                    <span className="text-gray-300">·</span>
+                    <span>{formatExpires(a)}</span>
+                    <span className="text-gray-300">·</span>
+                    <span>выдан {new Date(a.granted_at).toLocaleDateString('ru')}</span>
+                    {a.source === 'order' && a.source_order_id && <><span className="text-gray-300">·</span><span>заказ</span></>}
+                    {a.source === 'manual' && <><span className="text-gray-300">·</span><span>вручную</span></>}
+                  </div>
+                  {a.notes && <div className="text-xs text-gray-400 mt-1 italic">«{a.notes}»</div>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="rounded-full px-2.5 py-0.5 text-xs font-medium" style={{ backgroundColor: badge.bg, color: badge.fg }}>
+                    {badge.label}
+                  </span>
+                  {a.status === 'active' && !a.is_expired && (
+                    <button
+                      onClick={() => handleRevoke(a.id, a.product_name)}
+                      className="text-sm text-gray-400 hover:text-red-600 px-1"
+                      title="Отозвать"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {showGrant && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <form onSubmit={handleGrant} className="bg-white rounded-2xl border border-gray-100 p-8 w-full max-w-md">
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">Выдать доступ</h2>
+            <p className="text-sm text-gray-500 mb-6">Выберите продукт + тариф, и каким способом выдать доступ.</p>
+
+            {error && <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Продукт и тариф</label>
+                {tariffs.length === 0 ? (
+                  <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                    Нет активных тарифов в проекте. Создайте продукт с тарифом в разделе «Продукты».
+                  </div>
+                ) : (
+                  <select
+                    value={grantTariffId}
+                    onChange={e => setGrantTariffId(e.target.value)}
+                    required
+                    className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+                  >
+                    {tariffs.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.product_name} · {t.name} {t.price > 0 ? `· ${formatMoney(t.price)}` : '· бесплатно'}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Способ выдачи</label>
+                <div className="space-y-2">
+                  <label className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer ${grantMode === 'free' ? 'border-[#6A55F8]/40 bg-[#F8F6FF]' : 'border-gray-200'}`}>
+                    <input type="radio" name="grant_mode" value="free" checked={grantMode === 'free'} onChange={() => setGrantMode('free')} className="mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">Бесплатно</div>
+                      <div className="text-xs text-gray-500 mt-0.5">Доступ открывается сразу. Создаётся заказ-подарок (₽0) для аудита.</div>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer ${grantMode === 'create_paid_order' ? 'border-[#6A55F8]/40 bg-[#F8F6FF]' : 'border-gray-200'}`}>
+                    <input type="radio" name="grant_mode" value="create_paid_order" checked={grantMode === 'create_paid_order'} onChange={() => setGrantMode('create_paid_order')} className="mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">Создать заказ к оплате</div>
+                      <div className="text-xs text-gray-500 mt-0.5">Заказ создаётся в статусе «Новый». Доступ откроется когда заказ будет помечен оплаченным.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Заметка (необязательно)</label>
+                <textarea
+                  value={grantNotes}
+                  onChange={e => setGrantNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Промо для давнего клиента / Тестовый доступ / …"
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-6">
+              <button type="button" onClick={() => { setShowGrant(false); setGrantNotes(''); setError('') }} className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm">Отмена</button>
+              <button type="submit" disabled={granting || tariffs.length === 0} className="flex-1 py-2.5 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
+                {granting ? 'Сохраняем…' : grantMode === 'free' ? 'Выдать бесплатно' : 'Создать заказ'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
   )
 }
 
