@@ -22,7 +22,7 @@ export async function PATCH(
   const allowed = await hasPermission(supabase, projectId, user.id, PERMISSIONS.TEAM_ROLES_EDIT)
   if (!allowed) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { label?: string; description?: string; permissions?: string[] }
+  let body: { label?: string; description?: string; permissions?: string[]; sort_order?: number }
   try { body = await request.json() } catch { return NextResponse.json({ error: 'invalid json' }, { status: 400 }) }
 
   const svc = createSbClient(
@@ -58,6 +58,11 @@ export async function PATCH(
   }
   if (body.description !== undefined && !role.is_system) {
     update.description = body.description
+  }
+  // sort_order — разрешено для любых ролей (включая системные); это просто
+  // отображение в UI, безопасности не касается.
+  if (body.sort_order !== undefined && Number.isFinite(body.sort_order)) {
+    update.sort_order = body.sort_order
   }
   if (Object.keys(update).length > 0) {
     const { error: updErr } = await svc.from('roles').update(update).eq('id', roleId)
