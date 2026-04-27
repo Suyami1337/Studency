@@ -69,6 +69,12 @@ export default function TeamPage() {
   const [inviteRoleId, setInviteRoleId] = useState('')
   const [inviting, setInviting] = useState(false)
 
+  // Transfer ownership
+  const [showTransfer, setShowTransfer] = useState(false)
+  const [transferTargetId, setTransferTargetId] = useState('')
+  const [transferPassword, setTransferPassword] = useState('')
+  const [transferring, setTransferring] = useState(false)
+
   async function loadAll() {
     setLoading(true)
     try {
@@ -148,6 +154,38 @@ export default function TeamPage() {
     await loadAll()
   }
 
+  async function handleLeaveProject() {
+    if (!confirm('Покинуть проект? Доступ к данным будет потерян.')) return
+    const res = await fetch(`/api/projects/${projectId}/leave`, { method: 'POST' })
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось покинуть')
+      return
+    }
+    window.location.href = '/projects'
+  }
+
+  async function handleTransfer(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setTransferring(true)
+    const res = await fetch(`/api/projects/${projectId}/transfer-ownership`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_user_id: transferTargetId, password: transferPassword }),
+    })
+    setTransferring(false)
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось передать владение')
+      return
+    }
+    setShowTransfer(false)
+    setTransferPassword('')
+    setTransferTargetId('')
+    await loadAll()
+  }
+
   async function handleCancelInvite(invId: string) {
     if (!confirm('Отозвать приглашение? Ссылка перестанет работать.')) return
     const res = await fetch(`/api/projects/${projectId}/invitations/${invId}`, { method: 'DELETE' })
@@ -200,14 +238,21 @@ export default function TeamPage() {
       )}
 
       {tab === 'members' && (
-        <MembersTab
-          members={members}
-          invitations={invitations}
-          roles={roles}
-          onChangeRole={handleChangeRole}
-          onRemove={handleRemoveMember}
-          onCancelInvite={handleCancelInvite}
-        />
+        <>
+          <MembersTab
+            members={members}
+            invitations={invitations}
+            roles={roles}
+            onChangeRole={handleChangeRole}
+            onRemove={handleRemoveMember}
+            onCancelInvite={handleCancelInvite}
+          />
+          <DangerZone
+            members={members}
+            onLeave={handleLeaveProject}
+            onTransfer={() => setShowTransfer(true)}
+          />
+        </>
       )}
 
       {tab === 'roles' && (
@@ -217,6 +262,61 @@ export default function TeamPage() {
           projectId={projectId}
           onChange={loadAll}
         />
+      )}
+
+      {showTransfer && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <form onSubmit={handleTransfer} className="bg-white rounded-2xl border border-gray-100 p-8 w-full max-w-md">
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">Передать владение</h2>
+            <p className="text-sm text-gray-500 mb-6">Вы перестанете быть владельцем и получите роль «Главный администратор». Передать владение можно только Главному администратору.</p>
+
+            {error && (
+              <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Кому передать</label>
+                <select
+                  value={transferTargetId}
+                  onChange={e => setTransferTargetId(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+                >
+                  <option value="">— Выберите Главного администратора</option>
+                  {members.filter(m => m.role_code === 'super_admin').map(m => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {m.full_name || m.email}
+                    </option>
+                  ))}
+                </select>
+                {members.filter(m => m.role_code === 'super_admin').length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    Нет Главных администраторов — сначала повысьте кого-то из админов до этой роли.
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Ваш пароль</label>
+                <input
+                  type="password"
+                  value={transferPassword}
+                  onChange={e => setTransferPassword(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+                  placeholder="Подтвердите паролем"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-6">
+              <button type="button" onClick={() => { setShowTransfer(false); setTransferPassword(''); setTransferTargetId(''); setError('') }} className="flex-1 py-2.5 rounded-lg border border-gray-200 text-sm">Отмена</button>
+              <button type="submit" disabled={transferring || !transferTargetId} className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium disabled:opacity-50">
+                {transferring ? 'Передаём…' : 'Передать владение'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {showInvite && (
@@ -260,6 +360,52 @@ export default function TeamPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function DangerZone({ members, onLeave, onTransfer }: {
+  members: Member[]
+  onLeave: () => void
+  onTransfer: () => void
+}) {
+  const me = members.find(m => m.is_self)
+  if (!me) return null
+
+  const isOwner = me.role_code === 'owner'
+
+  return (
+    <div className="mt-10 pt-6 border-t border-gray-200">
+      <h2 className="text-sm font-semibold text-gray-700 mb-3">Опасная зона</h2>
+      <div className="bg-white rounded-xl border border-red-100">
+        {isOwner && (
+          <div className="p-4 flex items-center justify-between border-b border-red-50">
+            <div>
+              <div className="text-sm font-medium text-gray-900">Передать владение</div>
+              <div className="text-xs text-gray-500 mt-0.5">Передаёте проект другому Главному администратору. Свою роль понижаете до Главного администратора.</div>
+            </div>
+            <button onClick={onTransfer} className="px-3 py-1.5 rounded-lg border border-red-200 text-sm text-red-600 hover:bg-red-50">
+              Передать
+            </button>
+          </div>
+        )}
+        {!isOwner && (
+          <div className="p-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium text-gray-900">Покинуть проект</div>
+              <div className="text-xs text-gray-500 mt-0.5">Выйти из команды этой школы. Доступ к её данным будет потерян.</div>
+            </div>
+            <button onClick={onLeave} className="px-3 py-1.5 rounded-lg border border-red-200 text-sm text-red-600 hover:bg-red-50">
+              Покинуть
+            </button>
+          </div>
+        )}
+        {isOwner && (
+          <div className="p-4 text-xs text-gray-400">
+            Чтобы покинуть проект, сначала передайте владение.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
