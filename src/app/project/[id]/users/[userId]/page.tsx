@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase'
 import ActivityTimeline from '@/components/users/ActivityTimeline'
 import {
   CustomerRow, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR, CLIENT_TYPE_HINT,
-  FIRST_TOUCH_KIND_LABELS,
+  FIRST_TOUCH_KIND_LABELS, customerDisplayName, customerAvatarLetter,
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
@@ -129,7 +129,7 @@ export default function UserCardPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-start gap-4 min-w-0 flex-1">
             <div className="w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-xl flex-shrink-0" style={{ backgroundColor: '#6A55F8' }}>
-              {(customer.full_name || customer.email || customer.telegram_username || '?').charAt(0).toUpperCase()}
+              {customerAvatarLetter(customer)}
             </div>
             <div className="min-w-0 flex-1">
               {editMode ? (
@@ -137,12 +137,19 @@ export default function UserCardPage() {
                   type="text"
                   value={editData.full_name ?? ''}
                   onChange={e => setEditData(d => ({ ...d, full_name: e.target.value }))}
+                  placeholder="Имя"
                   className="text-2xl font-semibold text-gray-900 border-b border-[#6A55F8] focus:outline-none bg-transparent w-full"
                 />
-              ) : (
-                <h1 className="text-2xl font-semibold text-gray-900 truncate">
-                  {customer.full_name || 'Без имени'}
-                </h1>
+              ) : (() => {
+                const isCodeOnly = !customer.full_name && !customer.telegram_username
+                return (
+                  <h1 className={`text-2xl font-semibold truncate ${isCodeOnly ? 'text-gray-500 font-mono' : 'text-gray-900'}`}>
+                    {customerDisplayName(customer)}
+                  </h1>
+                )
+              })()}
+              {customer.public_code && (customer.full_name || customer.telegram_username) && (
+                <div className="text-xs text-gray-400 font-mono mt-0.5">{customer.public_code}</div>
               )}
 
               <div className="flex items-center gap-2 flex-wrap mt-1.5">

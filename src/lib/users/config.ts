@@ -29,6 +29,7 @@ export const CLIENT_TYPE_HINT: Record<ClientType, string> = {
 export type CustomerRow = {
   id: string
   project_id: string
+  public_code: string | null   // G-1, G-2, ... — отображается вместо "Без имени"
   full_name: string | null
   email: string | null
   phone: string | null
@@ -60,6 +61,24 @@ export type CustomerRow = {
   revenue?: number
   has_paid?: boolean
   in_funnel?: boolean
+}
+
+/**
+ * Имя для отображения. Приоритет: full_name > @telegram_username > public_code.
+ * Никогда не возвращает «Без имени» — для каждого customer'а гарантирован
+ * уникальный public_code.
+ */
+export function customerDisplayName(c: Pick<CustomerRow, 'full_name' | 'telegram_username' | 'public_code' | 'id'>): string {
+  if (c.full_name && c.full_name.trim()) return c.full_name
+  if (c.telegram_username) return `@${c.telegram_username}`
+  if (c.public_code) return c.public_code
+  return c.id.slice(0, 8)  // last-resort fallback
+}
+
+/** Первая буква для аватара. */
+export function customerAvatarLetter(c: Pick<CustomerRow, 'full_name' | 'telegram_username' | 'public_code' | 'email'>): string {
+  const src = (c.full_name || c.email || c.telegram_username || c.public_code || '?').trim()
+  return src.charAt(0).toUpperCase()
 }
 
 export const FIRST_TOUCH_KIND_LABELS: Record<string, { label: string; icon: string }> = {

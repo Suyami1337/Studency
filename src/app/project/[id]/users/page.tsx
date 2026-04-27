@@ -9,7 +9,7 @@ import FiltersBar, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT } from '@/components/
 import {
   COLUMNS, ColumnId, CustomerRow, FilterCondition, Segment, SortDirection,
   applyFilters, sortRows, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR,
-  FIRST_TOUCH_KIND_LABELS,
+  FIRST_TOUCH_KIND_LABELS, customerDisplayName, customerAvatarLetter,
   formatDateTime, formatRelative, formatMoney, exportToCSV, downloadCSV, cellValue,
 } from '@/lib/users/config'
 
@@ -407,18 +407,23 @@ export default function UsersPage() {
 // ─── Cell ───
 function Cell({ row, colId }: { row: CustomerRow; colId: ColumnId }) {
   switch (colId) {
-    case 'name':
+    case 'name': {
+      const display = customerDisplayName(row)
+      const isCodeOnly = !row.full_name && !row.telegram_username
       return (
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0" style={{ backgroundColor: '#6A55F8' }}>
-            {(row.full_name || row.email || row.telegram_username || '?').charAt(0).toUpperCase()}
+            {customerAvatarLetter(row)}
           </div>
           <div className="min-w-0">
-            <div className="font-medium text-gray-900 truncate">{row.full_name || 'Без имени'}</div>
+            <div className={`font-medium truncate ${isCodeOnly ? 'text-gray-500 font-mono text-xs' : 'text-gray-900'}`}>
+              {display}
+            </div>
             {row.is_blocked && <div className="text-xs text-red-500">Заблокирован</div>}
           </div>
         </div>
       )
+    }
     case 'client_type': {
       const t = deriveClientType(row)
       const c = CLIENT_TYPE_COLOR[t]
