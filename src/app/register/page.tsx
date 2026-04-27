@@ -62,12 +62,20 @@ function RegisterForm() {
     }
 
     // Если подтверждение email отключено — сразу создаём account_domains
+    // и инициализируем users_meta (can_create_projects=TRUE — это «владелец платформы»).
     if (signUpData.session) {
-      await fetch('/api/account/domain', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subdomain: sub }),
-      }).catch(() => { /* ignore — юзер сможет настроить позже */ })
+      await Promise.all([
+        fetch('/api/account/domain', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subdomain: sub }),
+        }).catch(() => { /* ignore — юзер сможет настроить позже */ }),
+        fetch('/api/auth/init-self-registration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ full_name: fullName }),
+        }).catch(() => { /* ignore — может пере-инициализироваться позже */ }),
+      ])
     }
 
     setSuccess(true)

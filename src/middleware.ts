@@ -6,7 +6,7 @@ const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'studency.ru'
 // Все admin-пути живут под /project/<id>/<section>. Сами сегменты-имена
 // держим тут только для определения, что это НЕ публичный лендинг.
 const RESERVED_FIRST_SEGMENTS = new Set([
-  'account', 'projects', 'project', 'login', 'register', 'api', '_next',
+  'account', 'projects', 'project', 'login', 'register', 'invite', 'forgot', 'api', '_next',
   'pub', 'go', 's', 'btn', 'gate', 'unsubscribe',
   'favicon.ico', 'robots.txt', 'sitemap.xml',
 ])
@@ -88,6 +88,8 @@ export async function middleware(request: NextRequest) {
       pathname.startsWith('/btn/') ||
       pathname.startsWith('/go/') ||
       pathname.startsWith('/gate/') ||
+      pathname.startsWith('/invite/') ||
+      pathname.startsWith('/forgot') ||
       pathname.startsWith('/unsubscribe') ||
       pathname.startsWith('/pub') ||
       pathname.startsWith('/templates/') ||
@@ -186,10 +188,14 @@ export async function middleware(request: NextRequest) {
   // Зарезервированные admin-разделы (/account, /projects, /project/...) и
   // root (/) при наличии auth — рендерим напрямую, без rewrite на лендинг.
   if (isReservedAdmin) {
-    // Для /login и /register на subdomain'е — редирект на main (логин всегда на главном)
-    if (firstSeg === 'login' || firstSeg === 'register') {
+    // /register на subdomain'е → редирект на main (свободная регистрация только там)
+    if (firstSeg === 'register') {
       const url = new URL(`https://${ROOT_DOMAIN}${pathname}${request.nextUrl.search}`)
       return NextResponse.redirect(url, 302)
+    }
+    // /invite/[token] и /forgot — публичные, рендерим без auth check
+    if (firstSeg === 'invite' || firstSeg === 'forgot' || firstSeg === 'login') {
+      return NextResponse.next()
     }
 
     if (!isAuthed) {
