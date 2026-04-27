@@ -50,6 +50,7 @@ const navGroups: NavItem[][] = [
 ]
 
 const bottomItems = [
+  { id: 'team', label: 'Команда', icon: '👤' },
   { id: 'settings', label: 'Настройки проекта', icon: '⚙️' },
 ]
 
