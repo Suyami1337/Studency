@@ -10,7 +10,7 @@ import {
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
-type TabId = 'activity' | 'orders' | 'funnels' | 'fields' | 'notes'
+type TabId = 'activity' | 'orders' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
 
 export default function UserCardPage() {
   const supabase = createClient()
@@ -251,7 +251,7 @@ export default function UserCardPage() {
         </div>
 
         {customer.first_touch_at && (
-          <FirstTouchBlock customer={customer} />
+          <FirstTouchBlock customer={customer} onOpenAll={() => setTab('touchpoints')} />
         )}
 
         {customer.source_name && !customer.first_touch_at && (
@@ -278,11 +278,12 @@ export default function UserCardPage() {
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
         <div className="flex border-b border-gray-100 overflow-x-auto">
           {([
-            { id: 'activity', label: 'Активность', icon: '📊' },
-            { id: 'orders',   label: 'Заказы', icon: '🛒' },
-            { id: 'funnels',  label: 'Воронки', icon: '🎯' },
-            { id: 'fields',   label: 'Поля', icon: '📋' },
-            { id: 'notes',    label: 'Заметки', icon: '📌' },
+            { id: 'activity',    label: 'Активность',   icon: '📊' },
+            { id: 'orders',      label: 'Заказы',       icon: '🛒' },
+            { id: 'funnels',     label: 'Воронки',      icon: '🎯' },
+            { id: 'touchpoints', label: 'Точки входа',  icon: '📍' },
+            { id: 'fields',      label: 'Поля',         icon: '📋' },
+            { id: 'notes',       label: 'Заметки',      icon: '📌' },
           ] as { id: TabId; label: string; icon: string }[]).map(t => (
             <button
               key={t.id}
@@ -301,6 +302,7 @@ export default function UserCardPage() {
           {tab === 'activity' && <ActivityTimeline customerId={customer.id} />}
           {tab === 'orders' && <OrdersTab customerId={customer.id} />}
           {tab === 'funnels' && <FunnelsTab customerId={customer.id} />}
+          {tab === 'touchpoints' && <TouchpointsTab customerId={customer.id} />}
           {tab === 'fields' && <FieldsTab customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />}
           {tab === 'notes' && <NotesTab customerId={customer.id} projectId={customer.project_id} />}
         </div>
@@ -310,12 +312,39 @@ export default function UserCardPage() {
 }
 
 // ─── First-touch block ───
-function FirstTouchBlock({ customer }: { customer: CustomerRow }) {
+function FirstTouchBlock({ customer, onOpenAll }: { customer: CustomerRow; onOpenAll: () => void }) {
+  const supabase = createClient()
   const meta = customer.first_touch_kind ? FIRST_TOUCH_KIND_LABELS[customer.first_touch_kind] : null
   const utm = customer.first_touch_utm
+  const [tpCount, setTpCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadCount() {
+      const { count } = await supabase
+        .from('customer_touchpoints')
+        .select('id', { count: 'exact', head: true })
+        .eq('customer_id', customer.id)
+      if (!cancelled) setTpCount(count ?? 0)
+    }
+    loadCount()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer.id])
+
   return (
     <div className="border-t border-gray-100 pt-3 mt-1">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Точка входа в воронку</div>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Первая точка входа в воронку</div>
+        {tpCount !== null && tpCount > 1 && (
+          <button
+            onClick={onOpenAll}
+            className="text-xs text-[#6A55F8] hover:underline font-medium"
+          >
+            Все точки входа ({tpCount}) →
+          </button>
+        )}
+      </div>
       <div className="flex items-start gap-3 flex-wrap">
         <div className="bg-gradient-to-br from-[#F0EDFF] to-[#E5DFFF] border border-[#D8CFFF] rounded-xl px-3 py-2 inline-flex items-center gap-2">
           <span className="text-base">{meta?.icon ?? '↗'}</span>
@@ -558,6 +587,104 @@ function FunnelsTab({ customerId }: { customerId: string }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── TouchpointsTab ───
+type Touchpoint = {
+  id: string
+  ts: string
+  kind: string
+  source: string | null
+  landing_id: string | null
+  referrer: string | null
+  url: string | null
+  utm: Record<string, string> | null
+}
+
+function TouchpointsTab({ customerId }: { customerId: string }) {
+  const supabase = createClient()
+  const [items, setItems] = useState<Touchpoint[] | null>(null)
+  const [landingNames, setLandingNames] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data } = await supabase
+        .from('customer_touchpoints')
+        .select('id, ts, kind, source, landing_id, referrer, url, utm')
+        .eq('customer_id', customerId)
+        .order('ts', { ascending: false })
+      const list = (data ?? []) as Touchpoint[]
+      const lIds = Array.from(new Set(list.map(t => t.landing_id).filter(Boolean) as string[]))
+      let lm = new Map<string, string>()
+      if (lIds.length > 0) {
+        const { data: lrows } = await supabase.from('landings').select('id, name').in('id', lIds)
+        lm = new Map(((lrows ?? []) as { id: string; name: string }[]).map(l => [l.id, l.name]))
+      }
+      if (cancelled) return
+      setItems(list)
+      setLandingNames(lm)
+    }
+    load()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId])
+
+  if (items === null) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
+  if (items.length === 0) return (
+    <div className="text-center py-12 text-gray-400">
+      <div className="text-3xl mb-2">📍</div>
+      <div className="text-sm">Точек входа ещё нет</div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-gray-500">
+        Полная история всех точек входа этого пользователя в воронку. Самая верхняя — последняя.
+      </div>
+      {items.map((t, i) => {
+        const meta = FIRST_TOUCH_KIND_LABELS[t.kind] ?? { icon: '↗', label: t.kind }
+        const isFirst = i === items.length - 1
+        return (
+          <div
+            key={t.id}
+            className={`rounded-xl border p-3 ${isFirst ? 'border-[#6A55F8] bg-[#FAF8FF]' : 'border-gray-100 bg-white'}`}
+          >
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
+                <span className="text-lg">{meta.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-900">{meta.label}</span>
+                    {t.source && <span className="text-sm text-gray-700">· {t.source}</span>}
+                    {isFirst && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#6A55F8] text-white font-semibold">первая</span>}
+                  </div>
+                  {t.landing_id && landingNames.get(t.landing_id) && (
+                    <div className="text-xs text-gray-500 mt-0.5">Лендинг: <span className="font-medium">{landingNames.get(t.landing_id)}</span></div>
+                  )}
+                </div>
+              </div>
+              <div className="text-xs text-gray-400">{formatDateTime(t.ts)}</div>
+            </div>
+            {t.utm && Object.keys(t.utm).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {Object.entries(t.utm).map(([k, v]) => (
+                  <span key={k} className="inline-flex items-center gap-1 text-[11px] bg-gray-100 text-gray-700 rounded-md px-1.5 py-0.5">
+                    <span className="text-gray-400">{k.replace('utm_', '')}:</span>
+                    <span className="font-medium">{v}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+            {t.referrer && (
+              <div className="text-[11px] text-gray-400 mt-1.5 truncate" title={t.referrer}>↘ {t.referrer}</div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

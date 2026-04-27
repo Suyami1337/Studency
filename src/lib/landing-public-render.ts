@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { assembleLandingHtml, type LandingBlock } from '@/lib/landing-blocks'
 import { replaceVideoShortcodes } from '@/lib/video-shortcodes'
 import { mergeByVisitorToken } from '@/lib/customer-merge'
+import { recordTouchpoint } from '@/lib/customer-touchpoints'
 
 const VISITOR_COOKIE = 'stud_vid'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 год
@@ -404,8 +405,8 @@ async function ensureVisitorCustomer(
   }
 
   // 4. Customer не определён — создаём гостя c first_touch
+  const ft = extractFirstTouch(request, landing)
   if (!customerId) {
-    const ft = extractFirstTouch(request, landing)
     const { data: c } = await supabase
       .from('customers')
       .insert({
@@ -418,17 +419,30 @@ async function ensureVisitorCustomer(
       .single()
     if (c) customerId = c.id as string
   } else {
-    // Customer уже был — если у него нет first_touch_at, проставим (миграция
-    // старых карточек, или гость зашёл с лендинга после прямого /start бота)
+    // Customer уже был — если у него нет first_touch_at, проставим
     const { data: existing } = await supabase
       .from('customers')
       .select('first_touch_at')
       .eq('id', customerId)
       .maybeSingle()
     if (existing && !(existing as { first_touch_at: string | null }).first_touch_at) {
-      const ft = extractFirstTouch(request, landing)
       await supabase.from('customers').update(ft).eq('id', customerId)
     }
+  }
+
+  // 5. Touchpoint — каждый заход на лендинг с новой UTM/source. Helper сам
+  // дедуплицирует (если та же UTM в течение 24 ч — не пишет).
+  if (customerId) {
+    void recordTouchpoint(supabase, {
+      customer_id: customerId,
+      project_id: landing.project_id,
+      kind: 'landing',
+      source: ft.first_touch_source,
+      landing_id: landing.id,
+      referrer: ft.first_touch_referrer,
+      url: ft.first_touch_url,
+      utm: ft.first_touch_utm,
+    })
   }
 
   return { customerId, visitorToken, setCookie }

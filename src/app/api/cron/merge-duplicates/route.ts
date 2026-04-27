@@ -63,9 +63,21 @@ export async function GET(request: NextRequest) {
 
   async function mergeDupGroup(group: CustomerLite[], statKey: 'telegram_merged' | 'email_merged' | 'phone_merged') {
     if (group.length < 2) return
-    // Target = тот, у кого есть telegram_id; иначе — самый ранний (more first_touch).
+
+    // ───── Защита: для phone/email групп не сливаем если в группе НЕСКОЛЬКО
+    // разных telegram_id. Это значит несколько разных людей дали один и тот же
+    // номер телефона / email (опечатка / ошибка). Лучше оставить дубликаты,
+    // чем испортить данные слиянием.
+    if (statKey === 'email_merged' || statKey === 'phone_merged') {
+      const distinctTgIds = new Set(group.map(c => c.telegram_id).filter(Boolean) as string[])
+      if (distinctTgIds.size > 1) {
+        console.warn(`[cron-merge] ${statKey} skip: ${distinctTgIds.size} distinct telegram_ids in group`)
+        return
+      }
+    }
+
+    // Target = тот, у кого есть telegram_id; иначе — самый ранний по first_touch_at
     const sortedByValue = [...group].sort((a, b) => {
-      // Приоритет: с telegram_id выше, иначе по first_touch_at, иначе по created_at
       const aTg = a.telegram_id ? 1 : 0
       const bTg = b.telegram_id ? 1 : 0
       if (aTg !== bTg) return bTg - aTg

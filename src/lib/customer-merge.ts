@@ -86,6 +86,7 @@ export async function mergeGuestIntoCustomer(
     'button_clicks',
     'customer_actions',
     'customer_notes',
+    'customer_touchpoints',
     'orders',
     'events',
     'video_views',

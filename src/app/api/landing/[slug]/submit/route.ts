@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { mergeGuestIntoCustomer } from '@/lib/customer-merge'
+import { normalizePhone, normalizeEmail, normalizeTelegramUsername } from '@/lib/normalize'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,7 +70,12 @@ export async function POST(
     const projectId = landing.project_id
     const visitorToken = body.visitorToken || null
 
-    // 2. Ищем существующего клиента по visitor_token / телефону / email
+    // Нормализация — приводим разные форматы к каноническим
+    const normalizedPhone = normalizePhone(body.phone)
+    const normalizedEmail = normalizeEmail(body.email)
+    const normalizedTg    = normalizeTelegramUsername(body.telegram)
+
+    // 2. Ищем существующего клиента: visitor_token > phone > email > telegram
     let customerId: string | null = null
 
     if (visitorToken) {
@@ -82,23 +88,32 @@ export async function POST(
       if (ex) customerId = ex.id
     }
 
-    if (!customerId && body.phone) {
-      const phone = body.phone.replace(/\D/g, '')
+    if (!customerId && normalizedPhone) {
       const { data: ex } = await supabase
         .from('customers')
         .select('id')
         .eq('project_id', projectId)
-        .eq('phone', phone)
+        .eq('phone', normalizedPhone)
         .maybeSingle()
       if (ex) customerId = ex.id
     }
 
-    if (!customerId && body.email) {
+    if (!customerId && normalizedEmail) {
       const { data: ex } = await supabase
         .from('customers')
         .select('id')
         .eq('project_id', projectId)
-        .eq('email', body.email.toLowerCase().trim())
+        .eq('email', normalizedEmail)
+        .maybeSingle()
+      if (ex) customerId = ex.id
+    }
+
+    if (!customerId && normalizedTg) {
+      const { data: ex } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('telegram_username', normalizedTg)
         .maybeSingle()
       if (ex) customerId = ex.id
     }
@@ -110,9 +125,9 @@ export async function POST(
         .insert({
           project_id: projectId,
           full_name: body.name?.trim() || null,
-          phone: body.phone ? body.phone.replace(/\D/g, '') : null,
-          email: body.email?.toLowerCase().trim() || null,
-          telegram_username: body.telegram?.replace('@', '').trim() || null,
+          phone: normalizedPhone,
+          email: normalizedEmail,
+          telegram_username: normalizedTg,
           visitor_token: visitorToken,
         })
         .select('id')
@@ -128,13 +143,18 @@ export async function POST(
         })
       }
     } else {
-      // Дообновляем данные клиента
+      // Дообновляем данные клиента (только пустые поля заполняем — не затираем
+      // существующие, т.к. могут быть валиднее)
+      const { data: ex } = await supabase
+        .from('customers').select('full_name, phone, email, telegram_username, visitor_token').eq('id', customerId).maybeSingle()
+      type Ex = { full_name: string | null; phone: string | null; email: string | null; telegram_username: string | null; visitor_token: string | null }
+      const e = (ex ?? {}) as Ex
       const updates: Record<string, string | null> = {}
-      if (body.name) updates.full_name = body.name.trim()
-      if (body.phone) updates.phone = body.phone.replace(/\D/g, '')
-      if (body.email) updates.email = body.email.toLowerCase().trim()
-      if (body.telegram) updates.telegram_username = body.telegram.replace('@', '').trim()
-      if (visitorToken) updates.visitor_token = visitorToken
+      if (body.name && !e.full_name) updates.full_name = body.name.trim()
+      if (normalizedPhone && !e.phone) updates.phone = normalizedPhone
+      if (normalizedEmail && !e.email) updates.email = normalizedEmail
+      if (normalizedTg && !e.telegram_username) updates.telegram_username = normalizedTg
+      if (visitorToken && !e.visitor_token) updates.visitor_token = visitorToken
 
       if (Object.keys(updates).length > 0) {
         await supabase.from('customers').update(updates).eq('id', customerId)
@@ -154,7 +174,7 @@ export async function POST(
     // форму с email — наша карточка-Гость стала «полноценной», а ту, которая
     // осталась в Telegram до этого — нужно слить.
     if (customerId) {
-      const findDup = async (col: 'email' | 'phone', val: string) => {
+      const findDup = async (col: 'email' | 'phone' | 'telegram_username', val: string) => {
         const { data: dups } = await supabase
           .from('customers')
           .select('id, telegram_id, first_touch_at, created_at')
@@ -163,20 +183,33 @@ export async function POST(
           .neq('id', customerId)
         return (dups ?? []) as { id: string; telegram_id: string | null; first_touch_at: string | null; created_at: string }[]
       }
-      const emailDups = body.email ? await findDup('email', body.email.toLowerCase().trim()) : []
-      const phoneDups = body.phone ? await findDup('phone', body.phone.replace(/\D/g, '')) : []
+      const emailDups = normalizedEmail ? await findDup('email', normalizedEmail) : []
+      const phoneDups = normalizedPhone ? await findDup('phone', normalizedPhone) : []
+      const tgDups    = normalizedTg    ? await findDup('telegram_username', normalizedTg) : []
+
+      // Защита: если у текущего customer'а есть telegram_id и у дубля тоже есть
+      // telegram_id, и они РАЗНЫЕ — это два разных человека (не сливаем!).
+      const { data: meRow } = await supabase
+        .from('customers').select('telegram_id').eq('id', customerId).maybeSingle()
+      const myTelegramId = (meRow as { telegram_id: string | null } | null)?.telegram_id ?? null
+
       const seen = new Set<string>()
-      for (const dup of [...emailDups, ...phoneDups]) {
+      for (const dup of [...emailDups, ...phoneDups, ...tgDups]) {
         if (seen.has(dup.id)) continue
         seen.add(dup.id)
+        // Skip: разные telegram_id у обеих → разные люди с одинаковым контактом
+        if (dup.telegram_id && myTelegramId && dup.telegram_id !== myTelegramId) {
+          console.warn(`[submit] merge skipped: different telegram_id (${dup.telegram_id} vs ${myTelegramId})`)
+          continue
+        }
         try {
-          // Если дубль с telegram_id — он становится target (более полная),
-          // а наша свежесозданная карточка сливается в неё. Иначе наоборот.
-          if (dup.telegram_id) {
+          if (dup.telegram_id && !myTelegramId) {
+            // Дубль — полноценная tg-карточка, наша — Гость с email/phone. Сливаем нас в неё.
             await mergeGuestIntoCustomer(supabase, customerId, dup.id)
             customerId = dup.id
-          } else {
-            await mergeGuestIntoCustomer(supabase, dup.id, customerId)
+          } else if (!dup.telegram_id) {
+            // Дубль — Гость, у нас может быть tg или нет. В любом случае мы target.
+            await mergeGuestIntoCustomer(supabase, dup.id, customerId, { allowGuestWithTelegram: false })
           }
         } catch (err) {
           console.error('[submit] auto-merge error:', err)

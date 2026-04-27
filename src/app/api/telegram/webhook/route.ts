@@ -4,6 +4,7 @@ import { sendScenarioMessage } from '@/lib/scenario-sender'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
 import { answerCallbackQuery } from '@/lib/telegram'
 import { mergeByVisitorToken } from '@/lib/customer-merge'
+import { recordTouchpoint } from '@/lib/customer-touchpoints'
 
 function getSupabase() {
   return createClient(
@@ -452,6 +453,12 @@ export async function POST(request: NextRequest) {
           await mergeByVisitorToken(supabase, visitorTokenFromStart, projectId, existingByTgId.id)
             .catch(err => console.error('[merge] vt_ stitch failed:', err))
         }
+        // Touchpoint: возврат через бота — пишется только если последняя
+        // точка входа отличается от bot/<этого бота>
+        void recordTouchpoint(supabase, {
+          customer_id: existingByTgId.id, project_id: projectId,
+          kind: 'bot', source: bot.name || 'telegram_bot',
+        })
         await supabase.from('customer_actions').insert({
           customer_id: existingByTgId.id, project_id: projectId, action: 'bot_start',
           data: { bot_name: bot.name, telegram_username: username },
@@ -487,6 +494,11 @@ export async function POST(request: NextRequest) {
             await mergeByVisitorToken(supabase, visitorTokenFromStart, projectId, customer.id)
               .catch(err => console.error('[merge] vt_ stitch failed:', err))
           }
+          // Touchpoint kind='bot' — точка входа через бота
+          void recordTouchpoint(supabase, {
+            customer_id: customer.id, project_id: projectId,
+            kind: 'bot', source: bot.name || 'telegram_bot',
+          })
           await supabase.from('customer_actions').insert({
             customer_id: customer.id, project_id: projectId, action: 'bot_start',
             data: { bot_name: bot.name, telegram_username: username },
