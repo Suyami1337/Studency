@@ -324,20 +324,48 @@ function FirstTouchBlock({ customer, onOpenAll }: { customer: CustomerRow; onOpe
   const meta = customer.first_touch_kind ? FIRST_TOUCH_KIND_LABELS[customer.first_touch_kind] : null
   const utm = customer.first_touch_utm
   const [tpCount, setTpCount] = useState<number | null>(null)
+  const [landingName, setLandingName] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    async function loadCount() {
-      const { count } = await supabase
-        .from('customer_touchpoints')
-        .select('id', { count: 'exact', head: true })
-        .eq('customer_id', customer.id)
-      if (!cancelled) setTpCount(count ?? 0)
+    async function loadAll() {
+      const [tpRes, landingRes] = await Promise.all([
+        supabase
+          .from('customer_touchpoints')
+          .select('id', { count: 'exact', head: true })
+          .eq('customer_id', customer.id),
+        customer.first_touch_landing_id
+          ? supabase.from('landings').select('name').eq('id', customer.first_touch_landing_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ])
+      if (cancelled) return
+      setTpCount(tpRes.count ?? 0)
+      const ld = (landingRes.data ?? null) as { name: string } | null
+      setLandingName(ld?.name ?? null)
     }
-    loadCount()
+    loadAll()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer.id])
+
+  // Человеко-читаемое описание источника
+  const sourceDisplay = (() => {
+    const src = customer.first_touch_source
+    if (!src) return 'Неизвестный заход'
+    if (src === 'direct') return 'Прямой заход'
+    if (src === 'telegram_bot' || customer.first_touch_kind === 'bot') return src
+    return src
+  })()
+
+  // Описание точки входа: «<источник> → <название лендинга>»
+  const entryLabel = (() => {
+    if (customer.first_touch_kind === 'landing') {
+      if (landingName) return `${sourceDisplay} → ${landingName}`
+      return sourceDisplay
+    }
+    if (customer.first_touch_kind === 'bot') return sourceDisplay
+    return sourceDisplay
+  })()
 
   return (
     <div className="border-t border-gray-100 pt-3 mt-1">
@@ -358,7 +386,7 @@ function FirstTouchBlock({ customer, onOpenAll }: { customer: CustomerRow; onOpe
           <div>
             <div className="text-[11px] text-gray-500 leading-none">{meta?.label ?? 'Источник'}</div>
             <div className="text-sm font-semibold text-gray-900 leading-tight mt-0.5">
-              {customer.first_touch_source ?? '—'}
+              {entryLabel}
             </div>
           </div>
         </div>

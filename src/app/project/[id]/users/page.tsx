@@ -455,11 +455,13 @@ function Cell({ row, colId }: { row: CustomerRow; colId: ColumnId }) {
       const meta = k ? FIRST_TOUCH_KIND_LABELS[k] : null
       if (!meta) return <span className="text-gray-400">—</span>
       const utmCampaign = row.first_touch_utm?.utm_campaign
-      const detail = utmCampaign || row.first_touch_source
+      const rawSrc = row.first_touch_source
+      const friendlySrc = !rawSrc ? 'Неизв.' : rawSrc === 'direct' ? 'Прямой' : rawSrc
+      const detail = utmCampaign || friendlySrc
       return (
         <span className="inline-flex items-center gap-1 text-xs">
           <span title={meta.label}>{meta.icon}</span>
-          {detail && <span className="text-gray-600 truncate max-w-[120px]" title={detail}>{detail}</span>}
+          <span className="text-gray-600 truncate max-w-[120px]" title={detail}>{detail}</span>
         </span>
       )
     }
