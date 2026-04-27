@@ -174,8 +174,38 @@ export const FILTER_FIELDS: FilterField[] = [
 
 export type FilterCondition = {
   field: string
+  // negate=true инвертирует условие («НЕ соответствует»). Применяется к каждому условию отдельно.
+  negate?: boolean
   // type-specific value
   value: string | string[] | boolean | { from?: string; to?: string } | { min?: number; max?: number } | null
+}
+
+// FilterState = группа условий + логика их объединения.
+// combinator='and' — должно выполняться ВСЕ условия (по умолчанию).
+// combinator='or' — достаточно хотя бы одного.
+export type FilterCombinator = 'and' | 'or'
+
+export type FilterState = {
+  combinator: FilterCombinator
+  conditions: FilterCondition[]
+}
+
+export const EMPTY_FILTER_STATE: FilterState = { combinator: 'and', conditions: [] }
+
+/** Привести filters старого формата (массив) или нового (объект) к FilterState. */
+export function normalizeFilterState(input: unknown): FilterState {
+  if (!input) return EMPTY_FILTER_STATE
+  if (Array.isArray(input)) {
+    return { combinator: 'and', conditions: input as FilterCondition[] }
+  }
+  if (typeof input === 'object') {
+    const obj = input as { combinator?: FilterCombinator; conditions?: FilterCondition[] }
+    return {
+      combinator: obj.combinator === 'or' ? 'or' : 'and',
+      conditions: Array.isArray(obj.conditions) ? obj.conditions : [],
+    }
+  }
+  return EMPTY_FILTER_STATE
 }
 
 // ─── Columns ───
@@ -254,8 +284,18 @@ function inDateRange(iso: string | null | undefined, range?: { from?: string; to
   return true
 }
 
-export function applyFilters(rows: CustomerRow[], filters: FilterCondition[]): CustomerRow[] {
-  return rows.filter(row => filters.every(f => matchFilter(row, f)))
+export function applyFilters(rows: CustomerRow[], filters: FilterCondition[] | FilterState): CustomerRow[] {
+  const state = Array.isArray(filters) ? { combinator: 'and' as FilterCombinator, conditions: filters } : filters
+  if (state.conditions.length === 0) return rows
+  return rows.filter(row => {
+    const tester = (f: FilterCondition) => {
+      const matches = matchFilter(row, f)
+      return f.negate ? !matches : matches
+    }
+    return state.combinator === 'or'
+      ? state.conditions.some(tester)
+      : state.conditions.every(tester)
+  })
 }
 
 export function matchFilter(row: CustomerRow, f: FilterCondition): boolean {

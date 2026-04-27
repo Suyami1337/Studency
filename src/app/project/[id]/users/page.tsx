@@ -5,9 +5,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
-import FiltersBar, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT } from '@/components/users/FiltersBar'
+import FiltersBar from '@/components/users/FiltersBar'
 import {
-  COLUMNS, ColumnId, CustomerRow, FilterCondition, Segment, SortDirection,
+  COLUMNS, ColumnId, CustomerRow, FilterState, EMPTY_FILTER_STATE, normalizeFilterState,
+  DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT,
+  Segment, SortDirection,
   applyFilters, sortRows, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR,
   FIRST_TOUCH_KIND_LABELS, customerDisplayName, customerAvatarLetter,
   formatDateTime, formatRelative, formatMoney, exportToCSV, downloadCSV, cellValue,
@@ -26,7 +28,7 @@ export default function UsersPage() {
   const [segments, setSegments] = useState<Segment[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [filters, setFilters] = useState<FilterCondition[]>([])
+  const [filterState, setFilterState] = useState<FilterState>(EMPTY_FILTER_STATE)
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(DEFAULT_VISIBLE_COLUMNS)
   const [sort, setSort] = useState<{ column: ColumnId; direction: SortDirection }>(DEFAULT_SORT)
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
@@ -85,13 +87,13 @@ export default function UsersPage() {
 
   function applySegment(s: Segment | null) {
     if (s) {
-      setFilters(s.filters)
+      setFilterState(normalizeFilterState(s.filters as unknown))
       setVisibleColumns(s.visible_columns.length > 0 ? s.visible_columns : DEFAULT_VISIBLE_COLUMNS)
       setSort(s.sort)
       setActiveSegmentId(s.id)
       if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY(projectId), s.id)
     } else {
-      setFilters([])
+      setFilterState(EMPTY_FILTER_STATE)
       setVisibleColumns(DEFAULT_VISIBLE_COLUMNS)
       setSort(DEFAULT_SORT)
       setActiveSegmentId(null)
@@ -105,19 +107,19 @@ export default function UsersPage() {
     const s = segments.find(x => x.id === activeSegmentId)
     if (!s) return false
     return (
-      JSON.stringify(s.filters) !== JSON.stringify(filters) ||
+      JSON.stringify(normalizeFilterState(s.filters as unknown)) !== JSON.stringify(filterState) ||
       JSON.stringify(s.visible_columns) !== JSON.stringify(visibleColumns) ||
       s.sort.column !== sort.column ||
       s.sort.direction !== sort.direction
     )
-  }, [activeSegmentId, segments, filters, visibleColumns, sort])
+  }, [activeSegmentId, segments, filterState, visibleColumns, sort])
 
   async function saveCurrentSegment() {
     if (!activeSegmentId) return
     const { data } = await supabase
       .from('customer_segments')
       .update({
-        filters,
+        filters: filterState,
         visible_columns: visibleColumns,
         sort,
         updated_at: new Date().toISOString(),
@@ -128,15 +130,15 @@ export default function UsersPage() {
     if (data) setSegments(prev => prev.map(s => s.id === data.id ? (data as Segment) : s))
   }
 
-  async function saveAsNewSegment() {
-    const name = window.prompt('Имя нового сегмента:')
-    if (!name?.trim()) return
+  async function saveAsNewSegment(name?: string) {
+    const finalName = name?.trim() || window.prompt('Имя нового сегмента:')?.trim()
+    if (!finalName) return
     const { data } = await supabase
       .from('customer_segments')
       .insert({
         project_id: projectId,
-        name: name.trim(),
-        filters,
+        name: finalName,
+        filters: filterState,
         visible_columns: visibleColumns,
         sort,
       })
@@ -173,7 +175,7 @@ export default function UsersPage() {
 
   // ── Filtering & sorting ──
   const visibleRows = useMemo(() => {
-    let filtered = applyFilters(customers, filters)
+    let filtered = applyFilters(customers, filterState)
     const q = searchQuery.trim().toLowerCase()
     if (q) {
       filtered = filtered.filter(r =>
@@ -189,7 +191,7 @@ export default function UsersPage() {
       )
     }
     return sortRows(filtered, sort.column, sort.direction)
-  }, [customers, filters, sort, searchQuery])
+  }, [customers, filterState, sort, searchQuery])
 
   // ── Selection ──
   function toggleSelected(id: string) {
@@ -225,7 +227,7 @@ export default function UsersPage() {
           <h1 className="text-xl font-bold text-gray-900">Пользователи</h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {loading ? '…' : (
-              filters.length === 0 && !activeSegmentId
+              filterState.conditions.length === 0 && !activeSegmentId
                 ? `Всего: ${customers.length}`
                 : `Показано ${visibleRows.length} из ${customers.length}`
             )}
@@ -267,10 +269,10 @@ export default function UsersPage() {
         segments={segments}
         activeSegmentId={activeSegmentId}
         isDirty={isDirty}
-        filters={filters}
+        filterState={filterState}
         visibleColumns={visibleColumns}
         sort={sort}
-        onChangeFilters={setFilters}
+        onChangeFilterState={setFilterState}
         onChangeColumns={setVisibleColumns}
         onChangeSort={setSort}
         onSelectSegment={id => {

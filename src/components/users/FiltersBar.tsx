@@ -3,22 +3,23 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   COLUMNS, ColumnDef, ColumnId, DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT,
-  FILTER_FIELDS, FilterField, FilterCondition, Segment, SortDirection,
+  FilterState, Segment, SortDirection,
 } from '@/lib/users/config'
+import SegmentEditor from './SegmentEditor'
 
 type Props = {
   segments: Segment[]
   activeSegmentId: string | null
   isDirty: boolean
-  filters: FilterCondition[]
+  filterState: FilterState
   visibleColumns: ColumnId[]
   sort: { column: ColumnId; direction: SortDirection }
-  onChangeFilters: (f: FilterCondition[]) => void
+  onChangeFilterState: (f: FilterState) => void
   onChangeColumns: (c: ColumnId[]) => void
   onChangeSort: (s: { column: ColumnId; direction: SortDirection }) => void
   onSelectSegment: (id: string | null) => void
   onSaveCurrent: () => void
-  onSaveAsNew: () => void
+  onSaveAsNew: (name?: string) => void
   onResetToSegment: () => void
   onDeleteSegment: (id: string) => void
   onRenameSegment: (id: string, name: string) => void
@@ -26,58 +27,33 @@ type Props = {
 
 export default function FiltersBar({
   segments, activeSegmentId, isDirty,
-  filters, visibleColumns, sort,
-  onChangeFilters, onChangeColumns, onChangeSort,
+  filterState, visibleColumns, sort,
+  onChangeFilterState, onChangeColumns, onChangeSort,
   onSelectSegment, onSaveCurrent, onSaveAsNew, onResetToSegment,
   onDeleteSegment, onRenameSegment,
 }: Props) {
-  const [showAddFilter, setShowAddFilter] = useState(false)
+  const [showEditor, setShowEditor] = useState(false)
   const [showColumns, setShowColumns] = useState(false)
   const [showSort, setShowSort] = useState(false)
   const [showSegmentMenu, setShowSegmentMenu] = useState(false)
   const segmentBtnRef = useRef<HTMLDivElement>(null)
-  const addBtnRef = useRef<HTMLDivElement>(null)
   const colsBtnRef = useRef<HTMLDivElement>(null)
   const sortBtnRef = useRef<HTMLDivElement>(null)
 
-  // Close popovers on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
       const target = e.target as Node
       if (showSegmentMenu && segmentBtnRef.current && !segmentBtnRef.current.contains(target)) setShowSegmentMenu(false)
-      if (showAddFilter && addBtnRef.current && !addBtnRef.current.contains(target)) setShowAddFilter(false)
       if (showColumns && colsBtnRef.current && !colsBtnRef.current.contains(target)) setShowColumns(false)
       if (showSort && sortBtnRef.current && !sortBtnRef.current.contains(target)) setShowSort(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [showSegmentMenu, showAddFilter, showColumns, showSort])
-
-  function addFilter(fieldId: string) {
-    const def = FILTER_FIELDS.find(f => f.id === fieldId)!
-    const initial: FilterCondition['value'] =
-      def.type === 'boolean' ? true :
-      def.type === 'multiselect' ? [] :
-      def.type === 'date_range' ? {} :
-      def.type === 'number_range' ? {} :
-      def.type === 'tag' ? [] :
-      ''
-    onChangeFilters([...filters, { field: fieldId, value: initial }])
-    setShowAddFilter(false)
-  }
-
-  function updateFilter(idx: number, value: FilterCondition['value']) {
-    const next = [...filters]
-    next[idx] = { ...next[idx], value }
-    onChangeFilters(next)
-  }
-
-  function removeFilter(idx: number) {
-    onChangeFilters(filters.filter((_, i) => i !== idx))
-  }
+  }, [showSegmentMenu, showColumns, showSort])
 
   const activeSegment = segments.find(s => s.id === activeSegmentId)
   const sortableColumns: ColumnDef[] = COLUMNS.filter(c => c.sortable)
+  const conditionsCount = filterState.conditions.length
 
   return (
     <div className="space-y-3">
@@ -167,43 +143,28 @@ export default function FiltersBar({
         )}
       </div>
 
-      {/* Чипы фильтров + кнопки настройки */}
+      {/* Кнопка «Настроить фильтры» + сортировка/колонки */}
       <div className="flex items-center gap-2 flex-wrap">
-        {filters.map((f, i) => {
-          const def = FILTER_FIELDS.find(x => x.id === f.field)
-          if (!def) return null
-          return (
-            <FilterChip
-              key={`${f.field}-${i}`}
-              def={def}
-              value={f.value}
-              onChange={v => updateFilter(i, v)}
-              onRemove={() => removeFilter(i)}
-            />
-          )
-        })}
-
-        <div className="relative" ref={addBtnRef}>
-          <button
-            onClick={() => setShowAddFilter(v => !v)}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-white border border-dashed border-gray-300 text-gray-500 hover:text-gray-800 hover:border-gray-400"
-          >
-            + Добавить фильтр
-          </button>
-          {showAddFilter && (
-            <div className="absolute z-30 left-0 top-full mt-1 w-64 bg-white rounded-xl border border-gray-100 shadow-xl p-1 max-h-80 overflow-y-auto">
-              {FILTER_FIELDS.map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => addFilter(f.id)}
-                  className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-gray-50"
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+        <button
+          onClick={() => setShowEditor(true)}
+          className={`px-3 py-1.5 rounded-lg text-sm font-medium border flex items-center gap-2 ${conditionsCount > 0 ? 'bg-[#F0EDFF] border-[#6A55F8]/30 text-[#6A55F8]' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'}`}
+        >
+          <span>🎛 Настроить фильтры</span>
+          {conditionsCount > 0 && (
+            <span className="text-xs bg-[#6A55F8] text-white rounded-full px-2 py-0.5 font-semibold">
+              {conditionsCount} · {filterState.combinator === 'and' ? 'И' : 'ИЛИ'}
+            </span>
           )}
-        </div>
+        </button>
+        {conditionsCount > 0 && (
+          <button
+            onClick={() => onChangeFilterState({ combinator: 'and', conditions: [] })}
+            className="text-xs text-gray-500 hover:text-red-600 px-2"
+            title="Сбросить все фильтры"
+          >
+            ✕ сбросить
+          </button>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <div className="relative" ref={sortBtnRef}>
@@ -319,232 +280,23 @@ export default function FiltersBar({
           </div>
         </div>
       </div>
+
+      <SegmentEditor
+        open={showEditor}
+        onClose={() => setShowEditor(false)}
+        initialFilterState={filterState}
+        activeSegmentName={activeSegment?.name ?? null}
+        onApply={(state) => onChangeFilterState(state)}
+        onSaveAsNew={(name, state) => {
+          onChangeFilterState(state)
+          onSaveAsNew(name)
+        }}
+        onSaveExisting={activeSegment ? (state) => {
+          onChangeFilterState(state)
+          // microtask чтобы state успел обновиться до save
+          setTimeout(() => onSaveCurrent(), 0)
+        } : undefined}
+      />
     </div>
   )
 }
-
-// ─── Filter chip ───
-function FilterChip({
-  def, value, onChange, onRemove,
-}: {
-  def: FilterField
-  value: FilterCondition['value']
-  onChange: (v: FilterCondition['value']) => void
-  onRemove: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (open && ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  function valueLabel(): string {
-    switch (def.type) {
-      case 'boolean':     return value === true ? 'да' : value === false ? 'нет' : '—'
-      case 'multiselect': {
-        const arr = Array.isArray(value) ? value : []
-        if (arr.length === 0) return '— любое'
-        const labels = arr.map(v => def.options?.find(o => o.value === v)?.label ?? v)
-        return labels.join(', ')
-      }
-      case 'tag': {
-        const arr = Array.isArray(value) ? value : []
-        return arr.length === 0 ? '—' : arr.join(', ')
-      }
-      case 'text':        return ((value as string) || '').slice(0, 24) || '—'
-      case 'date_range':  {
-        const v = value as { from?: string; to?: string } | null
-        if (!v || (!v.from && !v.to)) return '—'
-        return `${v.from || '…'} → ${v.to || '…'}`
-      }
-      case 'number_range': {
-        const v = value as { min?: number; max?: number } | null
-        if (!v || (v.min == null && v.max == null)) return '—'
-        return `${v.min ?? '…'} — ${v.max ?? '…'}`
-      }
-      default: return '—'
-    }
-  }
-
-  return (
-    <div className="relative" ref={ref}>
-      <div className="inline-flex items-center gap-1 bg-[#F0EDFF] text-[#6A55F8] rounded-lg pl-3 pr-1 py-1 text-sm">
-        <button onClick={() => setOpen(v => !v)} className="font-medium">
-          {def.label}: <span className="font-normal">{valueLabel()}</span>
-        </button>
-        <button
-          onClick={onRemove}
-          className="text-[#6A55F8]/70 hover:text-[#6A55F8] hover:bg-white rounded p-0.5 ml-0.5"
-          aria-label="Убрать фильтр"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
-        </button>
-      </div>
-      {open && (
-        <div className="absolute z-30 left-0 top-full mt-1 w-72 bg-white rounded-xl border border-gray-100 shadow-xl p-3 space-y-2">
-          {renderEditor(def, value, onChange)}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function renderEditor(
-  def: FilterField,
-  value: FilterCondition['value'],
-  onChange: (v: FilterCondition['value']) => void,
-) {
-  switch (def.type) {
-    case 'boolean': {
-      return (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onChange(true)}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${value === true ? 'bg-[#6A55F8] text-white border-[#6A55F8]' : 'bg-white text-gray-700 border-gray-200'}`}
-          >Да</button>
-          <button
-            onClick={() => onChange(false)}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${value === false ? 'bg-[#6A55F8] text-white border-[#6A55F8]' : 'bg-white text-gray-700 border-gray-200'}`}
-          >Нет</button>
-        </div>
-      )
-    }
-    case 'multiselect': {
-      const arr = Array.isArray(value) ? value : []
-      return (
-        <div className="space-y-1 max-h-60 overflow-y-auto">
-          {def.options?.map(o => {
-            const checked = arr.includes(o.value)
-            return (
-              <label key={o.value} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer text-sm">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {
-                    if (checked) onChange(arr.filter(v => v !== o.value))
-                    else onChange([...arr, o.value])
-                  }}
-                  className="rounded"
-                />
-                <span>{o.label}</span>
-              </label>
-            )
-          })}
-        </div>
-      )
-    }
-    case 'tag': {
-      const arr = Array.isArray(value) ? value : []
-      return (
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-1">
-            {arr.map(t => (
-              <span key={t} className="inline-flex items-center gap-1 bg-[#F0EDFF] text-[#6A55F8] rounded-full px-2 py-0.5 text-xs">
-                {t}
-                <button onClick={() => onChange(arr.filter(x => x !== t))} className="opacity-70 hover:opacity-100">×</button>
-              </span>
-            ))}
-          </div>
-          <input
-            type="text"
-            placeholder="Добавить тег и Enter…"
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                const v = (e.currentTarget.value || '').trim()
-                if (v && !arr.includes(v)) onChange([...arr, v])
-                e.currentTarget.value = ''
-              }
-            }}
-            className="w-full text-sm border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-[#6A55F8]"
-          />
-        </div>
-      )
-    }
-    case 'text': {
-      return (
-        <input
-          type="text"
-          value={(value as string) ?? ''}
-          onChange={e => onChange(e.target.value)}
-          placeholder={def.placeholder}
-          className="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6A55F8]"
-        />
-      )
-    }
-    case 'date_range': {
-      const v = (value as { from?: string; to?: string }) ?? {}
-      return (
-        <div className="space-y-2">
-          <label className="block">
-            <span className="text-xs text-gray-500">С</span>
-            <input
-              type="date"
-              value={v.from ?? ''}
-              onChange={e => onChange({ ...v, from: e.target.value || undefined })}
-              className="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:border-[#6A55F8]"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs text-gray-500">По</span>
-            <input
-              type="date"
-              value={v.to ?? ''}
-              onChange={e => onChange({ ...v, to: e.target.value || undefined })}
-              className="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:border-[#6A55F8]"
-            />
-          </label>
-          <div className="flex flex-wrap gap-1">
-            {[
-              { l: 'Сегодня',   d: 0 },
-              { l: '7 дней',    d: 7 },
-              { l: '30 дней',   d: 30 },
-              { l: '90 дней',   d: 90 },
-            ].map(p => (
-              <button
-                key={p.l}
-                onClick={() => {
-                  const to = new Date()
-                  const from = new Date(); from.setDate(from.getDate() - p.d)
-                  onChange({ from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) })
-                }}
-                className="text-xs px-2 py-1 rounded-md border border-gray-200 hover:border-gray-300"
-              >
-                {p.l}
-              </button>
-            ))}
-          </div>
-        </div>
-      )
-    }
-    case 'number_range': {
-      const v = (value as { min?: number; max?: number }) ?? {}
-      return (
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            type="number"
-            placeholder="мин"
-            value={v.min ?? ''}
-            onChange={e => onChange({ ...v, min: e.target.value === '' ? undefined : Number(e.target.value) })}
-            className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6A55F8]"
-          />
-          <input
-            type="number"
-            placeholder="макс"
-            value={v.max ?? ''}
-            onChange={e => onChange({ ...v, max: e.target.value === '' ? undefined : Number(e.target.value) })}
-            className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#6A55F8]"
-          />
-        </div>
-      )
-    }
-  }
-}
-
-export { DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT }
