@@ -275,6 +275,7 @@ export default function TeamSection({ projectId }: { projectId: string }) {
           permissions={permissions}
           projectId={projectId}
           onChange={loadAll}
+          onLocalReorder={setRoles}
         />
       )}
 
@@ -533,15 +534,14 @@ function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCan
   )
 }
 
-function RolesTab({ roles, permissions, projectId, onChange }: {
+function RolesTab({ roles, permissions, projectId, onChange, onLocalReorder }: {
   roles: Role[]
   permissions: Permission[]
   projectId: string
   onChange: () => void
+  onLocalReorder: (next: Role[]) => void
 }) {
-  const [reordering, setReordering] = useState(false)
-
-  async function moveRole(roleId: string, direction: -1 | 1) {
+  function moveRole(roleId: string, direction: -1 | 1) {
     const sorted = [...roles].sort((a, b) => a.sort_order - b.sort_order)
     const idx = sorted.findIndex(r => r.id === roleId)
     if (idx < 0) return
@@ -549,9 +549,17 @@ function RolesTab({ roles, permissions, projectId, onChange }: {
     if (targetIdx < 0 || targetIdx >= sorted.length) return
     const me = sorted[idx]
     const other = sorted[targetIdx]
-    setReordering(true)
-    // Свап sort_order через два PATCH-а
-    await Promise.all([
+
+    // 1. Optimistic UI: меняем sort_order локально, UI обновляется мгновенно.
+    const updatedRoles = roles.map(r => {
+      if (r.id === me.id) return { ...r, sort_order: other.sort_order }
+      if (r.id === other.id) return { ...r, sort_order: me.sort_order }
+      return r
+    })
+    onLocalReorder(updatedRoles)
+
+    // 2. Сохраняем в фоне. На ошибке — откат к исходному порядку.
+    Promise.all([
       fetch(`/api/projects/${projectId}/roles/${me.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -562,9 +570,13 @@ function RolesTab({ roles, permissions, projectId, onChange }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sort_order: me.sort_order }),
       }),
-    ])
-    setReordering(false)
-    onChange()
+    ]).then(([r1, r2]) => {
+      if (!r1.ok || !r2.ok) {
+        onLocalReorder(roles) // откат
+      }
+    }).catch(() => {
+      onLocalReorder(roles) // откат при network error
+    })
   }
 
   const [activeRoleId, setActiveRoleId] = useState<string>(roles[0]?.id ?? '')
@@ -697,7 +709,7 @@ function RolesTab({ roles, permissions, projectId, onChange }: {
     <div className="grid grid-cols-12 gap-6">
       <aside className="col-span-4">
         <div className="bg-white rounded-xl border border-gray-100 p-2">
-          {roles.map((r, idx) => (
+          {[...roles].sort((a, b) => a.sort_order - b.sort_order).map((r, idx, arr) => (
             <div
               key={r.id}
               className={`group relative flex items-stretch rounded-lg transition-colors ${activeRoleId === r.id ? 'bg-[#F0EDFF]' : 'hover:bg-gray-50'}`}
@@ -726,7 +738,7 @@ function RolesTab({ roles, permissions, projectId, onChange }: {
               <div className="flex flex-col items-center justify-center pr-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   onClick={(e) => { e.stopPropagation(); moveRole(r.id, -1) }}
-                  disabled={reordering || idx === 0}
+                  disabled={idx === 0}
                   className="text-[10px] text-gray-400 hover:text-[#6A55F8] disabled:opacity-30 disabled:hover:text-gray-400 leading-none px-1"
                   title="Выше"
                 >
@@ -734,7 +746,7 @@ function RolesTab({ roles, permissions, projectId, onChange }: {
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); moveRole(r.id, 1) }}
-                  disabled={reordering || idx === roles.length - 1}
+                  disabled={idx === arr.length - 1}
                   className="text-[10px] text-gray-400 hover:text-[#6A55F8] disabled:opacity-30 disabled:hover:text-gray-400 leading-none px-1"
                   title="Ниже"
                 >
