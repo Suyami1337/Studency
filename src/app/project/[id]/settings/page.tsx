@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { ROOT_DOMAIN } from '@/lib/subdomain'
+import TeamSection from './_components/TeamSection'
 
 type TelegramBot = {
   id: string
@@ -152,7 +153,7 @@ export default function SettingsPage() {
   const projectId = params.id as string
   const supabase = createClient()
 
-  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'fields' | 'danger'>('integrations')
+  const [activeTab, setActiveTab] = useState<'integrations' | 'profile' | 'fields' | 'team' | 'danger'>('integrations')
   const [bots, setBots] = useState<TelegramBot[]>([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -208,6 +209,7 @@ export default function SettingsPage() {
 
   const tabs = [
     { id: 'integrations' as const, label: 'Интеграции' },
+    { id: 'team' as const, label: 'Команда и роли' },
     { id: 'fields' as const, label: 'Поля клиента' },
     { id: 'profile' as const, label: 'Профиль' },
     { id: 'danger' as const, label: 'Опасная зона' },
@@ -216,24 +218,6 @@ export default function SettingsPage() {
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-bold text-gray-900">Настройки проекта</h1>
-
-      <a
-        href={`/project/${projectId}/settings/team`}
-        className="block bg-white rounded-xl border border-gray-100 p-5 hover:border-[#6A55F8]/30 hover:shadow-sm transition-all group"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-11 h-11 rounded-xl bg-[#F0EDFF] flex items-center justify-center text-xl shrink-0">👥</div>
-            <div>
-              <div className="font-semibold text-gray-900 group-hover:text-[#6A55F8] transition-colors">Команда и роли</div>
-              <div className="text-xs text-gray-500 mt-0.5">Участники проекта, приглашения, конструктор ролей с правами</div>
-            </div>
-          </div>
-          <svg className="w-5 h-5 text-gray-300 group-hover:text-[#6A55F8] transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7"/>
-          </svg>
-        </div>
-      </a>
 
       <div className="flex items-center gap-1 border-b border-gray-100">
         {tabs.map(tab => (
@@ -297,6 +281,8 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      {activeTab === 'team' && <TeamSection projectId={projectId} />}
 
       {activeTab === 'fields' && <CustomFieldsTab projectId={projectId} />}
 

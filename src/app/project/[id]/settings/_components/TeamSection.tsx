@@ -1,7 +1,9 @@
 'use client'
 
+// Раздел «Команда и роли» — встраивается как вкладка в /project/[id]/settings.
+// Раньше был отдельным route /settings/team.
+
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
 
 type Member = {
   id: string
@@ -51,9 +53,7 @@ type Permission = {
 
 type Tab = 'members' | 'roles'
 
-export default function TeamPage() {
-  const params = useParams()
-  const projectId = params.id as string
+export default function TeamSection({ projectId }: { projectId: string }) {
 
   const [tab, setTab] = useState<Tab>('members')
   const [members, setMembers] = useState<Member[]>([])
@@ -219,20 +219,8 @@ export default function TeamPage() {
 
   return (
     <div>
-      <a
-        href={`/project/${projectId}/settings`}
-        className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-[#6A55F8] mb-3"
-      >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7"/>
-        </svg>
-        Настройки проекта
-      </a>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Команда и роли</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Участники проекта, приглашения и настройка прав ролей.</p>
-        </div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-gray-500">Участники проекта, приглашения и настройка прав ролей.</p>
         {tab === 'members' && (
           <button
             onClick={() => setShowInvite(true)}
