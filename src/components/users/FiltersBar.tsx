@@ -247,30 +247,65 @@ export default function FiltersBar({
               ⚙ Колонки ({visibleColumns.length})
             </button>
             {showColumns && (
-              <div className="absolute z-30 right-0 top-full mt-1 w-72 bg-white rounded-xl border border-gray-100 shadow-xl p-2">
-                <div className="text-xs text-gray-400 px-2 pb-1.5">Что показывать в таблице:</div>
-                <div className="max-h-80 overflow-y-auto">
-                  {COLUMNS.map(c => {
-                    const checked = visibleColumns.includes(c.id)
+              <div className="absolute z-30 right-0 top-full mt-1 w-80 bg-white rounded-xl border border-gray-100 shadow-xl p-2">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2 pt-1 pb-1.5">Видимые (можно перетаскивать порядок)</div>
+                <div className="max-h-72 overflow-y-auto">
+                  {visibleColumns.map((colId, idx) => {
+                    const c = COLUMNS.find(x => x.id === colId)
+                    if (!c) return null
+                    function moveCol(direction: -1 | 1) {
+                      const target = idx + direction
+                      if (target < 0 || target >= visibleColumns.length) return
+                      const next = [...visibleColumns]
+                      ;[next[idx], next[target]] = [next[target], next[idx]]
+                      onChangeColumns(next)
+                    }
+                    function hideCol() {
+                      onChangeColumns(visibleColumns.filter(x => x !== colId))
+                    }
                     return (
-                      <label
-                        key={c.id}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer text-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {
-                            if (checked) onChangeColumns(visibleColumns.filter(x => x !== c.id))
-                            else onChangeColumns([...visibleColumns, c.id])
-                          }}
-                          className="rounded border-gray-300"
-                        />
-                        <span>{c.label}</span>
-                      </label>
+                      <div key={colId} className="group flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-gray-50 text-sm">
+                        <span className="flex-1 truncate">{c.label}</span>
+                        <button
+                          onClick={() => moveCol(-1)}
+                          disabled={idx === 0}
+                          className="text-xs text-gray-400 hover:text-[#6A55F8] disabled:opacity-30 px-1 leading-none"
+                          title="Выше"
+                        >▲</button>
+                        <button
+                          onClick={() => moveCol(1)}
+                          disabled={idx === visibleColumns.length - 1}
+                          className="text-xs text-gray-400 hover:text-[#6A55F8] disabled:opacity-30 px-1 leading-none"
+                          title="Ниже"
+                        >▼</button>
+                        <button
+                          onClick={hideCol}
+                          className="text-xs text-gray-400 hover:text-red-500 px-1.5 ml-1"
+                          title="Скрыть"
+                        >✕</button>
+                      </div>
                     )
                   })}
                 </div>
+
+                {COLUMNS.some(c => !visibleColumns.includes(c.id)) && (
+                  <>
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-2 pt-3 pb-1.5 border-t border-gray-100 mt-2">Скрытые</div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {COLUMNS.filter(c => !visibleColumns.includes(c.id)).map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => onChangeColumns([...visibleColumns, c.id])}
+                          className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 text-sm text-gray-600"
+                        >
+                          <span className="text-gray-400">+</span>
+                          <span>{c.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 <div className="border-t border-gray-100 mt-2 pt-2 px-2">
                   <button
                     onClick={() => onChangeColumns(DEFAULT_VISIBLE_COLUMNS)}

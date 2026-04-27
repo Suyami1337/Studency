@@ -197,21 +197,21 @@ export type ColumnDef = {
 
 export const COLUMNS: ColumnDef[] = [
   { id: 'name',             label: 'Имя',                      sortable: true,  default: true },
-  { id: 'client_type',      label: 'Тип',                      sortable: false, default: true },
-  { id: 'role',             label: 'Роль',                     sortable: false, default: true },
+  { id: 'client_type',      label: 'Тип',                      sortable: true,  default: true },
+  { id: 'role',             label: 'Роль',                     sortable: true,  default: true },
   { id: 'email',            label: 'Email',                    sortable: true,  default: true },
-  { id: 'phone',            label: 'Телефон',                  sortable: false, default: true },
-  { id: 'telegram',         label: 'Telegram',                 sortable: false, default: true },
-  { id: 'tags',             label: 'Теги',                     sortable: false, default: true },
+  { id: 'phone',            label: 'Телефон',                  sortable: true,  default: true },
+  { id: 'telegram',         label: 'Telegram',                 sortable: true,  default: true },
+  { id: 'tags',             label: 'Теги',                     sortable: true,  default: true },
   { id: 'last_activity_at', label: 'Последняя активность',     sortable: true,  default: true },
   { id: 'created_at',       label: 'Создан',                   sortable: true },
   { id: 'source',           label: 'Источник',                 sortable: true },
-  { id: 'first_touch',      label: 'Точка входа',              sortable: false },
+  { id: 'first_touch',      label: 'Точка входа',              sortable: true },
   { id: 'orders_count',     label: 'Заказов',                  sortable: true },
   { id: 'revenue',          label: 'Сумма заказов',            sortable: true },
-  { id: 'bot_subscribed',   label: 'Подписан на бота',         sortable: false },
-  { id: 'channel_subscribed', label: 'Подписан на канал',      sortable: false },
-  { id: 'in_funnel',        label: 'В воронке',                sortable: false },
+  { id: 'bot_subscribed',   label: 'Подписан на бота',         sortable: true },
+  { id: 'channel_subscribed', label: 'Подписан на канал',      sortable: true },
+  { id: 'in_funnel',        label: 'В воронке',                sortable: true },
 ]
 
 export const DEFAULT_VISIBLE_COLUMNS: ColumnId[] = COLUMNS.filter(c => c.default).map(c => c.id)
@@ -323,7 +323,12 @@ export function matchFilter(row: CustomerRow, f: FilterCondition): boolean {
         (row.full_name ?? '').toLowerCase().includes(q) ||
         (row.email ?? '').toLowerCase().includes(q) ||
         (row.phone ?? '').toLowerCase().includes(q) ||
-        (row.telegram_username ?? '').toLowerCase().includes(q)
+        (row.telegram_username ?? '').toLowerCase().includes(q) ||
+        (row.public_code ?? '').toLowerCase().includes(q) ||
+        (row.instagram ?? '').toLowerCase().includes(q) ||
+        (row.vk ?? '').toLowerCase().includes(q) ||
+        (row.whatsapp ?? '').toLowerCase().includes(q) ||
+        (row.role_label ?? '').toLowerCase().includes(q)
       )
     }
     default: return true
@@ -334,13 +339,22 @@ export function sortRows(rows: CustomerRow[], col: ColumnId, dir: SortDirection)
   const m = dir === 'asc' ? 1 : -1
   function getKey(r: CustomerRow): string | number {
     switch (col) {
-      case 'name':             return (r.full_name ?? r.email ?? '').toLowerCase()
+      case 'name':             return (r.full_name ?? r.telegram_username ?? r.public_code ?? '').toLowerCase()
       case 'email':            return (r.email ?? '').toLowerCase()
+      case 'phone':            return (r.phone ?? '').toLowerCase()
+      case 'telegram':         return (r.telegram_username ?? '').toLowerCase()
+      case 'tags':             return (r.tags ?? []).join(' ').toLowerCase()
       case 'created_at':       return new Date(r.created_at).getTime()
       case 'last_activity_at': return new Date(r.last_activity_at ?? r.created_at).getTime()
+      case 'client_type':      return CLIENT_TYPE_LABELS[deriveClientType(r)]
+      case 'role':             return (r.role_label ?? 'я').toLowerCase()
       case 'source':           return (r.source_name ?? '').toLowerCase()
       case 'orders_count':     return r.orders_count ?? 0
       case 'revenue':          return r.revenue ?? 0
+      case 'bot_subscribed':   return r.bot_subscribed ? 1 : 0
+      case 'channel_subscribed': return r.channel_subscribed ? 1 : 0
+      case 'in_funnel':        return r.in_funnel ? 1 : 0
+      case 'first_touch':      return (r.first_touch_kind ?? '').toLowerCase()
       default:                 return ''
     }
   }
