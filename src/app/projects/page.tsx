@@ -68,11 +68,8 @@ export default function ProjectsPage() {
     }
 
     if (data) {
-      await supabase.from('project_members').insert({
-        project_id: data.id,
-        user_id: user.id,
-        role: 'owner',
-      })
+      // project_members с ролью 'owner' создаётся триггером seed_project_roles_and_owner
+      // на стороне БД при INSERT в projects.
 
       // Kinescope folder (фоном)
       fetch('/api/projects/setup-kinescope', {

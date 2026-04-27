@@ -30,15 +30,17 @@ export async function ensureProjectAccess(
     return { ok: true, userId: user.id, role: 'owner' }
   }
 
-  // или member
+  // или member через project_members + roles
   const { data: member } = await supabase
     .from('project_members')
-    .select('role')
+    .select('status, roles!inner(code)')
     .eq('project_id', projectId)
     .eq('user_id', user.id)
+    .eq('status', 'active')
     .maybeSingle()
-  if (member?.role) {
-    return { ok: true, userId: user.id, role: member.role }
+  const roleCode = (member as { roles?: { code?: string } } | null)?.roles?.code
+  if (roleCode) {
+    return { ok: true, userId: user.id, role: roleCode }
   }
 
   return { ok: false, status: 403, error: 'forbidden' }
