@@ -4,7 +4,7 @@
 // `studency-impersonating` (не HTTP-only, доступна клиенту).
 // Кнопка «Вернуться» дёргает /api/team/exit-impersonation и редиректит на /projects.
 
-import { useEffect, useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 
 const MARKER_COOKIE = 'studency-impersonating'
 
@@ -20,17 +20,22 @@ function readCookie(name: string): string | null {
   return m ? decodeURIComponent(m[1]) : null
 }
 
-export default function ImpersonationBanner() {
-  const [marker, setMarker] = useState<MarkerData | null>(null)
-  const [exiting, setExiting] = useState(false)
+// useSyncExternalStore-based чтение marker-cookie. Без подписки (cookie не имеет
+// событий), но и без setState в useEffect — lint-правило в Next.js 15
+// (react-hooks/set-state-in-effect) не позволяет это иначе.
+function subscribeNoop() { return () => {} }
+function getMarkerSnapshot(): string | null {
+  return readCookie(MARKER_COOKIE)
+}
+function getMarkerServer(): string | null { return null }
 
-  useEffect(() => {
-    const raw = readCookie(MARKER_COOKIE)
-    if (!raw) return
-    try {
-      setMarker(JSON.parse(raw) as MarkerData)
-    } catch { /* ignore */ }
-  }, [])
+export default function ImpersonationBanner() {
+  const [exiting, setExiting] = useState(false)
+  const raw = useSyncExternalStore(subscribeNoop, getMarkerSnapshot, getMarkerServer)
+  let marker: MarkerData | null = null
+  if (raw) {
+    try { marker = JSON.parse(raw) as MarkerData } catch { /* ignore */ }
+  }
 
   if (!marker) return null
 
