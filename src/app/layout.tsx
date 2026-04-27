@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ImpersonationBanner from "@/components/layout/ImpersonationBanner";
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className="h-full antialiased">
-      <body className="h-full">{children}</body>
+      <body className="h-full">
+        <ImpersonationBanner />
+        {children}
+      </body>
     </html>
   );
 }

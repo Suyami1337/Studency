@@ -186,6 +186,22 @@ export default function TeamPage() {
     await loadAll()
   }
 
+  async function handleImpersonate(targetUserId: string, label: string) {
+    if (!confirm(`Войти от лица «${label}»? Вы увидите платформу как этот участник, потом сможете вернуться в свой аккаунт.`)) return
+    const res = await fetch('/api/team/impersonate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_user_id: targetUserId, project_id: projectId }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      setError(data.error || 'Не удалось войти от лица')
+      return
+    }
+    // Hard redirect — нужно чтобы браузер перечитал новые auth-cookies
+    window.location.href = data.redirect || '/projects'
+  }
+
   async function handleCancelInvite(invId: string) {
     if (!confirm('Отозвать приглашение? Ссылка перестанет работать.')) return
     const res = await fetch(`/api/projects/${projectId}/invitations/${invId}`, { method: 'DELETE' })
@@ -246,6 +262,7 @@ export default function TeamPage() {
             onChangeRole={handleChangeRole}
             onRemove={handleRemoveMember}
             onCancelInvite={handleCancelInvite}
+            onImpersonate={handleImpersonate}
           />
           <DangerZone
             members={members}
@@ -410,13 +427,14 @@ function DangerZone({ members, onLeave, onTransfer }: {
   )
 }
 
-function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCancelInvite }: {
+function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCancelInvite, onImpersonate }: {
   members: Member[]
   invitations: Invitation[]
   roles: Role[]
   onChangeRole: (id: string, roleId: string) => void
   onRemove: (id: string, label: string) => void
   onCancelInvite: (id: string) => void
+  onImpersonate: (userId: string, label: string) => void
 }) {
   return (
     <div className="space-y-6">
@@ -451,6 +469,15 @@ function MembersTab({ members, invitations, roles, onChangeRole, onRemove, onCan
                       <option key={r.id} value={r.id}>{r.label}</option>
                     ))}
                   </select>
+                )}
+                {!m.is_self && (
+                  <button
+                    onClick={() => onImpersonate(m.user_id, m.full_name || m.email || 'участника')}
+                    className="text-xs px-2 py-1 rounded-md text-amber-700 hover:bg-amber-50 border border-amber-200"
+                    title="Войти от его лица"
+                  >
+                    👁 Войти как
+                  </button>
                 )}
                 {!m.is_self && m.role_code !== 'owner' && (
                   <button
