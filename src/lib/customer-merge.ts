@@ -163,7 +163,10 @@ export async function mergeByVisitorToken(
   projectId: string,
   targetId: string,
 ): Promise<boolean> {
-  if (!visitorToken || !projectId || !targetId) return false
+  if (!visitorToken || !projectId || !targetId) {
+    console.log('[merge-by-vt] skip: missing args', { hasVT: !!visitorToken, hasProject: !!projectId, hasTarget: !!targetId })
+    return false
+  }
   const { data: guest } = await supabase
     .from('customers')
     .select('id, telegram_id')
@@ -172,7 +175,17 @@ export async function mergeByVisitorToken(
     .neq('id', targetId)
     .limit(1)
     .maybeSingle()
-  if (!guest) return false
-  if ((guest as { telegram_id: string | null }).telegram_id) return false
-  return mergeGuestIntoCustomer(supabase, guest.id as string, targetId)
+  if (!guest) {
+    console.log('[merge-by-vt] no guest found for vt', { visitorToken, projectId, targetId })
+    return false
+  }
+  const guestRow = guest as { id: string; telegram_id: string | null }
+  if (guestRow.telegram_id) {
+    console.log('[merge-by-vt] guest has telegram_id, skip', { guestId: guestRow.id, guestTg: guestRow.telegram_id })
+    return false
+  }
+  console.log('[merge-by-vt] merging', { guestId: guestRow.id, targetId })
+  const ok = await mergeGuestIntoCustomer(supabase, guestRow.id, targetId)
+  console.log('[merge-by-vt] result', { ok, guestId: guestRow.id, targetId })
+  return ok
 }

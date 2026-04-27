@@ -25,14 +25,18 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as {
       landingSlug?: string
+      landingName?: string
+      landingUrl?: string
       projectId?: string
       buttonText?: string
       buttonHref?: string
-      eventType?: string   // 'button_click' | 'link_click' | 'form_submit' | 'page_view' | 'page_view_end' | 'scroll_25/50/75/100'
+      eventType?: string
       visitorToken?: string
       duration_active_seconds?: number
       duration_total_seconds?: number
       reason?: string
+      clientTs?: string  // ISO timestamp с клиента — нужен для правильного порядка
+                         // быстрых событий (например 4 скролл-milestones за 100ms)
     }
 
     const { landingSlug, projectId, visitorToken } = body
@@ -116,18 +120,28 @@ export async function POST(request: NextRequest) {
         const dataPayload: Record<string, unknown> = {
           landing_slug: landingSlug,
         }
-        if (buttonText) dataPayload.button_text = buttonText
-        if (body.buttonHref) dataPayload.href = body.buttonHref
+        if (body.landingName) dataPayload.landing_name = body.landingName
+        if (body.landingUrl)  dataPayload.landing_url = body.landingUrl
+        if (buttonText)       dataPayload.button_text = buttonText
+        if (body.buttonHref)  dataPayload.href = body.buttonHref
         if (body.duration_active_seconds != null) dataPayload.duration_active_seconds = body.duration_active_seconds
         if (body.duration_total_seconds != null) dataPayload.duration_total_seconds = body.duration_total_seconds
         if (body.reason) dataPayload.reason = body.reason
 
-        await supabase.from('customer_actions').insert({
+        // Используем client-timestamp если он валидный (ISO),
+        // чтобы порядок событий в UI совпадал с реальным порядком на клиенте.
+        // Иначе при параллельных fetch'ах race-condition ставит created_at
+        // в случайном порядке.
+        const insertRow: Record<string, unknown> = {
           customer_id: customerId,
           project_id: landing.project_id,
           action: eventType,
           data: dataPayload,
-        })
+        }
+        if (body.clientTs && !isNaN(new Date(body.clientTs).getTime())) {
+          insertRow.created_at = body.clientTs
+        }
+        await supabase.from('customer_actions').insert(insertRow)
       }
     }
 

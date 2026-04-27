@@ -69,13 +69,33 @@ function eventLabel(kind: string, data: Record<string, unknown> | null): { title
     case 'button_click':
     case 'bot_button_click':
     case 'landing_button_click':
-    case 'link_click':
-      details = String(data.button_text ?? data.destination_url ?? '') || null
+    case 'link_click': {
+      const text = String(data.button_text ?? '').trim()
+      const href = String(data.href ?? data.destination_url ?? '').trim()
+      const parts: string[] = []
+      if (text) parts.push(`«${text}»`)
+      if (href) {
+        // Сокращаем длинные URL для UI
+        let short = href
+        try {
+          const u = new URL(href)
+          short = u.host + (u.pathname !== '/' ? u.pathname : '') + (u.search ? '?…' : '')
+        } catch { /* ignore */ }
+        parts.push(`→ ${short}`)
+      }
+      details = parts.length > 0 ? parts.join(' ') : null
       break
+    }
     case 'landing_view':
     case 'landing_visit':
       details = String(data.landing_name ?? data.landing_slug ?? '') || null
       break
+    case 'page_view': {
+      const name = String(data.landing_name ?? '').trim()
+      const slug = String(data.landing_slug ?? '').trim()
+      details = name || slug || null
+      break
+    }
     case 'order_created':
     case 'order_paid': {
       const a = data.amount as number | undefined

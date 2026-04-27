@@ -49,14 +49,38 @@ export function notFoundResponse(): Response {
   return new Response(html, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }
 
+/**
+ * Серверная подмена ссылок в HTML:
+ *  - t.me/<bot> и telegram.me/<bot> → добавляем ?start=vt_<token> для identity stitching
+ *
+ * Делается ДО отдачи HTML браузеру, поэтому нет race условия с DOMContentLoaded.
+ * Если у ссылки уже есть ?start= параметр — оставляем как есть.
+ */
+function patchLinksServerSide(html: string, visitorToken: string): string {
+  if (!visitorToken) return html
+  // Ищем href атрибуты ведущие на t.me / telegram.me
+  // Поддерживаем одинарные и двойные кавычки.
+  return html.replace(
+    /href\s*=\s*("|')(https?:\/\/(?:t\.me|telegram\.me)\/[^"'\s]+)("|')/gi,
+    (full, q1, url) => {
+      // Если уже есть start= параметр — не трогаем
+      if (/[?&]start=/.test(url)) return full
+      const sep = url.includes('?') ? '&' : '?'
+      const newUrl = `${url}${sep}start=vt_${visitorToken}`
+      return `href=${q1}${newUrl}${q1}`
+    }
+  )
+}
+
 function buildTrackingScript(opts: {
   slug: string
   visitorToken: string
   baseUrl: string
   isMiniApp: boolean
   projectId: string
+  landingName: string | null
 }): string {
-  const { slug, visitorToken, baseUrl, isMiniApp, projectId } = opts
+  const { slug, visitorToken, baseUrl, isMiniApp, projectId, landingName } = opts
   return `<script>
 (function() {
   var SLUG = ${JSON.stringify(slug)};
@@ -64,6 +88,7 @@ function buildTrackingScript(opts: {
   var BASE = ${JSON.stringify(baseUrl)};
   var IS_MINI_APP = ${isMiniApp ? 'true' : 'false'};
   var PROJECT_ID = ${JSON.stringify(projectId)};
+  var LANDING_NAME = ${JSON.stringify(landingName || '')};
 
   try {
     if (IS_MINI_APP && window.Telegram && window.Telegram.WebApp) {
@@ -89,7 +114,14 @@ function buildTrackingScript(opts: {
     fetch(BASE + '/api/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ landingSlug: SLUG, visitorToken: VT, projectId: PROJECT_ID }, payload)),
+      body: JSON.stringify(Object.assign({
+        landingSlug: SLUG,
+        landingName: LANDING_NAME,
+        landingUrl:  location.href,
+        visitorToken: VT,
+        projectId: PROJECT_ID,
+        clientTs: new Date().toISOString(),
+      }, payload)),
       keepalive: true
     }).catch(function() {});
   }
@@ -160,41 +192,28 @@ function buildTrackingScript(opts: {
   else initVideoTracking();
   setTimeout(initVideoTracking, 500); setTimeout(initVideoTracking, 2000);
 
-  // Identity stitching: подмена Telegram-ссылок на ?start=vt_<VT>.
-  // Если юзер кликает на ссылку t.me/<bot> — Telegram прокинет start-параметр
-  // в первое сообщение боту, и webhook сольёт Гость-карточку с tg-карточкой.
-  function patchTelegramLinks() {
-    if (!VT) return;
-    var anchors = document.querySelectorAll('a[href]');
-    for (var i = 0; i < anchors.length; i++) {
-      var a = anchors[i];
-      var href = a.getAttribute('href') || '';
-      if (!/^https?:\\/\\/(t\\.me|telegram\\.me)\\//i.test(href)) continue;
-      try {
-        var u = new URL(href);
-        if (u.searchParams.has('start')) continue;
-        // Не трогаем ссылки на каналы (/<channel> без бота). Но безопасный путь —
-        // приклеить start всегда: каналы игнорируют этот параметр.
-        u.searchParams.set('start', 'vt_' + VT);
-        a.setAttribute('href', u.toString());
-      } catch (e) {}
-    }
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', patchTelegramLinks);
-  else patchTelegramLinks();
-  setTimeout(patchTelegramLinks, 1500);
+  // (Identity stitching ссылок t.me делаем серверно при рендере HTML —
+  // это исключает race с DOMContentLoaded и быстрыми кликами.)
 
   document.addEventListener('click', function(e) {
     var el = e.target.closest('button, [type=submit], [role=button], a[href]');
     if (!el) return;
-    var label = getLabel(el);
+    var label = (getLabel(el) || '').trim();
     var isLink = el.tagName === 'A';
-    var fallback = isLink ? '🔗 ссылка' : '▭ элемент';
-    track({ buttonText: label || fallback, buttonHref: isLink ? (el.getAttribute('href') || '') : '', eventType: isLink ? 'link_click' : 'button_click' });
+    var rawHref = isLink ? (el.getAttribute('href') || '') : '';
+    var resolvedHref = '';
+    if (isLink) {
+      try { resolvedHref = new URL(rawHref, location.href).toString(); } catch (e2) { resolvedHref = rawHref; }
+    }
+    track({
+      buttonText: label,
+      buttonHref: resolvedHref,
+      eventType: isLink ? 'link_click' : 'button_click',
+    });
   }, true);
 
   // ── Page view: фиксируем заход на лендинг (отдельно от landing_visits, для timeline customer_actions)
-  track({ buttonText: '', eventType: 'page_view' });
+  track({ buttonText: LANDING_NAME, eventType: 'page_view' });
 
   // ── Скролл-milestones (как в Я.Метрика): сообщаем когда юзер доскроллил до 25/50/75/100
   var scrollFired = {};
@@ -501,6 +520,7 @@ export async function renderLandingResponse(
 
   const trackingScript = buildTrackingScript({
     slug: landing.slug, visitorToken, baseUrl, isMiniApp, projectId: landing.project_id,
+    landingName: landing.name,
   })
   const extraHead = isMiniApp ? `<script src="https://telegram.org/js/telegram-web-app.js" async></script>` : ''
 
@@ -522,13 +542,14 @@ export async function renderLandingResponse(
     const blockList = (blocks ?? []) as LandingBlock[]
     let doc = assembleLandingHtml(blockList, { title, metaDescription: description, extraHead, extraBodyEnd: trackingScript })
     doc = await replaceVideoShortcodes(doc, supabase)
+    doc = patchLinksServerSide(doc, visitorToken)
     return new Response(doc, { status: 200, headers: baseHeaders })
   }
 
   if (!landing.html_content) return notFoundResponse()
   const htmlContent = await replaceVideoShortcodes(landing.html_content, supabase)
   const { headInner, bodyInner, bodyAttrs } = extractHtmlParts(htmlContent)
-  const doc = `<!DOCTYPE html>
+  let doc = `<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -543,5 +564,6 @@ ${bodyInner}
 ${trackingScript}
 </body>
 </html>`
+  doc = patchLinksServerSide(doc, visitorToken)
   return new Response(doc, { status: 200, headers: baseHeaders })
 }
