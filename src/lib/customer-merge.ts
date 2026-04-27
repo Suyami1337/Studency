@@ -27,12 +27,19 @@ type CustomerLite = {
   bot_subscribed: boolean | null
   channel_subscribed: boolean | null
   is_blocked: boolean | null
+  first_touch_at: string | null
+  first_touch_kind: string | null
+  first_touch_source: string | null
+  first_touch_landing_id: string | null
+  first_touch_referrer: string | null
+  first_touch_url: string | null
+  first_touch_utm: Record<string, string> | null
 }
 
 async function loadCustomer(supabase: SupabaseClient, id: string): Promise<CustomerLite | null> {
   const { data } = await supabase
     .from('customers')
-    .select('id, project_id, full_name, email, phone, telegram_id, telegram_username, instagram, vk, whatsapp, tags, source_id, source_name, source_slug, visitor_token, bot_subscribed, channel_subscribed, is_blocked')
+    .select('id, project_id, full_name, email, phone, telegram_id, telegram_username, instagram, vk, whatsapp, tags, source_id, source_name, source_slug, visitor_token, bot_subscribed, channel_subscribed, is_blocked, first_touch_at, first_touch_kind, first_touch_source, first_touch_landing_id, first_touch_referrer, first_touch_url, first_touch_utm')
     .eq('id', id)
     .maybeSingle()
   return (data ?? null) as CustomerLite | null
@@ -52,6 +59,7 @@ export async function mergeGuestIntoCustomer(
   supabase: SupabaseClient,
   guestId: string,
   targetId: string,
+  opts: { allowGuestWithTelegram?: boolean } = {},
 ): Promise<boolean> {
   if (!guestId || !targetId || guestId === targetId) return false
 
@@ -61,7 +69,15 @@ export async function mergeGuestIntoCustomer(
   ])
   if (!guest || !target) return false
   if (guest.project_id !== target.project_id) return false
-  if (guest.telegram_id) return false // не сливаем «полноценный» customer — это конфликт
+  // По умолчанию защита от конфликта: «полноценную» tg-карточку (с telegram_id)
+  // не сливаем как Гостя — потому что неясно кто из них «настоящий».
+  // Cron-merge дубликатов передаёт allowGuestWithTelegram=true когда оба
+  // customer имеют ОДИН И ТОТ ЖЕ telegram_id (точная дубликация).
+  if (guest.telegram_id && !opts.allowGuestWithTelegram) return false
+  if (guest.telegram_id && opts.allowGuestWithTelegram && guest.telegram_id !== target.telegram_id) {
+    // защита: не сливаем разных tg-юзеров
+    return false
+  }
 
   // Перенос связанных таблиц. Делаем пер-таблично через try-catch чтобы единичный
   // конфликт constraint'а не сорвал merge целиком.
@@ -88,8 +104,15 @@ export async function mergeGuestIntoCustomer(
     }
   }
 
-  // Объединяем поля: target в приоритете, гость дополняет где у target пусто.
+  // Объединяем поля: target в приоритете на КОНТАКТЫ, но first-touch берём
+  // САМЫЙ РАННИЙ из двух — это и есть «навсегда сохранённая точка входа».
+  // Если у Гостя first_touch раньше → он и записан как первоисточник.
   const mergedTags = Array.from(new Set([...(target.tags ?? []), ...(guest.tags ?? [])]))
+  const useGuestFirstTouch = (() => {
+    const g = guest.first_touch_at ? new Date(guest.first_touch_at).getTime() : Infinity
+    const t = target.first_touch_at ? new Date(target.first_touch_at).getTime() : Infinity
+    return g < t
+  })()
   const patch: Partial<CustomerLite> = {
     full_name: target.full_name ?? guest.full_name,
     email: target.email ?? guest.email,
@@ -102,6 +125,17 @@ export async function mergeGuestIntoCustomer(
     source_name: target.source_name ?? guest.source_name,
     source_slug: target.source_slug ?? guest.source_slug,
     visitor_token: target.visitor_token ?? guest.visitor_token,
+    ...(useGuestFirstTouch
+      ? {
+          first_touch_at: guest.first_touch_at,
+          first_touch_kind: guest.first_touch_kind,
+          first_touch_source: guest.first_touch_source,
+          first_touch_landing_id: guest.first_touch_landing_id,
+          first_touch_referrer: guest.first_touch_referrer,
+          first_touch_url: guest.first_touch_url,
+          first_touch_utm: guest.first_touch_utm,
+        }
+      : {}),
   }
   try {
     await supabase.from('customers').update(patch).eq('id', targetId)

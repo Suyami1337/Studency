@@ -414,6 +414,14 @@ export async function POST(request: NextRequest) {
     if (text.startsWith('/start vt_')) {
       visitorTokenFromStart = text.replace('/start vt_', '').trim() || null
     }
+    // КРИТИЧНО: после извлечения payload нормализуем text обратно в "/start",
+    // иначе матчинг trigger_word ниже искал бы сценарий с trigger_word
+    // равным "/start vt_<UUID>" — и не находил, бот молчал бы при любом
+    // переходе с лендинга или с трекинговой ссылки.
+    let normalizedTextOverride: string | null = null
+    if (text.startsWith('/start ') || text === '/start') {
+      normalizedTextOverride = '/start'
+    }
 
     // Find or create customer (проверяем по telegram_id чтобы не плодить дубликаты)
     let customerId = conversation.customer_id
@@ -426,10 +434,19 @@ export async function POST(request: NextRequest) {
         // Customer уже есть — привязываем к conversation, обновляем данные
         customerId = existingByTgId.id
         await supabase.from('chatbot_conversations').update({ customer_id: existingByTgId.id }).eq('id', conversation.id)
-        await supabase.from('customers').update({
+        // Проверим, есть ли first_touch — если нет, ставим первый bot-touch
+        const { data: existingFull } = await supabase
+          .from('customers').select('first_touch_at').eq('id', existingByTgId.id).maybeSingle()
+        const baseUpdate: Record<string, unknown> = {
           telegram_username: username, full_name: firstName,
           bot_subscribed: true, bot_subscribed_at: new Date().toISOString(),
-        }).eq('id', existingByTgId.id)
+        }
+        if (existingFull && !(existingFull as { first_touch_at: string | null }).first_touch_at) {
+          baseUpdate.first_touch_at = new Date().toISOString()
+          baseUpdate.first_touch_kind = 'bot'
+          baseUpdate.first_touch_source = bot.name || 'telegram_bot'
+        }
+        await supabase.from('customers').update(baseUpdate).eq('id', existingByTgId.id)
         // Identity stitching — сливаем Гостя из лендинга если есть payload
         if (visitorTokenFromStart) {
           await mergeByVisitorToken(supabase, visitorTokenFromStart, projectId, existingByTgId.id)
@@ -445,7 +462,7 @@ export async function POST(request: NextRequest) {
           eventData: { bot_name: bot.name, bot_id: bot.id },
         }).catch(err => console.error('CRM auto error:', err))
       } else {
-        // Новый customer
+        // Новый customer + первый touch = bot если не было лендинг-визита
         const { data: customer } = await supabase
           .from('customers')
           .insert({
@@ -455,6 +472,9 @@ export async function POST(request: NextRequest) {
             full_name: firstName,
             bot_subscribed: true,
             bot_subscribed_at: new Date().toISOString(),
+            first_touch_at: new Date().toISOString(),
+            first_touch_kind: 'bot',
+            first_touch_source: bot.name || 'telegram_bot',
           })
           .select()
           .single()
@@ -632,7 +652,7 @@ export async function POST(request: NextRequest) {
       .from('scenario_messages').select('*')
       .in('scenario_id', scenarioIds).eq('is_start', true)
 
-    const normalizedText = text.toLowerCase().trim()
+    const normalizedText = (normalizedTextOverride ?? text).toLowerCase().trim()
     const matchedStart = (startMessages ?? []).find((m: { trigger_word: string }) =>
       m.trigger_word && normalizedText === m.trigger_word.toLowerCase().trim()
     )

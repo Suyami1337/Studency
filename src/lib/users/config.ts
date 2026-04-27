@@ -46,12 +46,27 @@ export type CustomerRow = {
   bot_blocked: boolean | null
   channel_subscribed: boolean | null
   created_at: string
+  // first-touch attribution
+  first_touch_at?: string | null
+  first_touch_kind?: string | null   // 'landing' | 'bot' | 'channel' | 'direct'
+  first_touch_source?: string | null
+  first_touch_landing_id?: string | null
+  first_touch_referrer?: string | null
+  first_touch_url?: string | null
+  first_touch_utm?: Record<string, string> | null
   // joined from customer_aggregates
   last_activity_at?: string | null
   orders_count?: number
   revenue?: number
   has_paid?: boolean
   in_funnel?: boolean
+}
+
+export const FIRST_TOUCH_KIND_LABELS: Record<string, { label: string; icon: string }> = {
+  landing: { label: 'Лендинг',     icon: '🌐' },
+  bot:     { label: 'Бот',         icon: '🤖' },
+  channel: { label: 'Канал',       icon: '📣' },
+  direct:  { label: 'Прямой заход', icon: '↗' },
 }
 
 export function deriveClientType(c: CustomerRow): ClientType {
@@ -97,6 +112,20 @@ export const FILTER_FIELDS: FilterField[] = [
   { id: 'in_funnel',     label: 'В воронке',       type: 'boolean' },
   { id: 'tags',          label: 'Теги',            type: 'tag', placeholder: 'тег' },
   { id: 'source_name',   label: 'Источник',        type: 'text', placeholder: 'название источника' },
+  {
+    id: 'first_touch_kind',
+    label: 'Точка входа',
+    type: 'multiselect',
+    options: [
+      { value: 'landing', label: '🌐 Лендинг' },
+      { value: 'bot',     label: '🤖 Бот' },
+      { value: 'channel', label: '📣 Канал' },
+      { value: 'direct',  label: '↗ Прямой' },
+    ],
+  },
+  { id: 'first_touch_source', label: 'Источник входа (UTM/название)', type: 'text', placeholder: 'utm_source / blogger_ivan / ...' },
+  { id: 'utm_campaign',  label: 'UTM Campaign',   type: 'text', placeholder: 'campaign' },
+  { id: 'utm_source',    label: 'UTM Source',     type: 'text', placeholder: 'source' },
   { id: 'created_range', label: 'Дата создания',   type: 'date_range' },
   { id: 'activity_range',label: 'Последняя активность', type: 'date_range' },
   { id: 'revenue_range', label: 'Сумма заказов (₽)', type: 'number_range' },
@@ -116,6 +145,7 @@ export type ColumnId =
   | 'created_at' | 'last_activity_at' | 'client_type'
   | 'source' | 'orders_count' | 'revenue'
   | 'bot_subscribed' | 'channel_subscribed' | 'in_funnel'
+  | 'first_touch'
 
 export type ColumnDef = {
   id: ColumnId
@@ -135,6 +165,7 @@ export const COLUMNS: ColumnDef[] = [
   { id: 'last_activity_at', label: 'Последняя активность',     sortable: true,  default: true },
   { id: 'created_at',       label: 'Создан',                   sortable: true },
   { id: 'source',           label: 'Источник',                 sortable: true },
+  { id: 'first_touch',      label: 'Точка входа',              sortable: false },
   { id: 'orders_count',     label: 'Заказов',                  sortable: true },
   { id: 'revenue',          label: 'Сумма заказов',            sortable: true },
   { id: 'bot_subscribed',   label: 'Подписан на бота',         sortable: false },
@@ -212,6 +243,28 @@ export function matchFilter(row: CustomerRow, f: FilterCondition): boolean {
       const q = ((f.value as string) ?? '').toLowerCase().trim()
       if (!q) return true
       return (row.source_name ?? '').toLowerCase().includes(q)
+    }
+    case 'first_touch_kind': {
+      const v = f.value
+      if (!Array.isArray(v) || v.length === 0) return true
+      return v.includes(row.first_touch_kind ?? '')
+    }
+    case 'first_touch_source': {
+      const q = ((f.value as string) ?? '').toLowerCase().trim()
+      if (!q) return true
+      return (row.first_touch_source ?? '').toLowerCase().includes(q)
+    }
+    case 'utm_campaign': {
+      const q = ((f.value as string) ?? '').toLowerCase().trim()
+      if (!q) return true
+      const utm = row.first_touch_utm
+      return Boolean(utm && (utm.utm_campaign ?? '').toLowerCase().includes(q))
+    }
+    case 'utm_source': {
+      const q = ((f.value as string) ?? '').toLowerCase().trim()
+      if (!q) return true
+      const utm = row.first_touch_utm
+      return Boolean(utm && (utm.utm_source ?? utm.src ?? '').toLowerCase().includes(q))
     }
     case 'created_range':  return inDateRange(row.created_at, f.value as { from?: string; to?: string })
     case 'activity_range': return inDateRange(row.last_activity_at ?? row.created_at, f.value as { from?: string; to?: string })
@@ -312,6 +365,12 @@ export function cellValue(r: CustomerRow, id: ColumnId): string | number {
     case 'created_at':       return formatDateTime(r.created_at)
     case 'last_activity_at': return formatDateTime(r.last_activity_at ?? r.created_at)
     case 'source':           return r.source_name ?? ''
+    case 'first_touch': {
+      const k = r.first_touch_kind
+      const meta = k ? FIRST_TOUCH_KIND_LABELS[k] : null
+      const src = r.first_touch_source ?? ''
+      return meta ? `${meta.label}${src ? ': ' + src : ''}` : src
+    }
     case 'orders_count':     return r.orders_count ?? 0
     case 'revenue':          return r.revenue ?? 0
     case 'bot_subscribed':   return r.bot_subscribed ? 'да' : 'нет'

@@ -28,20 +28,33 @@ export async function POST(request: NextRequest) {
       projectId?: string
       buttonText?: string
       buttonHref?: string
-      eventType?: string   // 'button_click' | 'link_click' | 'form_submit'
+      eventType?: string   // 'button_click' | 'link_click' | 'form_submit' | 'page_view' | 'page_view_end' | 'scroll_25/50/75/100'
       visitorToken?: string
+      duration_active_seconds?: number
+      duration_total_seconds?: number
+      reason?: string
     }
 
-    const { landingSlug, projectId, buttonText, visitorToken } = body
+    const { landingSlug, projectId, visitorToken } = body
+    const buttonText = (body.buttonText || '').trim()
     const eventType = body.eventType || 'button_click'
 
-    if (!landingSlug || !buttonText) {
+    const ALLOWED_EVENTS = new Set([
+      'button_click', 'link_click', 'form_submit',
+      'page_view', 'page_view_end',
+      'scroll_25', 'scroll_50', 'scroll_75', 'scroll_100',
+    ])
+    if (!ALLOWED_EVENTS.has(eventType)) {
+      return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
+    }
+
+    if (!landingSlug) {
       return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
     // Rate-limit per (IP, slug) — отсекаем флуд от ботов
     const ip = clientIp(request)
-    if (!rateLimit(`track:${ip}:${landingSlug}`, 120, 60_000)) {
+    if (!rateLimit(`track:${ip}:${landingSlug}`, 240, 60_000)) {
       return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
@@ -57,39 +70,63 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true }, { headers: CORS_HEADERS })
     }
 
-    // 2. Upsert кнопки по (landing_id, name) — создаёт если нет, обновляет если есть
-    const { data: btn } = await supabase
-      .from('landing_buttons')
-      .upsert(
-        { landing_id: landing.id, name: buttonText, clicks: 0, conversions: 0 },
-        { onConflict: 'landing_id,name', ignoreDuplicates: false }
-      )
-      .select('id')
-      .single()
-
-    if (btn) {
-      await supabase.rpc('increment_button_clicks', { p_button_id: btn.id })
+    // 2. Upsert кнопки по (landing_id, name) — но только если у элемента есть текст.
+    // Иначе для иконок без подписи получали бы UNIQUE constraint конфликт.
+    if (buttonText) {
+      const { data: btn } = await supabase
+        .from('landing_buttons')
+        .upsert(
+          { landing_id: landing.id, name: buttonText, clicks: 0, conversions: 0 },
+          { onConflict: 'landing_id,name', ignoreDuplicates: false }
+        )
+        .select('id')
+        .single()
+      if (btn) {
+        await supabase.rpc('increment_button_clicks', { p_button_id: btn.id })
+      }
     }
 
-    // 3. Если visitor_token известен — пишем в карточку клиента
+    // 3. Логируем действие в карточку клиента. Если customer ещё не создан
+    // (race с рендером лендинга или старая cookie не нашлась) — создаём
+    // Гостя на лету, чтобы клик не потерялся.
     if (visitorToken) {
+      let customerId: string | null = null
       const { data: customer } = await supabase
         .from('customers')
-        .select('id, project_id')
+        .select('id')
         .eq('visitor_token', visitorToken)
         .eq('project_id', landing.project_id)
         .maybeSingle()
-
       if (customer) {
+        customerId = customer.id as string
+      } else {
+        const { data: created } = await supabase
+          .from('customers')
+          .insert({
+            project_id: landing.project_id,
+            visitor_token: visitorToken,
+            is_blocked: false,
+          })
+          .select('id')
+          .single()
+        if (created) customerId = created.id as string
+      }
+
+      if (customerId) {
+        const dataPayload: Record<string, unknown> = {
+          landing_slug: landingSlug,
+        }
+        if (buttonText) dataPayload.button_text = buttonText
+        if (body.buttonHref) dataPayload.href = body.buttonHref
+        if (body.duration_active_seconds != null) dataPayload.duration_active_seconds = body.duration_active_seconds
+        if (body.duration_total_seconds != null) dataPayload.duration_total_seconds = body.duration_total_seconds
+        if (body.reason) dataPayload.reason = body.reason
+
         await supabase.from('customer_actions').insert({
-          customer_id: customer.id,
-          project_id: customer.project_id,
+          customer_id: customerId,
+          project_id: landing.project_id,
           action: eventType,
-          data: {
-            button_text: buttonText,
-            landing_slug: landingSlug,
-            href: body.buttonHref || null,
-          },
+          data: dataPayload,
         })
       }
     }

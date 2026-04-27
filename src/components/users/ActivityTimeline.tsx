@@ -24,7 +24,12 @@ const KIND_META: Record<string, { icon: string; label: string }> = {
   landing_button_click: { icon: '🔗', label: 'Клик по кнопке на лендинге' },
   link_click:           { icon: '🔗', label: 'Перешёл по ссылке' },
   form_submit:          { icon: '📝', label: 'Отправил форму' },
-  page_view:            { icon: '👁️', label: 'Просмотр страницы' },
+  page_view:            { icon: '👁️', label: 'Открыл страницу' },
+  page_view_end:        { icon: '⏱', label: 'Время на странице' },
+  scroll_25:            { icon: '📜', label: 'Доскроллил до 25%' },
+  scroll_50:            { icon: '📜', label: 'Доскроллил до 50%' },
+  scroll_75:            { icon: '📜', label: 'Доскроллил до 75%' },
+  scroll_100:           { icon: '📜', label: 'Доскроллил до конца' },
   source_linked:        { icon: '📍', label: 'Источник определён' },
   order_created:        { icon: '🛒', label: 'Создан заказ' },
   order_paid:           { icon: '💳', label: 'Оплатил заказ' },
@@ -37,6 +42,11 @@ const KIND_META: Record<string, { icon: string; label: string }> = {
   broadcast_sent:       { icon: '📨', label: 'Получил рассылку' },
   broadcast_failed:     { icon: '⚠️', label: 'Ошибка рассылки' },
   video_view:           { icon: '▶️', label: 'Смотрел видео' },
+  video_started:        { icon: '▶️', label: 'Начал смотреть видео' },
+  video_milestone_25:   { icon: '📊', label: 'Досмотрел 25%' },
+  video_milestone_50:   { icon: '📊', label: 'Досмотрел 50%' },
+  video_milestone_75:   { icon: '📊', label: 'Досмотрел 75%' },
+  video_completed:      { icon: '✅', label: 'Полностью досмотрел видео' },
   lesson_started:       { icon: '📚', label: 'Начал урок' },
   lesson_completed:     { icon: '✅', label: 'Завершил урок' },
   note_added:           { icon: '📌', label: 'Добавлена заметка' },
@@ -85,6 +95,30 @@ function eventLabel(kind: string, data: Record<string, unknown> | null): { title
         ? `${data.title ?? ''} (полностью)`
         : `${data.title ?? ''} (${data.watch_time_seconds ?? 0} сек)`
       break
+    case 'video_started':
+    case 'video_completed':
+    case 'video_milestone_25':
+    case 'video_milestone_50':
+    case 'video_milestone_75': {
+      const sec = Number(data.max_position_seconds ?? 0)
+      const m = Math.floor(sec / 60), s = Math.floor(sec % 60)
+      const time = m > 0 ? `${m} мин ${s} сек` : `${s} сек`
+      const t = data.title ? `«${data.title}»` : ''
+      details = [t, `на ${time}`].filter(Boolean).join(' ')
+      break
+    }
+    case 'page_view_end': {
+      const active = Number(data.duration_active_seconds ?? 0)
+      const total = Number(data.duration_total_seconds ?? 0)
+      const fmt = (sec: number) => {
+        if (sec < 60) return `${sec} сек`
+        const m = Math.floor(sec / 60)
+        const s = sec % 60
+        return s > 0 ? `${m} мин ${s} сек` : `${m} мин`
+      }
+      details = `активно ${fmt(active)} (всего ${fmt(total)})`
+      break
+    }
     case 'note_added':
       details = String(data.text ?? '') || null
       break

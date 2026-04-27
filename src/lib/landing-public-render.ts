@@ -100,7 +100,7 @@ function buildTrackingScript(opts: {
     for (var i = 0; i < iframes.length; i++) {
       var videoId = iframes[i].getAttribute('data-studency-video-id');
       if (!videoId || videoStates[videoId]) continue;
-      videoStates[videoId] = { sessionId: genSessionId(), iframeEl: iframes[i], started: false, completed: false, lastReported: 0, maxPos: 0, watchTime: 0, duration: 0 };
+      videoStates[videoId] = { sessionId: genSessionId(), iframeEl: iframes[i], started: false, completed: false, lastReported: 0, maxPos: 0, watchTime: 0, duration: 0, milestonesFired: {} };
     }
   }
   function videoTrack(videoId, event) {
@@ -111,6 +111,18 @@ function buildTrackingScript(opts: {
       body: JSON.stringify({ video_id: videoId, session_id: s.sessionId, visitor_token: VT, watch_time_seconds: Math.round(s.watchTime), max_position_seconds: Math.round(s.maxPos), completed: s.completed, event: event }),
       keepalive: true
     }).catch(function() {});
+  }
+  function checkVideoMilestone(videoId) {
+    var s = videoStates[videoId]; if (!s || !s.duration) return;
+    var pct = (s.maxPos / s.duration) * 100;
+    var levels = [25, 50, 75];
+    for (var i = 0; i < levels.length; i++) {
+      var lvl = levels[i];
+      if (pct >= lvl && !s.milestonesFired[lvl]) {
+        s.milestonesFired[lvl] = true;
+        videoTrack(videoId, 'milestone_' + lvl);
+      }
+    }
   }
   window.addEventListener('message', function(e) {
     if (!e.origin || e.origin.indexOf('kinescope.io') === -1) return;
@@ -130,6 +142,7 @@ function buildTrackingScript(opts: {
       if (duration > 0) s.duration = duration;
       if (current > s.maxPos) s.maxPos = current;
       s.watchTime = Math.max(s.watchTime, current);
+      checkVideoMilestone(matchedId);
       if (duration > 0 && current / duration >= 0.9 && !s.completed) { s.completed = true; videoTrack(matchedId, 'complete'); }
       var now = Date.now();
       if (now - s.lastReported > 10000) { s.lastReported = now; videoTrack(matchedId, 'progress'); }
@@ -173,10 +186,71 @@ function buildTrackingScript(opts: {
   document.addEventListener('click', function(e) {
     var el = e.target.closest('button, [type=submit], [role=button], a[href]');
     if (!el) return;
-    var label = getLabel(el); if (!label) return;
+    var label = getLabel(el);
     var isLink = el.tagName === 'A';
-    track({ buttonText: label, buttonHref: isLink ? (el.getAttribute('href') || '') : '', eventType: isLink ? 'link_click' : 'button_click' });
+    var fallback = isLink ? '🔗 ссылка' : '▭ элемент';
+    track({ buttonText: label || fallback, buttonHref: isLink ? (el.getAttribute('href') || '') : '', eventType: isLink ? 'link_click' : 'button_click' });
   }, true);
+
+  // ── Page view: фиксируем заход на лендинг (отдельно от landing_visits, для timeline customer_actions)
+  track({ buttonText: '', eventType: 'page_view' });
+
+  // ── Скролл-milestones (как в Я.Метрика): сообщаем когда юзер доскроллил до 25/50/75/100
+  var scrollFired = {};
+  function checkScroll() {
+    var doc = document.documentElement;
+    var scrollTop = window.pageYOffset || doc.scrollTop;
+    var pageHeight = doc.scrollHeight - doc.clientHeight;
+    if (pageHeight <= 0) return;
+    var pct = (scrollTop / pageHeight) * 100;
+    var levels = [25, 50, 75, 100];
+    for (var i = 0; i < levels.length; i++) {
+      var lvl = levels[i];
+      if (pct >= lvl - 1 && !scrollFired[lvl]) {
+        scrollFired[lvl] = true;
+        track({ buttonText: '', eventType: 'scroll_' + lvl });
+      }
+    }
+  }
+  var scrollTimer;
+  window.addEventListener('scroll', function() {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(function() { scrollTimer = null; checkScroll(); }, 250);
+  }, { passive: true });
+
+  // ── Время на сайте (active time): засекаем только когда вкладка видна
+  var pageStart = Date.now();
+  var visibleSince = pageStart;
+  var totalActiveMs = 0;
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      totalActiveMs += Date.now() - visibleSince;
+    } else {
+      visibleSince = Date.now();
+    }
+  });
+  function sendDuration(reason) {
+    var active = totalActiveMs + (document.hidden ? 0 : Date.now() - visibleSince);
+    var total = Date.now() - pageStart;
+    var payload = {
+      landingSlug: SLUG, visitorToken: VT, projectId: PROJECT_ID,
+      buttonText: '', eventType: 'page_view_end',
+      buttonHref: '',
+      duration_active_seconds: Math.round(active / 1000),
+      duration_total_seconds: Math.round(total / 1000),
+      reason: reason || 'unload',
+    };
+    var blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(BASE + '/api/track', blob);
+    } else {
+      fetch(BASE + '/api/track', { method: 'POST', body: JSON.stringify(payload), headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(function() {});
+    }
+  }
+  // pagehide / beforeunload — поймать момент закрытия вкладки
+  // sendBeacon переживает закрытие вкладки в 99% случаев. Без heartbeat'ов
+  // чтобы не плодить customer_actions каждые 30 секунд для активного юзера.
+  window.addEventListener('pagehide', function() { sendDuration('pagehide'); });
 
   document.addEventListener('submit', function(e) {
     var form = e.target;
@@ -223,6 +297,50 @@ function buildTrackingScript(opts: {
  * Возвращает customerId, актуальный visitorToken, и флаг — нужно ли установить
  * cookie в Set-Cookie (true когда токен только что выдан или поменялся).
  */
+/** Парсит UTM-параметры и referer для атрибуции. */
+function extractFirstTouch(request: NextRequest, landing: PublicLanding): {
+  first_touch_at: string
+  first_touch_kind: 'landing'
+  first_touch_landing_id: string
+  first_touch_url: string
+  first_touch_referrer: string | null
+  first_touch_utm: Record<string, string> | null
+  first_touch_source: string | null
+} {
+  const url = new URL(request.url)
+  const utm: Record<string, string> = {}
+  const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']
+  for (const k of utmKeys) {
+    const v = url.searchParams.get(k)
+    if (v) utm[k] = v
+  }
+  // Наш собственный ?src=<slug> — поддержка трекинговых ссылок
+  const ourSrc = url.searchParams.get('src')
+  if (ourSrc) utm.src = ourSrc
+
+  const referrer = request.headers.get('referer') || null
+  // first_touch_source: utm_source > наш src > referrer host > 'direct'
+  let source: string | null = utm.utm_source || utm.src || null
+  if (!source && referrer) {
+    try {
+      const refHost = new URL(referrer).hostname
+      // Если referrer — наш же лендинг, считаем direct
+      if (refHost && refHost !== url.hostname) source = refHost
+    } catch { /* ignore */ }
+  }
+  if (!source) source = 'direct'
+
+  return {
+    first_touch_at: new Date().toISOString(),
+    first_touch_kind: 'landing',
+    first_touch_landing_id: landing.id,
+    first_touch_url: url.toString(),
+    first_touch_referrer: referrer,
+    first_touch_utm: Object.keys(utm).length > 0 ? utm : null,
+    first_touch_source: source,
+  }
+}
+
 async function ensureVisitorCustomer(
   supabase: SupabaseClient,
   request: NextRequest | undefined,
@@ -285,18 +403,32 @@ async function ensureVisitorCustomer(
     setCookie = true
   }
 
-  // 4. Customer не определён — создаём гостя
+  // 4. Customer не определён — создаём гостя c first_touch
   if (!customerId) {
+    const ft = extractFirstTouch(request, landing)
     const { data: c } = await supabase
       .from('customers')
       .insert({
         project_id: landing.project_id,
         visitor_token: visitorToken,
         is_blocked: false,
+        ...ft,
       })
       .select('id')
       .single()
     if (c) customerId = c.id as string
+  } else {
+    // Customer уже был — если у него нет first_touch_at, проставим (миграция
+    // старых карточек, или гость зашёл с лендинга после прямого /start бота)
+    const { data: existing } = await supabase
+      .from('customers')
+      .select('first_touch_at')
+      .eq('id', customerId)
+      .maybeSingle()
+    if (existing && !(existing as { first_touch_at: string | null }).first_touch_at) {
+      const ft = extractFirstTouch(request, landing)
+      await supabase.from('customers').update(ft).eq('id', customerId)
+    }
   }
 
   return { customerId, visitorToken, setCookie }

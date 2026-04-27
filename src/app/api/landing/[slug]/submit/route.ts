@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { evaluateAutoBoards } from '@/lib/crm-automation'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
+import { mergeGuestIntoCustomer } from '@/lib/customer-merge'
 
 export const dynamic = 'force-dynamic'
 
@@ -145,6 +146,42 @@ export async function POST(
         action: 'form_submit',
         data: { landing_slug: slug, landing_name: landing.name, returning: true },
       })
+    }
+
+    // 3.5. Поиск и merge дубликатов: если у нас уже есть карточка с тем же
+    // email или phone — это тот же человек, объединяем. Главное преимущество
+    // юзера-в-Гостя: он зашёл на сайт давно с visitor_token, теперь заполнил
+    // форму с email — наша карточка-Гость стала «полноценной», а ту, которая
+    // осталась в Telegram до этого — нужно слить.
+    if (customerId) {
+      const findDup = async (col: 'email' | 'phone', val: string) => {
+        const { data: dups } = await supabase
+          .from('customers')
+          .select('id, telegram_id, first_touch_at, created_at')
+          .eq('project_id', projectId)
+          .eq(col, val)
+          .neq('id', customerId)
+        return (dups ?? []) as { id: string; telegram_id: string | null; first_touch_at: string | null; created_at: string }[]
+      }
+      const emailDups = body.email ? await findDup('email', body.email.toLowerCase().trim()) : []
+      const phoneDups = body.phone ? await findDup('phone', body.phone.replace(/\D/g, '')) : []
+      const seen = new Set<string>()
+      for (const dup of [...emailDups, ...phoneDups]) {
+        if (seen.has(dup.id)) continue
+        seen.add(dup.id)
+        try {
+          // Если дубль с telegram_id — он становится target (более полная),
+          // а наша свежесозданная карточка сливается в неё. Иначе наоборот.
+          if (dup.telegram_id) {
+            await mergeGuestIntoCustomer(supabase, customerId, dup.id)
+            customerId = dup.id
+          } else {
+            await mergeGuestIntoCustomer(supabase, dup.id, customerId)
+          }
+        } catch (err) {
+          console.error('[submit] auto-merge error:', err)
+        }
+      }
     }
 
     // 4. Помещаем клиента в стадию воронки

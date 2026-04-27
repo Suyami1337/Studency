@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase'
 import ActivityTimeline from '@/components/users/ActivityTimeline'
 import {
   CustomerRow, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR, CLIENT_TYPE_HINT,
+  FIRST_TOUCH_KIND_LABELS,
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
@@ -249,7 +250,11 @@ export default function UserCardPage() {
           <Metric label="Сумма заказов" value={formatMoney(customer.revenue ?? 0)} />
         </div>
 
-        {customer.source_name && (
+        {customer.first_touch_at && (
+          <FirstTouchBlock customer={customer} />
+        )}
+
+        {customer.source_name && !customer.first_touch_at && (
           <div className="flex items-center gap-2 pt-1 border-t border-gray-100">
             <span className="text-xs text-gray-400">Источник:</span>
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
@@ -299,6 +304,48 @@ export default function UserCardPage() {
           {tab === 'fields' && <FieldsTab customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />}
           {tab === 'notes' && <NotesTab customerId={customer.id} projectId={customer.project_id} />}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── First-touch block ───
+function FirstTouchBlock({ customer }: { customer: CustomerRow }) {
+  const meta = customer.first_touch_kind ? FIRST_TOUCH_KIND_LABELS[customer.first_touch_kind] : null
+  const utm = customer.first_touch_utm
+  return (
+    <div className="border-t border-gray-100 pt-3 mt-1">
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Точка входа в воронку</div>
+      <div className="flex items-start gap-3 flex-wrap">
+        <div className="bg-gradient-to-br from-[#F0EDFF] to-[#E5DFFF] border border-[#D8CFFF] rounded-xl px-3 py-2 inline-flex items-center gap-2">
+          <span className="text-base">{meta?.icon ?? '↗'}</span>
+          <div>
+            <div className="text-[11px] text-gray-500 leading-none">{meta?.label ?? 'Источник'}</div>
+            <div className="text-sm font-semibold text-gray-900 leading-tight mt-0.5">
+              {customer.first_touch_source ?? '—'}
+            </div>
+          </div>
+        </div>
+        {utm && Object.keys(utm).length > 0 && (
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {(['utm_campaign', 'utm_source', 'utm_medium', 'utm_content', 'utm_term', 'src'] as const).map(k => {
+              const v = utm[k]
+              if (!v) return null
+              return (
+                <span key={k} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 rounded-md px-2 py-0.5">
+                  <span className="text-gray-400">{k.replace('utm_', '')}:</span>
+                  <span className="font-medium">{v}</span>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      <div className="text-xs text-gray-400 mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
+        <span>{formatDateTime(customer.first_touch_at)}</span>
+        {customer.first_touch_referrer && (
+          <span className="truncate max-w-md" title={customer.first_touch_referrer}>↘ {customer.first_touch_referrer}</span>
+        )}
       </div>
     </div>
   )

@@ -91,13 +91,42 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 3. Если указан event — эмитим в систему триггеров (которая и в events пишет,
-    // и позитивные запускает, и негативные планирует, и отменяющие снимает)
+    // 3. Значимые события (start / milestone_25/50/75 / complete) — пишем в
+    // customer_actions, чтобы они отображались в timeline карточки клиента
+    // как отдельные строки. 'progress' оставляем только для UPDATE video_views,
+    // в timeline не пишем (слишком шумно — каждые 10 секунд).
+    const eventStr = String(event || '')
+    const isMilestone = /^milestone_(25|50|75)$/.test(eventStr)
+    const isLifecycle = eventStr === 'start' || eventStr === 'complete'
+    const percent = (video.duration_seconds && max_position_seconds)
+      ? (max_position_seconds / video.duration_seconds) * 100
+      : undefined
+
+    if ((isLifecycle || isMilestone) && customerId) {
+      let action: string | null = null
+      if (eventStr === 'start') action = 'video_started'
+      else if (eventStr === 'complete') action = 'video_completed'
+      else if (isMilestone) action = `video_${eventStr}` // video_milestone_25/50/75
+      if (action) {
+        await supabase.from('customer_actions').insert({
+          customer_id: customerId,
+          project_id: video.project_id,
+          action,
+          data: {
+            video_id,
+            title: video.title,
+            watch_time_seconds,
+            max_position_seconds,
+            duration_seconds: video.duration_seconds ?? null,
+            percent,
+          },
+        }).then(({ error }) => { if (error) console.warn('video action insert:', error.message) })
+      }
+    }
+
+    // Triggers оставляем только для start/progress/complete как раньше
     if (event && (event === 'start' || event === 'progress' || event === 'complete')) {
       const eventType = `video_${event}`
-      const percent = (video.duration_seconds && max_position_seconds)
-        ? (max_position_seconds / video.duration_seconds) * 100
-        : undefined
       const { emitEvent } = await import('@/lib/event-triggers')
       emitEvent(supabase, {
         projectId: video.project_id,

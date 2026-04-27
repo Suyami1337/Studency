@@ -9,6 +9,7 @@ import FiltersBar, { DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT } from '@/components/
 import {
   COLUMNS, ColumnId, CustomerRow, FilterCondition, Segment, SortDirection,
   applyFilters, sortRows, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR,
+  FIRST_TOUCH_KIND_LABELS,
   formatDateTime, formatRelative, formatMoney, exportToCSV, downloadCSV, cellValue,
 } from '@/lib/users/config'
 
@@ -444,6 +445,19 @@ function Cell({ row, colId }: { row: CustomerRow; colId: ColumnId }) {
     case 'created_at':       return <span className="text-gray-500">{formatDateTime(row.created_at)}</span>
     case 'last_activity_at': return <span className="text-gray-500" title={formatDateTime(row.last_activity_at ?? row.created_at)}>{formatRelative(row.last_activity_at ?? row.created_at)}</span>
     case 'source':           return <span className="text-gray-600">{row.source_name || '—'}</span>
+    case 'first_touch': {
+      const k = row.first_touch_kind
+      const meta = k ? FIRST_TOUCH_KIND_LABELS[k] : null
+      if (!meta) return <span className="text-gray-400">—</span>
+      const utmCampaign = row.first_touch_utm?.utm_campaign
+      const detail = utmCampaign || row.first_touch_source
+      return (
+        <span className="inline-flex items-center gap-1 text-xs">
+          <span title={meta.label}>{meta.icon}</span>
+          {detail && <span className="text-gray-600 truncate max-w-[120px]" title={detail}>{detail}</span>}
+        </span>
+      )
+    }
     case 'orders_count':     return <span className="text-gray-700 font-medium">{row.orders_count ?? 0}</span>
     case 'revenue':          return <span className="text-gray-900 font-medium">{formatMoney(row.revenue ?? 0)}</span>
     case 'bot_subscribed':   return row.bot_subscribed ? <span>✅</span> : <span className="text-gray-300">—</span>
