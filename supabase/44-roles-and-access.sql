@@ -272,9 +272,9 @@ INSERT INTO roles (id, project_id, code, label, description, is_system, access_t
   ('00000000-0000-0000-0000-000000000005'::uuid, NULL, 'lead', 'Пользователь', 'Оставил данные (email/телефон). Нет входа в платформу. Маркетинговый статус карточки.', TRUE, 'no_access', 5)
 ON CONFLICT (project_id, code) DO NOTHING;
 
--- 6. Клиент (ученик)
+-- 6. Ученик (получает доступ после оплаты)
 INSERT INTO roles (id, project_id, code, label, description, is_system, access_type, sort_order) VALUES
-  ('00000000-0000-0000-0000-000000000006'::uuid, NULL, 'student', 'Клиент', 'Покупатель с входом. Видит витрину обучения: купленные курсы, ДЗ, профиль.', TRUE, 'student_panel', 6)
+  ('00000000-0000-0000-0000-000000000006'::uuid, NULL, 'student', 'Ученик', 'Покупатель с входом. Видит витрину обучения: купленные курсы, ДЗ, профиль.', TRUE, 'student_panel', 6)
 ON CONFLICT (project_id, code) DO NOTHING;
 
 -- 7. Куратор

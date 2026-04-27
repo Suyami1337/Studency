@@ -61,6 +61,12 @@ export type CustomerRow = {
   revenue?: number
   has_paid?: boolean
   in_funnel?: boolean
+  // joined from project_members + roles (через view customers_with_role)
+  user_id?: string | null
+  role_code?: string | null
+  role_label?: string | null
+  role_access_type?: 'admin_panel' | 'student_panel' | 'no_access' | null
+  membership_id?: string | null
 }
 
 /**
@@ -112,13 +118,28 @@ export type FilterField = {
 export const FILTER_FIELDS: FilterField[] = [
   {
     id: 'client_type',
-    label: 'Тип',
+    label: 'Тип (этап воронки)',
     type: 'multiselect',
     options: [
       { value: 'guest',      label: '🟦 Гость' },
       { value: 'subscriber', label: '🔔 Подписчик' },
       { value: 'user',       label: '🎯 Пользователь' },
       { value: 'client',     label: '💳 Клиент' },
+    ],
+  },
+  {
+    id: 'role_code',
+    label: 'Роль в проекте',
+    type: 'multiselect',
+    options: [
+      { value: 'owner',       label: '👑 Владелец' },
+      { value: 'super_admin', label: '⚙ Главный администратор' },
+      { value: 'admin',       label: '🛠 Администратор' },
+      { value: 'curator',     label: '👨‍🏫 Куратор' },
+      { value: 'sales',       label: '💼 Продажник' },
+      { value: 'marketer',    label: '📊 Таргетолог' },
+      { value: 'student',     label: '🎓 Ученик' },
+      { value: '__none__',    label: '— Без роли (нет входа)' },
     ],
   },
   { id: 'has_email',     label: 'Email указан',    type: 'boolean' },
@@ -161,7 +182,7 @@ export type FilterCondition = {
 
 export type ColumnId =
   | 'name' | 'email' | 'phone' | 'telegram' | 'tags'
-  | 'created_at' | 'last_activity_at' | 'client_type'
+  | 'created_at' | 'last_activity_at' | 'client_type' | 'role'
   | 'source' | 'orders_count' | 'revenue'
   | 'bot_subscribed' | 'channel_subscribed' | 'in_funnel'
   | 'first_touch'
@@ -177,6 +198,7 @@ export type ColumnDef = {
 export const COLUMNS: ColumnDef[] = [
   { id: 'name',             label: 'Имя',                      sortable: true,  default: true },
   { id: 'client_type',      label: 'Тип',                      sortable: false, default: true },
+  { id: 'role',             label: 'Роль',                     sortable: false, default: true },
   { id: 'email',            label: 'Email',                    sortable: true,  default: true },
   { id: 'phone',            label: 'Телефон',                  sortable: false, default: true },
   { id: 'telegram',         label: 'Telegram',                 sortable: false, default: true },
@@ -242,6 +264,12 @@ export function matchFilter(row: CustomerRow, f: FilterCondition): boolean {
       const v = f.value
       if (!Array.isArray(v) || v.length === 0) return true
       return v.includes(deriveClientType(row))
+    }
+    case 'role_code': {
+      const v = f.value
+      if (!Array.isArray(v) || v.length === 0) return true
+      if (!row.role_code) return v.includes('__none__')
+      return v.includes(row.role_code)
     }
     case 'has_email':    return f.value === null ? true : Boolean(row.email) === f.value
     case 'has_phone':    return f.value === null ? true : Boolean(row.phone) === f.value
@@ -377,6 +405,7 @@ export function cellValue(r: CustomerRow, id: ColumnId): string | number {
   switch (id) {
     case 'name':             return r.full_name ?? ''
     case 'client_type':      return CLIENT_TYPE_LABELS[deriveClientType(r)]
+    case 'role':             return r.role_label ?? ''
     case 'email':            return r.email ?? ''
     case 'phone':            return r.phone ?? ''
     case 'telegram':         return r.telegram_username ? `@${r.telegram_username}` : ''

@@ -32,7 +32,7 @@ export default function UserCardPage() {
   async function load() {
     setLoading(true)
     const [cRes, aRes] = await Promise.all([
-      supabase.from('customers').select('*').eq('id', userId).single(),
+      supabase.from('customers_with_role').select('*').eq('id', userId).single(),
       supabase.from('customer_aggregates').select('last_activity_at, orders_count, revenue, has_paid, in_funnel').eq('customer_id', userId).maybeSingle(),
     ])
     if (cRes.data) {
@@ -172,10 +172,28 @@ export default function UserCardPage() {
                 <span
                   className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
                   style={{ backgroundColor: typeColor.bg, color: typeColor.fg }}
-                  title={CLIENT_TYPE_HINT[type]}
+                  title={`Тип (этап воронки): ${CLIENT_TYPE_HINT[type]}`}
                 >
                   {CLIENT_TYPE_LABELS[type]}
                 </span>
+                {customer.role_label && (() => {
+                  const isAdmin = customer.role_access_type === 'admin_panel'
+                  const isStudent = customer.role_access_type === 'student_panel'
+                  const c = isAdmin
+                    ? { bg: '#EDE9FF', fg: '#6A55F8' }
+                    : isStudent
+                    ? { bg: '#D1FAE5', fg: '#059669' }
+                    : { bg: '#F1F5F9', fg: '#64748B' }
+                  return (
+                    <span
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                      style={{ backgroundColor: c.bg, color: c.fg }}
+                      title="Роль в проекте (доступ к платформе)"
+                    >
+                      🔑 {customer.role_label}
+                    </span>
+                  )
+                })()}
                 {customer.is_blocked && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600">
                     Заблокирован

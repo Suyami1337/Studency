@@ -46,7 +46,7 @@ export default function UsersPage() {
     setLoading(true)
     const [cRes, aRes, sRes] = await Promise.all([
       supabase
-        .from('customers')
+        .from('customers_with_role')
         .select('*')
         .eq('project_id', projectId),
       supabase
@@ -431,6 +431,22 @@ function Cell({ row, colId }: { row: CustomerRow; colId: ColumnId }) {
         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
           style={{ backgroundColor: c.bg, color: c.fg }}>
           {CLIENT_TYPE_LABELS[t]}
+        </span>
+      )
+    }
+    case 'role': {
+      if (!row.role_label) return <span className="text-gray-400">—</span>
+      const isAdminPanel = row.role_access_type === 'admin_panel'
+      const isStudent = row.role_access_type === 'student_panel'
+      const colors = isAdminPanel
+        ? { bg: '#EDE9FF', fg: '#6A55F8' }
+        : isStudent
+        ? { bg: '#D1FAE5', fg: '#059669' }
+        : { bg: '#F1F5F9', fg: '#64748B' }
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+          style={{ backgroundColor: colors.bg, color: colors.fg }}>
+          {row.role_label}
         </span>
       )
     }
