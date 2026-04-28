@@ -152,10 +152,13 @@ export default function UserCardPage() {
               ) : (() => {
                 const isCodeOnly = !customer.full_name && !customer.telegram_username
                 return (
-                  <div className="group flex items-center gap-2">
+                  <div className="group flex items-baseline gap-3 flex-wrap">
                     <h1 className={`text-2xl font-semibold truncate ${isCodeOnly ? 'text-gray-500 font-mono' : 'text-gray-900'}`}>
                       {customerDisplayName(customer)}
                     </h1>
+                    {customer.public_code && !isCodeOnly && (
+                      <span className="text-sm text-gray-400 font-mono shrink-0">{customer.public_code}</span>
+                    )}
                     <button
                       onClick={startEdit}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-[#6A55F8] hover:bg-[#F0EDFF] transition-colors"
@@ -169,50 +172,43 @@ export default function UserCardPage() {
                   </div>
                 )
               })()}
-              {customer.public_code && (customer.full_name || customer.telegram_username) && (
-                <div className="text-xs text-gray-400 font-mono mt-0.5">{customer.public_code}</div>
-              )}
 
-              <div className="flex items-center gap-2 flex-wrap mt-1.5">
-                <span
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                  style={{ backgroundColor: typeColor.bg, color: typeColor.fg }}
-                  title={`Тип (этап воронки): ${CLIENT_TYPE_HINT[type]}`}
-                >
-                  {CLIENT_TYPE_LABELS[type]}
-                </span>
-                {customer.role_label && (() => {
-                  const isAdmin = customer.role_access_type === 'admin_panel'
-                  const isStudent = customer.role_access_type === 'student_panel'
-                  const c = isAdmin
-                    ? { bg: '#EDE9FF', fg: '#6A55F8' }
-                    : isStudent
-                    ? { bg: '#D1FAE5', fg: '#059669' }
-                    : { bg: '#F1F5F9', fg: '#64748B' }
-                  return (
+              <div className="text-xs mt-2 space-y-0.5">
+                <div>
+                  <span className="text-gray-400">Тип —</span>{' '}
+                  <span style={{ color: typeColor.fg }} className="font-medium" title={CLIENT_TYPE_HINT[type]}>
+                    {CLIENT_TYPE_LABELS[type]}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Роль —</span>{' '}
+                  {customer.role_label ? (() => {
+                    const isAdmin = customer.role_access_type === 'admin_panel'
+                    const isStudent = customer.role_access_type === 'student_panel'
+                    const fg = isAdmin ? '#6A55F8' : isStudent ? '#059669' : '#64748B'
+                    return (
+                      <button
+                        onClick={() => setShowRoleEditor(true)}
+                        className="font-medium hover:underline"
+                        style={{ color: fg }}
+                        title="Изменить роль"
+                      >
+                        {customer.role_label}
+                      </button>
+                    )
+                  })() : customer.email ? (
                     <button
                       onClick={() => setShowRoleEditor(true)}
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium hover:ring-2 hover:ring-offset-1 transition-all"
-                      style={{ backgroundColor: c.bg, color: c.fg }}
-                      title="Кликните, чтобы изменить роль"
+                      className="text-[#6A55F8] hover:underline font-medium"
                     >
-                      🔑 {customer.role_label}
+                      назначить
                     </button>
-                  )
-                })()}
-                {!customer.role_label && customer.email && (
-                  <button
-                    onClick={() => setShowRoleEditor(true)}
-                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-[#6A55F8] hover:text-[#6A55F8]"
-                    title="Назначить роль / пригласить в проект"
-                  >
-                    🔑 Назначить роль
-                  </button>
-                )}
+                  ) : (
+                    <span className="text-gray-400 italic">не назначена</span>
+                  )}
+                </div>
                 {customer.is_blocked && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600">
-                    Заблокирован
-                  </span>
+                  <div className="text-red-600 font-medium pt-1">⚠ Заблокирован</div>
                 )}
               </div>
             </div>
