@@ -272,8 +272,8 @@ export default function UserCardPage() {
             sub={formatDateTime(customer.last_activity_at ?? customer.created_at)}
           />
           <Metric label="Заказов всего" value={String(customer.orders_count ?? 0)} />
-          <Metric label="Оплачено заказов" value={String(customer.paid_orders_count ?? 0)} />
           <Metric label="Сумма заказов" value={formatMoney(customer.total_amount ?? 0)} />
+          <Metric label="Оплачено заказов" value={String(customer.paid_orders_count ?? 0)} />
           <Metric label="Сумма оплат" value={formatMoney(customer.revenue ?? 0)} />
         </div>
 
