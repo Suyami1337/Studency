@@ -15,6 +15,8 @@ type Props = {
   visibleColumns: ColumnId[]
   sort: { column: ColumnId; direction: SortDirection }
   dynamicOptions?: DynamicFilterOptions
+  searchQuery: string
+  onChangeSearchQuery: (q: string) => void
   onChangeFilterState: (f: FilterState) => void
   onChangeColumns: (c: ColumnId[]) => void
   onChangeSort: (s: { column: ColumnId; direction: SortDirection }) => void
@@ -29,6 +31,7 @@ type Props = {
 export default function FiltersBar({
   segments, activeSegmentId, isDirty,
   filterState, visibleColumns, sort, dynamicOptions,
+  searchQuery, onChangeSearchQuery,
   onChangeFilterState, onChangeColumns, onChangeSort,
   onSelectSegment, onSaveCurrent, onSaveAsNew, onResetToSegment,
   onDeleteSegment, onRenameSegment,
@@ -168,6 +171,29 @@ export default function FiltersBar({
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Поиск */}
+          <div className="relative w-64">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => onChangeSearchQuery(e.target.value)}
+              placeholder="Поиск по имени, email, тел., #ID…"
+              className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#6A55F8]/20 focus:border-[#6A55F8]"
+            />
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/>
+            </svg>
+            {searchQuery && (
+              <button
+                onClick={() => onChangeSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-sm"
+                aria-label="Очистить"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
           <div className="relative" ref={sortBtnRef}>
             <button
               onClick={() => setShowSort(v => !v)}
