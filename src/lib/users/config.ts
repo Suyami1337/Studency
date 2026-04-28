@@ -2,26 +2,23 @@
 
 export type SortDirection = 'asc' | 'desc'
 
-export type ClientType = 'guest' | 'subscriber' | 'user' | 'client'
+export type ClientType = 'guest' | 'user' | 'client'
 
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   guest:      'Гость',
-  subscriber: 'Подписчик',
   user:       'Пользователь',
   client:     'Клиент',
 }
 
 export const CLIENT_TYPE_COLOR: Record<ClientType, { bg: string; fg: string }> = {
   guest:      { bg: '#F1F5F9', fg: '#64748B' },
-  subscriber: { bg: '#DBEAFE', fg: '#2563EB' },
   user:       { bg: '#EDE9FF', fg: '#6A55F8' },
   client:     { bg: '#D1FAE5', fg: '#059669' },
 }
 
 export const CLIENT_TYPE_HINT: Record<ClientType, string> = {
   guest:      'Только visitor_token, нет имени и контактов',
-  subscriber: 'Подписался на бота или канал, в воронку не заходил',
-  user:       'Попал в воронку (оставил данные / запустил бота)',
+  user:       'Попал в воронку (оставил данные / запустил бота / был на лендинге)',
   client:     'Совершил оплаченную покупку',
 }
 
@@ -114,11 +111,10 @@ export const FIRST_TOUCH_KIND_LABELS: Record<string, { label: string; icon: stri
 
 export function deriveClientType(c: CustomerRow): ClientType {
   if (c.has_paid) return 'client'
-  if (c.in_funnel) return 'user'
-  if (c.bot_subscribed || c.channel_subscribed) return 'subscriber'
-  if (!c.full_name && !c.email && !c.phone && !c.telegram_id) return 'guest'
-  // если есть данные но нет ни воронки, ни бота, ни покупки — относим к подписчикам
-  return 'subscriber'
+  // Любая активность за пределами «голого посещения» = пользователь
+  if (c.in_funnel || c.email || c.phone || c.full_name || c.bot_subscribed || c.channel_subscribed) return 'user'
+  // Совсем ничего нет — только visitor_token / случайно зашедший
+  return 'guest'
 }
 
 // ─── Filter fields ───
@@ -141,10 +137,9 @@ export const FILTER_FIELDS: FilterField[] = [
     label: 'Тип (этап воронки)',
     type: 'multiselect',
     options: [
-      { value: 'guest',      label: '🟦 Гость' },
-      { value: 'subscriber', label: '🔔 Подписчик' },
-      { value: 'user',       label: '🎯 Пользователь' },
-      { value: 'client',     label: '💳 Клиент' },
+      { value: 'guest',  label: '🟦 Гость' },
+      { value: 'user',   label: '🎯 Пользователь' },
+      { value: 'client', label: '💳 Клиент' },
     ],
   },
   {
