@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import {
   FILTER_FIELDS, FilterField, FilterCondition, FilterState, FilterCombinator,
+  DynamicFilterOptions, EMPTY_DYNAMIC_OPTIONS,
 } from '@/lib/users/config'
 
 type Props = {
@@ -18,6 +19,7 @@ type Props = {
   initialFilterState: FilterState
   // Если активен сегмент — здесь его имя и id, можно «Сохранить» (перезаписать).
   activeSegmentName?: string | null
+  dynamicOptions?: DynamicFilterOptions
   onApply: (state: FilterState) => void
   onSaveAsNew: (name: string, state: FilterState) => void
   onSaveExisting?: (state: FilterState) => void
@@ -39,9 +41,10 @@ export default function SegmentEditor(props: Props) {
 }
 
 function SegmentEditorInner({
-  onClose, initialFilterState, activeSegmentName,
+  onClose, initialFilterState, activeSegmentName, dynamicOptions,
   onApply, onSaveAsNew, onSaveExisting,
 }: Omit<Props, 'open'>) {
+  const dynOpts = dynamicOptions ?? EMPTY_DYNAMIC_OPTIONS
   const [combinator, setCombinator] = useState<FilterCombinator>(initialFilterState.combinator)
   const [conditions, setConditions] = useState<FilterCondition[]>(initialFilterState.conditions)
   const [newName, setNewName] = useState('')
@@ -169,6 +172,7 @@ function SegmentEditorInner({
                         def={def}
                         value={c.value}
                         onChange={v => updateCondition(idx, { value: v })}
+                        dynamicOptions={dynOpts}
                       />
                     )}
                   </div>
@@ -248,11 +252,16 @@ function SegmentEditorInner({
 // ValueEditor — UI редактирования значения для одного условия
 // ============================================================================
 
-function ValueEditor({ def, value, onChange }: {
+function ValueEditor({ def, value, onChange, dynamicOptions }: {
   def: FilterField
   value: FilterCondition['value']
   onChange: (v: FilterCondition['value']) => void
+  dynamicOptions: DynamicFilterOptions
 }) {
+  // Источник опций: статичный (def.options) или динамический (по dynamic_source).
+  const options = def.dynamic_source
+    ? dynamicOptions[def.dynamic_source]
+    : (def.options ?? [])
   if (def.type === 'boolean') {
     const v = value === null ? null : Boolean(value)
     return (
@@ -275,9 +284,12 @@ function ValueEditor({ def, value, onChange }: {
 
   if (def.type === 'multiselect') {
     const arr = Array.isArray(value) ? (value as string[]) : []
+    if (options.length === 0) {
+      return <p className="text-xs text-gray-400 italic">Нет доступных вариантов</p>
+    }
     return (
       <div className="flex flex-wrap gap-1.5">
-        {(def.options ?? []).map(opt => {
+        {options.map(opt => {
           const checked = arr.includes(opt.value)
           return (
             <button

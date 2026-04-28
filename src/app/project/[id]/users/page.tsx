@@ -9,7 +9,7 @@ import FiltersBar from '@/components/users/FiltersBar'
 import {
   COLUMNS, ColumnId, CustomerRow, FilterState, EMPTY_FILTER_STATE, normalizeFilterState,
   DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT,
-  Segment, SortDirection,
+  Segment, SortDirection, DynamicFilterOptions, EMPTY_DYNAMIC_OPTIONS,
   applyFilters, sortRows, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR,
   FIRST_TOUCH_KIND_LABELS, customerDisplayName, customerAvatarLetter,
   formatDateTime, formatRelative, formatMoney, exportToCSV, downloadCSV, cellValue,
@@ -33,6 +33,7 @@ export default function UsersPage() {
   const [sort, setSort] = useState<{ column: ColumnId; direction: SortDirection }>(DEFAULT_SORT)
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [dynamicOptions, setDynamicOptions] = useState<DynamicFilterOptions>(EMPTY_DYNAMIC_OPTIONS)
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
@@ -47,31 +48,89 @@ export default function UsersPage() {
 
   async function loadAll() {
     setLoading(true)
-    const [cRes, aRes, sRes] = await Promise.all([
-      supabase
-        .from('customers_with_role')
-        .select('*')
-        .eq('project_id', projectId),
-      supabase
-        .from('customer_aggregates')
-        .select('customer_id, last_activity_at, orders_count, revenue, has_paid, in_funnel')
-        .eq('project_id', projectId),
-      supabase
-        .from('customer_segments')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: true }),
+    const [cRes, aRes, sRes, botsRes, channelsRes, productsRes, convRes, subsRes, ordersRes] = await Promise.all([
+      supabase.from('customers_with_role').select('*').eq('project_id', projectId),
+      supabase.from('customer_aggregates').select('customer_id, last_activity_at, orders_count, revenue, has_paid, in_funnel').eq('project_id', projectId),
+      supabase.from('customer_segments').select('*').eq('project_id', projectId).order('created_at', { ascending: true }),
+      supabase.from('telegram_bots').select('id, name').eq('project_id', projectId).order('name'),
+      supabase.from('social_accounts').select('id, external_title, external_username, platform').eq('project_id', projectId).eq('is_active', true).order('external_title'),
+      supabase.from('products').select('id, name').eq('project_id', projectId).eq('is_active', true).order('name'),
+      // Подписки на ботов: chatbot_conversations(customer_id, telegram_bot_id, chat_blocked).
+      supabase.from('chatbot_conversations').select('customer_id, telegram_bot_id, chat_blocked').not('customer_id', 'is', null),
+      // Подписки на каналы: social_subscribers_log(customer_id, account_id, action).
+      supabase.from('social_subscribers_log').select('customer_id, account_id, action').not('customer_id', 'is', null),
+      // Купленные продукты: orders(customer_id, product_id, status='paid')
+      supabase.from('orders').select('customer_id, product_id').eq('project_id', projectId).eq('status', 'paid').not('customer_id', 'is', null),
     ])
+
     type AggregateRow = { customer_id: string; last_activity_at: string | null; orders_count: number; revenue: number; has_paid: boolean; in_funnel: boolean }
     const aggMap = new Map<string, AggregateRow>(
       ((aRes.data ?? []) as AggregateRow[]).map(a => [a.customer_id, a])
     )
+
+    // Бот-подписки: разделяем на subscribed (chat_blocked=false) и blocked (chat_blocked=true)
+    const subBots = new Map<string, Set<string>>()
+    const blockedBots = new Map<string, Set<string>>()
+    type ConvRow = { customer_id: string; telegram_bot_id: string; chat_blocked: boolean | null }
+    ;((convRes.data ?? []) as ConvRow[]).forEach(c => {
+      const target = c.chat_blocked ? blockedBots : subBots
+      if (!target.has(c.customer_id)) target.set(c.customer_id, new Set())
+      target.get(c.customer_id)!.add(c.telegram_bot_id)
+    })
+
+    // Канал-подписки: последнее действие на канале (subscribe/unsubscribe).
+    // Группируем по (customer_id, account_id) и берём последнее. Здесь просто
+    // считаем подписан если есть запись с action='subscribe' и нет более позднего unsubscribe.
+    type SubRow = { customer_id: string; account_id: string; action: string | null }
+    const subChannelsMap = new Map<string, Map<string, string>>()  // customer → account → last_action
+    ;((subsRes.data ?? []) as SubRow[]).forEach(s => {
+      if (!subChannelsMap.has(s.customer_id)) subChannelsMap.set(s.customer_id, new Map())
+      subChannelsMap.get(s.customer_id)!.set(s.account_id, s.action ?? '')
+    })
+    const subChannels = new Map<string, Set<string>>()
+    subChannelsMap.forEach((m, cid) => {
+      const set = new Set<string>()
+      m.forEach((action, aid) => {
+        if (action !== 'unsubscribe' && action !== 'left') set.add(aid)
+      })
+      if (set.size > 0) subChannels.set(cid, set)
+    })
+
+    // Купленные продукты
+    type OrdRow = { customer_id: string; product_id: string | null }
+    const paidProducts = new Map<string, Set<string>>()
+    ;((ordersRes.data ?? []) as OrdRow[]).forEach(o => {
+      if (!o.product_id) return
+      if (!paidProducts.has(o.customer_id)) paidProducts.set(o.customer_id, new Set())
+      paidProducts.get(o.customer_id)!.add(o.product_id)
+    })
+
     const merged = ((cRes.data ?? []) as CustomerRow[]).map(c => ({
       ...c,
       ...(aggMap.get(c.id) ?? {}),
+      subscribed_bot_ids: Array.from(subBots.get(c.id) ?? []),
+      blocked_bot_ids: Array.from(blockedBots.get(c.id) ?? []),
+      subscribed_channel_ids: Array.from(subChannels.get(c.id) ?? []),
+      paid_product_ids: Array.from(paidProducts.get(c.id) ?? []),
     })) as CustomerRow[]
     setCustomers(merged)
     setSegments(((sRes.data ?? []) as Segment[]))
+
+    // Dynamic options для модалки фильтров
+    const allTags = new Set<string>()
+    merged.forEach(c => (c.tags ?? []).forEach(t => allTags.add(t)))
+    type BotRow = { id: string; name: string | null }
+    type ChannelRow = { id: string; external_title: string | null; external_username: string | null; platform: string | null }
+    type ProductRow = { id: string; name: string | null }
+    setDynamicOptions({
+      bots: ((botsRes.data ?? []) as BotRow[]).map(b => ({ value: b.id, label: b.name || `Бот #${b.id.slice(0, 8)}` })),
+      channels: ((channelsRes.data ?? []) as ChannelRow[]).map(ch => ({
+        value: ch.id,
+        label: ch.external_title || (ch.external_username ? `@${ch.external_username}` : `${ch.platform ?? 'канал'} #${ch.id.slice(0, 8)}`),
+      })),
+      products: ((productsRes.data ?? []) as ProductRow[]).map(p => ({ value: p.id, label: p.name || `Продукт #${p.id.slice(0, 8)}` })),
+      tags: Array.from(allTags).sort().map(t => ({ value: t, label: t })),
+    })
 
     // Восстановим активный сегмент из localStorage
     const saved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY(projectId)) : null
@@ -272,6 +331,7 @@ export default function UsersPage() {
         filterState={filterState}
         visibleColumns={visibleColumns}
         sort={sort}
+        dynamicOptions={dynamicOptions}
         onChangeFilterState={setFilterState}
         onChangeColumns={setVisibleColumns}
         onChangeSort={setSort}

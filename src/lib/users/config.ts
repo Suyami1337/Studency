@@ -67,6 +67,23 @@ export type CustomerRow = {
   role_label?: string | null
   role_access_type?: 'admin_panel' | 'student_panel' | 'no_access' | null
   membership_id?: string | null
+  // подгружаются отдельно через loadAll в /users/page.tsx
+  subscribed_bot_ids?: string[]   // боты на которые подписан (из chatbot_conversations)
+  blocked_bot_ids?: string[]      // боты которые заблокировал
+  subscribed_channel_ids?: string[]  // каналы на которые подписан (social_subscribers_log)
+  paid_product_ids?: string[]     // продукты которые купил (orders.status='paid')
+}
+
+// Dynamic options для фильтров: подгружаются на клиенте per-проект.
+export type DynamicFilterOptions = {
+  bots: { value: string; label: string }[]      // telegram_bots
+  channels: { value: string; label: string }[]  // social_accounts
+  products: { value: string; label: string }[]  // products
+  tags: { value: string; label: string }[]      // уникальные tags из customers
+}
+
+export const EMPTY_DYNAMIC_OPTIONS: DynamicFilterOptions = {
+  bots: [], channels: [], products: [], tags: [],
 }
 
 /**
@@ -111,7 +128,9 @@ export type FilterField = {
   id: string
   label: string
   type: FilterFieldType
-  options?: { value: string; label: string }[]   // для select/multiselect
+  options?: { value: string; label: string }[]   // для select/multiselect (статичные)
+  // Если задан — options подгружаются на клиенте динамически из этого источника.
+  dynamic_source?: 'bots' | 'channels' | 'products' | 'tags'
   placeholder?: string
 }
 
@@ -145,12 +164,12 @@ export const FILTER_FIELDS: FilterField[] = [
   { id: 'has_email',     label: 'Email указан',    type: 'boolean' },
   { id: 'has_phone',     label: 'Телефон указан',  type: 'boolean' },
   { id: 'has_telegram',  label: 'Telegram указан', type: 'boolean' },
-  { id: 'bot_subscribed',label: 'Подписан на бота',type: 'boolean' },
-  { id: 'bot_blocked',   label: 'Заблокировал бота', type: 'boolean' },
-  { id: 'channel_subscribed', label: 'Подписан на канал', type: 'boolean' },
-  { id: 'has_paid',      label: 'Совершил покупку',type: 'boolean' },
+  { id: 'subscribed_bot_ids',     label: 'Подписан на бота',     type: 'multiselect', dynamic_source: 'bots' },
+  { id: 'blocked_bot_ids',        label: 'Заблокировал бота',    type: 'multiselect', dynamic_source: 'bots' },
+  { id: 'subscribed_channel_ids', label: 'Подписан на канал',    type: 'multiselect', dynamic_source: 'channels' },
+  { id: 'paid_product_ids',       label: 'Купил продукт',         type: 'multiselect', dynamic_source: 'products' },
   { id: 'in_funnel',     label: 'В воронке',       type: 'boolean' },
-  { id: 'tags',          label: 'Теги',            type: 'tag', placeholder: 'тег' },
+  { id: 'tags',          label: 'Теги',            type: 'multiselect', dynamic_source: 'tags' },
   { id: 'source_name',   label: 'Источник',        type: 'text', placeholder: 'название источника' },
   {
     id: 'first_touch_kind',
@@ -314,17 +333,36 @@ export function matchFilter(row: CustomerRow, f: FilterCondition): boolean {
     case 'has_email':    return f.value === null ? true : Boolean(row.email) === f.value
     case 'has_phone':    return f.value === null ? true : Boolean(row.phone) === f.value
     case 'has_telegram': return f.value === null ? true : Boolean(row.telegram_id || row.telegram_username) === f.value
-    case 'bot_subscribed':      return f.value === null ? true : Boolean(row.bot_subscribed) === f.value
-    case 'bot_blocked':         return f.value === null ? true : Boolean(row.bot_blocked) === f.value
-    case 'channel_subscribed':  return f.value === null ? true : Boolean(row.channel_subscribed) === f.value
-    case 'has_paid':     return f.value === null ? true : Boolean(row.has_paid) === f.value
     case 'in_funnel':    return f.value === null ? true : Boolean(row.in_funnel) === f.value
+    case 'subscribed_bot_ids': {
+      const want = f.value as string[]
+      if (!Array.isArray(want) || want.length === 0) return true
+      const have = row.subscribed_bot_ids ?? []
+      return want.some(id => have.includes(id))
+    }
+    case 'blocked_bot_ids': {
+      const want = f.value as string[]
+      if (!Array.isArray(want) || want.length === 0) return true
+      const have = row.blocked_bot_ids ?? []
+      return want.some(id => have.includes(id))
+    }
+    case 'subscribed_channel_ids': {
+      const want = f.value as string[]
+      if (!Array.isArray(want) || want.length === 0) return true
+      const have = row.subscribed_channel_ids ?? []
+      return want.some(id => have.includes(id))
+    }
+    case 'paid_product_ids': {
+      const want = f.value as string[]
+      if (!Array.isArray(want) || want.length === 0) return true
+      const have = row.paid_product_ids ?? []
+      return want.some(id => have.includes(id))
+    }
     case 'tags': {
-      const v = f.value as string | string[] | null
-      const tags = (v == null) ? [] : (Array.isArray(v) ? v : [v])
-      if (tags.length === 0) return true
+      const want = f.value as string[]
+      if (!Array.isArray(want) || want.length === 0) return true
       const have = row.tags ?? []
-      return tags.every(t => have.includes(t))
+      return want.some(t => have.includes(t))
     }
     case 'source_name': {
       const q = ((f.value as string) ?? '').toLowerCase().trim()

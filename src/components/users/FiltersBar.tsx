@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   COLUMNS, ColumnDef, ColumnId, DEFAULT_VISIBLE_COLUMNS, DEFAULT_SORT,
-  FilterState, Segment, SortDirection,
+  FilterState, Segment, SortDirection, DynamicFilterOptions,
 } from '@/lib/users/config'
 import SegmentEditor from './SegmentEditor'
 
@@ -14,6 +14,7 @@ type Props = {
   filterState: FilterState
   visibleColumns: ColumnId[]
   sort: { column: ColumnId; direction: SortDirection }
+  dynamicOptions?: DynamicFilterOptions
   onChangeFilterState: (f: FilterState) => void
   onChangeColumns: (c: ColumnId[]) => void
   onChangeSort: (s: { column: ColumnId; direction: SortDirection }) => void
@@ -27,7 +28,7 @@ type Props = {
 
 export default function FiltersBar({
   segments, activeSegmentId, isDirty,
-  filterState, visibleColumns, sort,
+  filterState, visibleColumns, sort, dynamicOptions,
   onChangeFilterState, onChangeColumns, onChangeSort,
   onSelectSegment, onSaveCurrent, onSaveAsNew, onResetToSegment,
   onDeleteSegment, onRenameSegment,
@@ -286,6 +287,7 @@ export default function FiltersBar({
         onClose={() => setShowEditor(false)}
         initialFilterState={filterState}
         activeSegmentName={activeSegment?.name ?? null}
+        dynamicOptions={dynamicOptions}
         onApply={(state) => onChangeFilterState(state)}
         onSaveAsNew={(name, state) => {
           onChangeFilterState(state)
