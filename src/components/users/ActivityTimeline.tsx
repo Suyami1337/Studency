@@ -12,6 +12,24 @@ type TimelineEvent = {
   data: Record<string, unknown> | null
 }
 
+// Группировка похожих событий — для фильтр-чипов сверху.
+// Один chip «📜 Скроллинг страницы» вместо четырёх отдельных «25/50/75/конец».
+type Group = { key: string; icon: string; label: string }
+const GROUP_OF_KIND: Record<string, Group> = {
+  scroll_25:  { key: 'scroll', icon: '📜', label: 'Скроллинг страницы' },
+  scroll_50:  { key: 'scroll', icon: '📜', label: 'Скроллинг страницы' },
+  scroll_75:  { key: 'scroll', icon: '📜', label: 'Скроллинг страницы' },
+  scroll_100: { key: 'scroll', icon: '📜', label: 'Скроллинг страницы' },
+  video_view:         { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  video_started:      { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  video_milestone_25: { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  video_milestone_50: { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  video_milestone_75: { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  video_completed:    { key: 'video', icon: '▶️', label: 'Просмотр видео' },
+  page_view:     { key: 'page',     icon: '👁️', label: 'Просмотр страницы' },
+  page_view_end: { key: 'page',     icon: '👁️', label: 'Просмотр страницы' },
+}
+
 const KIND_META: Record<string, { icon: string; label: string }> = {
   message_in:           { icon: '💬', label: 'Сообщение клиента' },
   message_out:          { icon: '📤', label: 'Бот отправил сообщение' },
@@ -153,6 +171,12 @@ function eventLabel(kind: string, data: Record<string, unknown> | null): { title
   return { title, details }
 }
 
+function kindGroup(kind: string): Group {
+  if (GROUP_OF_KIND[kind]) return GROUP_OF_KIND[kind]
+  const meta = KIND_META[kind] ?? { icon: '·', label: kind }
+  return { key: kind, icon: meta.icon, label: meta.label }
+}
+
 function dayLabel(iso: string): string {
   const d = new Date(iso)
   const today = new Date()
@@ -171,7 +195,7 @@ function timeLabel(iso: string): string {
 export default function ActivityTimeline({ customerId }: { customerId: string }) {
   const supabase = createClient()
   const [events, setEvents] = useState<TimelineEvent[] | null>(null)
-  const [activeKinds, setActiveKinds] = useState<Set<string> | null>(null)
+  const [activeGroups, setActiveGroups] = useState<Set<string> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -189,16 +213,25 @@ export default function ActivityTimeline({ customerId }: { customerId: string })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId])
 
-  const allKindsInData = useMemo(() => {
-    if (!events) return [] as string[]
-    return Array.from(new Set(events.map(e => e.kind)))
+  // Группируем события по групповому ключу. Один chip = одна группа,
+  // counter — суммарное число событий всех kinds внутри группы.
+  const groupsInData = useMemo(() => {
+    if (!events) return [] as Array<Group & { count: number }>
+    const map = new Map<string, Group & { count: number }>()
+    for (const e of events) {
+      const g = kindGroup(e.kind)
+      const cur = map.get(g.key)
+      if (cur) cur.count++
+      else map.set(g.key, { ...g, count: 1 })
+    }
+    return Array.from(map.values())
   }, [events])
 
   const filtered = useMemo(() => {
     if (!events) return []
-    if (!activeKinds) return events
-    return events.filter(e => activeKinds.has(e.kind))
-  }, [events, activeKinds])
+    if (!activeGroups) return events
+    return events.filter(e => activeGroups.has(kindGroup(e.kind).key))
+  }, [events, activeGroups])
 
   const grouped = useMemo(() => {
     const out: { day: string; items: TimelineEvent[] }[] = []
@@ -231,36 +264,34 @@ export default function ActivityTimeline({ customerId }: { customerId: string })
       {/* Filter chips */}
       <div className="flex flex-wrap gap-1.5 pb-2 border-b border-gray-100">
         <button
-          onClick={() => setActiveKinds(null)}
+          onClick={() => setActiveGroups(null)}
           className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-            activeKinds === null
+            activeGroups === null
               ? 'bg-[#6A55F8] border-[#6A55F8] text-white'
               : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
           }`}
         >
           Все ({events.length})
         </button>
-        {allKindsInData.map(k => {
-          const meta = KIND_META[k] ?? { icon: '·', label: k }
-          const count = events.filter(e => e.kind === k).length
-          const checked = activeKinds?.has(k)
+        {groupsInData.map(g => {
+          const checked = activeGroups?.has(g.key)
           return (
             <button
-              key={k}
+              key={g.key}
               onClick={() => {
-                const next = new Set(activeKinds ?? [])
-                if (next.has(k)) next.delete(k)
-                else next.add(k)
-                setActiveKinds(next.size === 0 ? null : next)
+                const next = new Set(activeGroups ?? [])
+                if (next.has(g.key)) next.delete(g.key)
+                else next.add(g.key)
+                setActiveGroups(next.size === 0 ? null : next)
               }}
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                 checked
                   ? 'bg-[#F0EDFF] border-[#6A55F8] text-[#6A55F8]'
                   : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
               }`}
-              title={`${count} ${meta.label}`}
+              title={`${g.count} ${g.label}`}
             >
-              {meta.icon} {meta.label} <span className="opacity-50">({count})</span>
+              {g.icon} {g.label} <span className="opacity-50">({g.count})</span>
             </button>
           )
         })}
