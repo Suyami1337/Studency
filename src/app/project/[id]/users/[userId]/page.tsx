@@ -199,30 +199,6 @@ export default function UserCardPage() {
                     Заблокирован
                   </span>
                 )}
-                {customer.bot_subscribed && !customer.bot_blocked && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
-                    🤖 На боте
-                  </span>
-                )}
-                {customer.bot_blocked && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700">
-                    🚫 Бот заблокирован
-                  </span>
-                )}
-                {customer.channel_subscribed && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">
-                    📣 На канале
-                  </span>
-                )}
-                {customer.tags && customer.tags.length > 0 && (
-                  <>
-                    {customer.tags.map(t => (
-                      <span key={t} className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
-                        {t}
-                      </span>
-                    ))}
-                  </>
-                )}
               </div>
             </div>
           </div>
@@ -302,6 +278,10 @@ export default function UserCardPage() {
         <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
 
         <RoleBlock customer={customer} onChanged={() => load()} />
+
+        <StatusBlock customer={customer} />
+
+        <TagsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
 
       </div>
 
@@ -1403,9 +1383,9 @@ function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: 
       )}
 
       {customer.role_code === 'owner' && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100 text-sm">
           <span>👑</span>
-          <span className="text-amber-800"><strong>Владелец</strong> — управление через «Команда» в Настройках проекта.</span>
+          <strong className="text-amber-800">Владелец проекта</strong>
         </div>
       )}
 
@@ -1462,6 +1442,272 @@ function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: 
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── StatusBlock (этапы воронок + чат-боты + каналы) ───
+type FunnelPositionRow = {
+  funnel_id: string
+  funnel_name: string
+  stage_name: string | null
+  stage_type: string | null
+  entered_at: string | null
+}
+type BotConvRow = {
+  bot_id: string
+  bot_name: string
+  is_active: boolean | null
+  chat_blocked: boolean | null
+  scenario_name: string | null
+  step_position: number | null
+}
+type ChannelSubRow = {
+  account_id: string
+  channel_label: string
+  platform: string | null
+  last_action: string | null
+}
+
+function StatusBlock({ customer }: { customer: CustomerRow }) {
+  const supabase = createClient()
+  const [funnels, setFunnels] = useState<FunnelPositionRow[] | null>(null)
+  const [bots, setBots] = useState<BotConvRow[] | null>(null)
+  const [channels, setChannels] = useState<ChannelSubRow[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      // Воронки: customer_funnel_positions JOIN funnels JOIN funnel_stages
+      const fpRes = await supabase
+        .from('customer_funnel_positions')
+        .select('funnel_id, stage_id, entered_at, funnels!inner(name), funnel_stages!inner(name, stage_type)')
+        .eq('customer_id', customer.id)
+
+      type FpRaw = {
+        funnel_id: string
+        stage_id: string
+        entered_at: string | null
+        funnels: { name: string } | { name: string }[]
+        funnel_stages: { name: string; stage_type: string | null } | { name: string; stage_type: string | null }[]
+      }
+      const fpRows: FunnelPositionRow[] = ((fpRes.data ?? []) as unknown as FpRaw[]).map(r => {
+        const f = Array.isArray(r.funnels) ? r.funnels[0] : r.funnels
+        const s = Array.isArray(r.funnel_stages) ? r.funnel_stages[0] : r.funnel_stages
+        return {
+          funnel_id: r.funnel_id,
+          funnel_name: f?.name ?? 'Воронка',
+          stage_name: s?.name ?? null,
+          stage_type: s?.stage_type ?? null,
+          entered_at: r.entered_at,
+        }
+      })
+      if (!cancelled) setFunnels(fpRows)
+
+      // Чат-боты: chatbot_conversations + telegram_bots + chatbot_scenarios
+      const cvRes = await supabase
+        .from('chatbot_conversations')
+        .select('telegram_bot_id, current_step_position, is_active, chat_blocked, telegram_bots!inner(name), chatbot_scenarios(name)')
+        .eq('customer_id', customer.id)
+      type CvRaw = {
+        telegram_bot_id: string
+        current_step_position: number | null
+        is_active: boolean | null
+        chat_blocked: boolean | null
+        telegram_bots: { name: string } | { name: string }[]
+        chatbot_scenarios: { name: string } | { name: string }[] | null
+      }
+      const cvRows: BotConvRow[] = ((cvRes.data ?? []) as unknown as CvRaw[]).map(r => {
+        const tb = Array.isArray(r.telegram_bots) ? r.telegram_bots[0] : r.telegram_bots
+        const sc = Array.isArray(r.chatbot_scenarios) ? r.chatbot_scenarios[0] : r.chatbot_scenarios
+        return {
+          bot_id: r.telegram_bot_id,
+          bot_name: tb?.name ?? 'Бот',
+          is_active: r.is_active,
+          chat_blocked: r.chat_blocked,
+          scenario_name: sc?.name ?? null,
+          step_position: r.current_step_position,
+        }
+      })
+      if (!cancelled) setBots(cvRows)
+
+      // Каналы: social_subscribers_log → последнее действие на каждом канале
+      const slRes = await supabase
+        .from('social_subscribers_log')
+        .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
+        .eq('customer_id', customer.id)
+        .order('created_at', { ascending: false })
+      type SlRaw = {
+        account_id: string
+        action: string | null
+        created_at: string
+        social_accounts: { external_title: string | null; external_username: string | null; platform: string | null } | { external_title: string | null; external_username: string | null; platform: string | null }[]
+      }
+      const lastByAccount = new Map<string, SlRaw>()
+      ;((slRes.data ?? []) as unknown as SlRaw[]).forEach(s => {
+        if (!lastByAccount.has(s.account_id)) lastByAccount.set(s.account_id, s)
+      })
+      const chRows: ChannelSubRow[] = []
+      lastByAccount.forEach((s) => {
+        const sa = Array.isArray(s.social_accounts) ? s.social_accounts[0] : s.social_accounts
+        const label = sa?.external_title || (sa?.external_username ? `@${sa.external_username}` : 'Канал')
+        chRows.push({
+          account_id: s.account_id,
+          channel_label: label,
+          platform: sa?.platform ?? null,
+          last_action: s.action,
+        })
+      })
+      if (!cancelled) setChannels(chRows)
+    }
+    load()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer.id])
+
+  if (!funnels && !bots && !channels) {
+    return null
+  }
+
+  const hasFunnels = (funnels?.length ?? 0) > 0
+  const hasBots = (bots?.length ?? 0) > 0
+  const hasChannels = (channels?.length ?? 0) > 0
+
+  if (!hasFunnels && !hasBots && !hasChannels) {
+    return (
+      <div className="pt-4 border-t border-gray-100">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Статус</h3>
+        <p className="text-sm text-gray-400 italic">Не подписан ни на бота, ни на канал, ни не находится в воронке.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="pt-4 border-t border-gray-100 space-y-4">
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Статус</h3>
+
+      {hasFunnels && (
+        <div>
+          <div className="text-xs text-gray-500 mb-1.5">🎯 Воронки</div>
+          <div className="space-y-1">
+            {funnels!.map(f => (
+              <div key={f.funnel_id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
+                <div className="min-w-0">
+                  <div className="font-medium text-gray-900 truncate">{f.funnel_name}</div>
+                  <div className="text-xs text-gray-500">
+                    {f.stage_name ? <>Этап: <strong>{f.stage_name}</strong></> : 'Этап не определён'}
+                    {f.entered_at && <span className="text-gray-400"> · с {new Date(f.entered_at).toLocaleDateString('ru')}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasBots && (
+        <div>
+          <div className="text-xs text-gray-500 mb-1.5">🤖 Чат-боты</div>
+          <div className="space-y-1">
+            {bots!.map(b => (
+              <div key={b.bot_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-900 truncate">{b.bot_name}</div>
+                  <div className="text-xs text-gray-500">
+                    {b.scenario_name ? <>Сценарий: <strong>{b.scenario_name}</strong></> : 'Без активного сценария'}
+                    {b.step_position !== null && b.step_position !== undefined && (
+                      <span className="text-gray-400"> · шаг {b.step_position + 1}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  {b.chat_blocked ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700">🚫 заблокирован</span>
+                  ) : b.is_active ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ активен</span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">пауза</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasChannels && (
+        <div>
+          <div className="text-xs text-gray-500 mb-1.5">📣 Каналы</div>
+          <div className="space-y-1">
+            {channels!.map(c => (
+              <div key={c.account_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-gray-900 truncate">{c.channel_label}</div>
+                  <div className="text-xs text-gray-500">{c.platform === 'telegram' ? 'Telegram' : (c.platform ?? '—')}</div>
+                </div>
+                <div className="shrink-0">
+                  {c.last_action === 'unsubscribe' || c.last_action === 'left' ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700">отписался</span>
+                  ) : (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">подписан</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── TagsBlock — добавление/удаление тегов клиенту ───
+function TagsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
+  const supabase = createClient()
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const tags = customer.tags ?? []
+
+  async function save(next: string[]) {
+    setSaving(true)
+    const { data } = await supabase.from('customers').update({ tags: next }).eq('id', customer.id).select().single()
+    if (data) onUpdated(data as Partial<CustomerRow>)
+    setSaving(false)
+  }
+
+  async function addTag(t: string) {
+    const trimmed = t.trim()
+    if (!trimmed) return
+    if (tags.includes(trimmed)) return
+    await save([...tags, trimmed])
+    setDraft('')
+  }
+
+  async function removeTag(t: string) {
+    await save(tags.filter(x => x !== t))
+  }
+
+  return (
+    <div className="pt-4 border-t border-gray-100">
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">🏷 Теги</h3>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {tags.map(t => (
+          <span key={t} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-[#F0EDFF] text-[#6A55F8]">
+            {t}
+            <button onClick={() => removeTag(t)} disabled={saving} className="hover:text-red-500 disabled:opacity-50" title="Удалить тег">✕</button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); addTag(draft) }
+          }}
+          placeholder={tags.length === 0 ? 'Добавить тег и нажать Enter' : 'Ещё тег…'}
+          className="px-2.5 py-1 rounded-full text-xs border border-dashed border-gray-300 focus:outline-none focus:border-[#6A55F8] focus:ring-2 focus:ring-[#6A55F8]/10 min-w-[140px]"
+        />
+      </div>
     </div>
   )
 }
