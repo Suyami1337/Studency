@@ -152,23 +152,45 @@ export async function POST(request: NextRequest) {
             .select('id, source_id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
 
           if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
-            // Новый подписчик канала — создаём customer с источником если он пришёл по invite-link
-            const { data: newCustomer } = await supabase.from('customers').insert({
-              project_id: bot.project_id,
-              telegram_id: String(tgUserId),
-              telegram_username: tgUsername,
-              full_name: tgFirstName,
-              channel_subscribed: true,
-              channel_subscribed_at: new Date().toISOString(),
-              ...(sourceId ? { source_id: sourceId, source_slug: sourceSlug, source_name: sourceName } : {}),
-            }).select('id').single()
-            if (newCustomer) {
-              await supabase.from('customer_actions').insert({
-                customer_id: newCustomer.id, project_id: bot.project_id,
-                action: 'channel_subscribed',
-                data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
-              })
-              // social_subscribers_log
+            // Новый подписчик канала.
+            // Правило: customer создаём ТОЛЬКО если человек пришёл по UTM-trackable
+            // invite-link (есть source_id). Это означает «вход в воронку».
+            // Простая подписка через прямой поиск канала — НЕ создаёт customer,
+            // только запись в social_subscribers_log и инкремент counter подписчиков.
+            if (sourceId) {
+              const { data: newCustomer } = await supabase.from('customers').insert({
+                project_id: bot.project_id,
+                telegram_id: String(tgUserId),
+                telegram_username: tgUsername,
+                full_name: tgFirstName,
+                channel_subscribed: true,
+                channel_subscribed_at: new Date().toISOString(),
+                source_id: sourceId, source_slug: sourceSlug, source_name: sourceName,
+              }).select('id').single()
+              if (newCustomer) {
+                await supabase.from('customer_actions').insert({
+                  customer_id: newCustomer.id, project_id: bot.project_id,
+                  action: 'channel_subscribed',
+                  data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
+                })
+                if (socialAccount) {
+                  await supabase.from('social_subscribers_log').insert({
+                    account_id: socialAccount.id,
+                    external_user_id: String(tgUserId),
+                    username: tgUsername,
+                    first_name: tgFirstName,
+                    action: 'join',
+                    invite_link_name: inviteLinkName,
+                    customer_id: newCustomer.id,
+                  })
+                }
+                const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
+                await supabase.from('traffic_sources').update({
+                  telegram_invite_member_count: (cur?.telegram_invite_member_count ?? 0) + 1,
+                }).eq('id', sourceId)
+              }
+            } else {
+              // Без UTM — карточку не создаём, только фиксируем факт подписки.
               if (socialAccount) {
                 await supabase.from('social_subscribers_log').insert({
                   account_id: socialAccount.id,
@@ -177,15 +199,8 @@ export async function POST(request: NextRequest) {
                   first_name: tgFirstName,
                   action: 'join',
                   invite_link_name: inviteLinkName,
-                  customer_id: newCustomer.id,
+                  customer_id: null,
                 })
-              }
-              // Increment counter на source
-              if (sourceId) {
-                const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
-                await supabase.from('traffic_sources').update({
-                  telegram_invite_member_count: (cur?.telegram_invite_member_count ?? 0) + 1,
-                }).eq('id', sourceId)
               }
             }
           } else if (customer) {
