@@ -13,6 +13,13 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // Новое правило в Next 15 — слишком строгое для нашего паттерна
+      // useEffect(() => { load() }, [...]). Отключаем глобально.
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -47,9 +47,10 @@ export default function NotificationBell() {
   }, [supabase])
 
   useEffect(() => {
-    load()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
     // Поллинг каждые 30 сек когда вкладка открыта
-    const interval = setInterval(load, 30000)
+    const interval = setInterval(() => { void load() }, 30000)
     return () => clearInterval(interval)
   }, [load])
 

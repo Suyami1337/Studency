@@ -98,7 +98,10 @@ export default function ProductGroupsTab({ productId, projectId }: { productId: 
     setLoading(false)
   }, [productId, projectId, supabase])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
 
   async function createGroup() {
     if (!newGroupName.trim()) return
