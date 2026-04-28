@@ -173,44 +173,9 @@ export default function UserCardPage() {
                 )
               })()}
 
-              <div className="text-xs mt-2 space-y-0.5">
-                <div>
-                  <span className="text-gray-400">Тип —</span>{' '}
-                  <span style={{ color: typeColor.fg }} className="font-medium" title={CLIENT_TYPE_HINT[type]}>
-                    {CLIENT_TYPE_LABELS[type]}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-400">Роль —</span>{' '}
-                  {customer.role_label ? (() => {
-                    const isAdmin = customer.role_access_type === 'admin_panel'
-                    const isStudent = customer.role_access_type === 'student_panel'
-                    const fg = isAdmin ? '#6A55F8' : isStudent ? '#059669' : '#64748B'
-                    return (
-                      <button
-                        onClick={() => setShowRoleEditor(true)}
-                        className="font-medium hover:underline"
-                        style={{ color: fg }}
-                        title="Изменить роль"
-                      >
-                        {customer.role_label}
-                      </button>
-                    )
-                  })() : customer.email ? (
-                    <button
-                      onClick={() => setShowRoleEditor(true)}
-                      className="text-[#6A55F8] hover:underline font-medium"
-                    >
-                      назначить
-                    </button>
-                  ) : (
-                    <span className="text-gray-400 italic">не назначена</span>
-                  )}
-                </div>
-                {customer.is_blocked && (
-                  <div className="text-red-600 font-medium pt-1">⚠ Заблокирован</div>
-                )}
-              </div>
+              {customer.is_blocked && (
+                <div className="text-xs text-red-600 font-medium mt-1.5">⚠ Заблокирован</div>
+              )}
             </div>
           </div>
 
@@ -274,6 +239,8 @@ export default function UserCardPage() {
         </div>
 
         <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
+
+        <TypeRoleBlock customer={customer} type={type} typeColor={typeColor} onClickRole={() => setShowRoleEditor(true)} />
 
         {customer.first_touch_at && (
           <FirstTouchBlock customer={customer} onOpenAll={() => setTab('touchpoints')} />
@@ -1332,6 +1299,63 @@ function BotsTab({ customerId }: { customerId: string }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── TypeRoleBlock — раздел «Тип и роль» под Контактами ───
+function TypeRoleBlock({
+  customer, type, typeColor, onClickRole,
+}: {
+  customer: CustomerRow
+  type: 'guest' | 'user' | 'client'
+  typeColor: { bg: string; fg: string }
+  onClickRole: () => void
+}) {
+  const roleAccessType = customer.role_access_type
+  const roleColor = roleAccessType === 'admin_panel'
+    ? { bg: '#EDE9FF', fg: '#6A55F8' }
+    : roleAccessType === 'student_panel'
+    ? { bg: '#D1FAE5', fg: '#059669' }
+    : { bg: '#F1F5F9', fg: '#64748B' }
+
+  return (
+    <div className="pt-4 border-t border-gray-100">
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Тип и роль</h3>
+      <div className="flex flex-wrap gap-2">
+        <span
+          className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm"
+          style={{ backgroundColor: typeColor.bg, color: typeColor.fg }}
+          title={CLIENT_TYPE_HINT[type]}
+        >
+          <span className="text-xs opacity-70 mr-1.5">Тип:</span>
+          <span className="font-medium">{CLIENT_TYPE_LABELS[type]}</span>
+        </span>
+        {customer.role_label ? (
+          <button
+            onClick={onClickRole}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm hover:ring-2 hover:ring-offset-1 transition-all"
+            style={{ backgroundColor: roleColor.bg, color: roleColor.fg }}
+            title="Кликните, чтобы изменить роль"
+          >
+            <span className="text-xs opacity-70 mr-1.5">Роль:</span>
+            <span className="font-medium">{customer.role_label}</span>
+          </button>
+        ) : customer.email ? (
+          <button
+            onClick={onClickRole}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm border border-dashed border-gray-300 text-gray-500 hover:border-[#6A55F8] hover:text-[#6A55F8]"
+          >
+            <span className="text-xs opacity-70 mr-1.5">Роль:</span>
+            <span className="font-medium">назначить</span>
+          </button>
+        ) : (
+          <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm bg-gray-50 text-gray-400">
+            <span className="text-xs opacity-70 mr-1.5">Роль:</span>
+            <span className="italic">не назначена</span>
+          </span>
+        )}
+      </div>
     </div>
   )
 }
