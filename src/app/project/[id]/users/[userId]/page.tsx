@@ -267,7 +267,7 @@ export default function UserCardPage() {
             sub={formatDateTime(customer.created_at)}
           />
           <Metric
-            label="Последняя активность"
+            label="Активность"
             value={formatRelative(customer.last_activity_at ?? customer.created_at)}
             sub={formatDateTime(customer.last_activity_at ?? customer.created_at)}
           />
