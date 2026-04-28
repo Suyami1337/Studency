@@ -242,6 +242,8 @@ export default function UserCardPage() {
 
         <TypeRoleBlock customer={customer} type={type} typeColor={typeColor} onClickRole={() => setShowRoleEditor(true)} />
 
+        <SubscriptionsBlock customerId={customer.id} />
+
         {customer.first_touch_at && (
           <FirstTouchBlock customer={customer} onOpenAll={() => setTab('touchpoints')} />
         )}
@@ -254,8 +256,6 @@ export default function UserCardPage() {
             </span>
           </div>
         )}
-
-        <SubscriptionsBlock customerId={customer.id} />
 
         <TagsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
 
