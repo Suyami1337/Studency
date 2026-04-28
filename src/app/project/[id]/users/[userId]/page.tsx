@@ -1342,9 +1342,9 @@ function SubscriptionsBlock({ customerId }: { customerId: string }) {
           .eq('customer_id', customerId),
         supabase
           .from('social_subscribers_log')
-          .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
+          .select('account_id, action, at, social_accounts!inner(external_title, external_username, platform)')
           .eq('customer_id', customerId)
-          .order('created_at', { ascending: false }),
+          .order('at', { ascending: false }),
       ])
 
       type BotRaw = {
@@ -1361,7 +1361,7 @@ function SubscriptionsBlock({ customerId }: { customerId: string }) {
       type SubRaw = {
         account_id: string
         action: string | null
-        created_at: string
+        at: string
         social_accounts: { external_title: string | null; external_username: string | null; platform: string | null } | { external_title: string | null; external_username: string | null; platform: string | null }[]
       }
       const lastByAccount = new Map<string, SubRaw>()
