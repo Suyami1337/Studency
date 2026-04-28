@@ -11,7 +11,7 @@ import {
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
-type TabId = 'activity' | 'orders' | 'access' | 'bots' | 'channels' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
+type TabId = 'activity' | 'orders' | 'access' | 'bots' | 'funnels' | 'touchpoints' | 'notes'
 
 export default function UserCardPage() {
   const supabase = createClient()
@@ -216,16 +216,6 @@ export default function UserCardPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {customer.telegram_username && (
-              <a
-                href={`https://t.me/${customer.telegram_username}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm px-3 py-1.5 rounded-lg bg-[#F0EDFF] text-[#6A55F8] hover:bg-[#E5DFFF] font-medium"
-              >
-                ✈ Открыть Telegram
-              </a>
-            )}
             <button
               onClick={toggleBlock}
               className="text-sm px-3 py-1.5 rounded-lg border font-medium"
@@ -289,6 +279,8 @@ export default function UserCardPage() {
           </div>
         )}
 
+        <SubscriptionsBlock customerId={customer.id} />
+
         <TagsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
 
       </div>
@@ -309,10 +301,8 @@ export default function UserCardPage() {
             { id: 'orders',      label: 'Заказы',       icon: '🛒' },
             { id: 'access',      label: 'Продукты',     icon: '📚' },
             { id: 'bots',        label: 'Чат-боты',     icon: '🤖' },
-            { id: 'channels',    label: 'Каналы',       icon: '📣' },
             { id: 'funnels',     label: 'Воронки',      icon: '🎯' },
             { id: 'touchpoints', label: 'Точки входа',  icon: '📍' },
-            { id: 'fields',      label: 'Поля',         icon: '📋' },
             { id: 'notes',       label: 'Заметки',      icon: '📌' },
           ] as { id: TabId; label: string; icon: string }[]).map(t => (
             <button
@@ -333,10 +323,8 @@ export default function UserCardPage() {
           {tab === 'orders' && <OrdersTab customerId={customer.id} />}
           {tab === 'access' && <AccessTab projectId={customer.project_id} customerId={customer.id} />}
           {tab === 'bots' && <BotsTab customerId={customer.id} />}
-          {tab === 'channels' && <ChannelsTab customerId={customer.id} />}
           {tab === 'funnels' && <FunnelsTab customerId={customer.id} />}
           {tab === 'touchpoints' && <TouchpointsTab customerId={customer.id} />}
-          {tab === 'fields' && <FieldsTab customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />}
           {tab === 'notes' && <NotesTab customerId={customer.id} projectId={customer.project_id} />}
         </div>
       </div>
@@ -940,10 +928,6 @@ function TouchpointsTab({ customerId }: { customerId: string }) {
   )
 }
 
-// ─── FieldsTab ───
-type CustomField = { id: string; field_key: string; field_label: string; field_type: 'text' | 'number' | 'boolean' | 'select' | 'date'; field_options: { options?: string[] } | null }
-type FieldValue = { field_id: string; value_text: string | null; value_number: number | null; value_boolean: boolean | null; value_date: string | null }
-
 // Per-field редактор контактов: read-only по умолчанию, отдельная кнопка
 // «Редактировать» рядом с каждым полем. Случайно стереть телефон или email
 // невозможно — нужно явно нажать карандаш, потом «Сохранить».
@@ -1033,206 +1017,6 @@ function ContactFieldRow({
     </div>
   )
 }
-
-// Per-field редактор для кастомных полей (text/number/date/boolean/select).
-function CustomFieldRow({
-  field, value, onSave,
-}: {
-  field: CustomField
-  value: FieldValue | undefined
-  onSave: (next: Partial<FieldValue>) => Promise<{ ok: boolean; error?: string }>
-}) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState<Partial<FieldValue>>({})
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  function startEdit() {
-    setDraft({
-      value_text: value?.value_text ?? null,
-      value_number: value?.value_number ?? null,
-      value_boolean: value?.value_boolean ?? null,
-      value_date: value?.value_date ?? null,
-    })
-    setError('')
-    setEditing(true)
-  }
-  async function commit() {
-    setSaving(true)
-    setError('')
-    const result = await onSave(draft)
-    setSaving(false)
-    if (!result.ok) { setError(result.error ?? 'Не удалось сохранить'); return }
-    setEditing(false)
-  }
-  function cancel() {
-    setDraft({})
-    setEditing(false)
-    setError('')
-  }
-
-  function readView(): React.ReactNode {
-    if (field.field_type === 'text' || field.field_type === 'select') {
-      return value?.value_text ? <span className="text-sm text-gray-900">{value.value_text}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
-    }
-    if (field.field_type === 'number') {
-      return value?.value_number !== null && value?.value_number !== undefined ? <span className="text-sm text-gray-900">{value.value_number}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
-    }
-    if (field.field_type === 'boolean') {
-      if (value?.value_boolean === null || value?.value_boolean === undefined) return <span className="text-sm text-gray-300 italic">не указано</span>
-      return <span className="text-sm text-gray-900">{value.value_boolean ? 'Да' : 'Нет'}</span>
-    }
-    if (field.field_type === 'date') {
-      return value?.value_date ? <span className="text-sm text-gray-900">{new Date(value.value_date).toLocaleDateString('ru')}</span> : <span className="text-sm text-gray-300 italic">не указано</span>
-    }
-    return <span className="text-sm text-gray-300 italic">—</span>
-  }
-
-  function editView(): React.ReactNode {
-    if (field.field_type === 'text') {
-      return <input type="text" autoFocus value={draft.value_text ?? ''} onChange={e => setDraft(d => ({ ...d, value_text: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
-    }
-    if (field.field_type === 'number') {
-      return <input type="number" autoFocus value={draft.value_number ?? ''} onChange={e => setDraft(d => ({ ...d, value_number: e.target.value === '' ? null : Number(e.target.value) }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
-    }
-    if (field.field_type === 'boolean') {
-      return (
-        <select autoFocus value={draft.value_boolean === null || draft.value_boolean === undefined ? '' : draft.value_boolean ? 'true' : 'false'} onChange={e => setDraft(d => ({ ...d, value_boolean: e.target.value === '' ? null : e.target.value === 'true' }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none">
-          <option value="">—</option>
-          <option value="true">Да</option>
-          <option value="false">Нет</option>
-        </select>
-      )
-    }
-    if (field.field_type === 'date') {
-      return <input type="date" autoFocus value={(draft.value_date ?? '').slice(0, 10)} onChange={e => setDraft(d => ({ ...d, value_date: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
-    }
-    if (field.field_type === 'select') {
-      return (
-        <select autoFocus value={draft.value_text ?? ''} onChange={e => setDraft(d => ({ ...d, value_text: e.target.value || null }))} className="flex-1 border border-[#6A55F8] rounded-lg px-3 py-1.5 text-sm focus:outline-none">
-          <option value="">—</option>
-          {(field.field_options?.options ?? []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-        </select>
-      )
-    }
-    return null
-  }
-
-  return (
-    <div className="block">
-      <div className="text-xs text-gray-500 mb-1">{field.field_label}</div>
-      {editing ? (
-        <div className="flex items-center gap-1.5">
-          {editView()}
-          <button onClick={commit} disabled={saving} className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-[#6A55F8] text-white hover:bg-[#5040D6] disabled:opacity-50">
-            {saving ? '…' : 'Сохранить'}
-          </button>
-          <button onClick={cancel} className="text-xs px-2.5 py-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
-            Отмена
-          </button>
-        </div>
-      ) : (
-        <div className="group flex items-center gap-2 min-h-[34px]">
-          <div className="flex-1 truncate">{readView()}</div>
-          <button onClick={startEdit} className="text-xs text-gray-400 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" title="Редактировать">✎</button>
-        </div>
-      )}
-      {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
-    </div>
-  )
-}
-
-function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
-  const supabase = createClient()
-  const [fields, setFields] = useState<CustomField[]>([])
-  const [values, setValues] = useState<Map<string, FieldValue>>(new Map())
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      const [fRes, vRes] = await Promise.all([
-        supabase.from('customer_custom_fields').select('*').eq('project_id', customer.project_id).order('order_index'),
-        supabase.from('customer_field_values').select('field_id, value_text, value_number, value_boolean, value_date').eq('customer_id', customer.id),
-      ])
-      if (cancelled) return
-      setFields((fRes.data ?? []) as CustomField[])
-      setValues(new Map(((vRes.data ?? []) as FieldValue[]).map(v => [v.field_id, v])))
-      setLoading(false)
-    }
-    load()
-    return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customer.id])
-
-  async function saveContact(key: keyof CustomerRow, newValue: string | null): Promise<{ ok: boolean; error?: string }> {
-    const { data, error } = await supabase.from('customers').update({ [key]: newValue }).eq('id', customer.id).select().single()
-    if (error) return { ok: false, error: error.message }
-    if (data) onUpdated(data as Partial<CustomerRow>)
-    return { ok: true }
-  }
-
-  async function saveField(fieldId: string, draft: Partial<FieldValue>): Promise<{ ok: boolean; error?: string }> {
-    const { error } = await supabase.from('customer_field_values').upsert({
-      customer_id: customer.id,
-      field_id: fieldId,
-      value_text: draft.value_text ?? null,
-      value_number: draft.value_number ?? null,
-      value_boolean: draft.value_boolean ?? null,
-      value_date: draft.value_date ?? null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'customer_id,field_id' })
-    if (error) return { ok: false, error: error.message }
-    setValues(prev => {
-      const next = new Map(prev)
-      next.set(fieldId, {
-        field_id: fieldId,
-        value_text: draft.value_text ?? null,
-        value_number: draft.value_number ?? null,
-        value_boolean: draft.value_boolean ?? null,
-        value_date: draft.value_date ?? null,
-      })
-      return next
-    })
-    return { ok: true }
-  }
-
-  if (loading) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
-
-  if (fields.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <div className="text-3xl mb-2">📋</div>
-        <div className="text-sm mb-2">Дополнительных полей пока нет</div>
-        <div className="text-xs text-gray-400 max-w-sm mx-auto">
-          Кастомные поля настраиваются в Настройках проекта → Поля клиента.
-          Контакты вынесены в шапку карточки.
-        </div>
-      </div>
-    )
-  }
-
-  // saveContact уже не нужен здесь — контакты в ContactsBlock в шапке.
-  void saveContact
-  return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Дополнительные поля</h3>
-        <div className="grid grid-cols-2 gap-x-5 gap-y-4">
-          {fields.map(f => (
-            <CustomFieldRow
-              key={f.id}
-              field={f}
-              value={values.get(f.id)}
-              onSave={(draft) => saveField(f.id, draft)}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── ContactsBlock (под Metric row в шапке карточки) ───
 function ContactsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
   const supabase = createClient()
@@ -1542,88 +1326,100 @@ function BotsTab({ customerId }: { customerId: string }) {
   )
 }
 
-// ─── ChannelsTab — список каналов клиента ───
-type ChannelSubRow = {
-  account_id: string
-  channel_label: string
-  platform: string | null
-  last_action: string | null
-  last_at: string | null
-}
-
-function ChannelsTab({ customerId }: { customerId: string }) {
+// ─── SubscriptionsBlock — компактный обзор подписок: чат-боты + соц-сети ───
+function SubscriptionsBlock({ customerId }: { customerId: string }) {
   const supabase = createClient()
-  const [channels, setChannels] = useState<ChannelSubRow[] | null>(null)
+  const [bots, setBots] = useState<Array<{ id: string; name: string; chat_blocked: boolean | null; is_active: boolean | null }> | null>(null)
+  const [channels, setChannels] = useState<Array<{ id: string; label: string; platform: string | null; subscribed: boolean }> | null>(null)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const { data } = await supabase
-        .from('social_subscribers_log')
-        .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
-        .eq('customer_id', customerId)
-        .order('created_at', { ascending: false })
-      type Raw = {
+      const [bRes, cRes] = await Promise.all([
+        supabase
+          .from('chatbot_conversations')
+          .select('telegram_bot_id, chat_blocked, is_active, telegram_bots!inner(name)')
+          .eq('customer_id', customerId),
+        supabase
+          .from('social_subscribers_log')
+          .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
+          .eq('customer_id', customerId)
+          .order('created_at', { ascending: false }),
+      ])
+
+      type BotRaw = {
+        telegram_bot_id: string
+        chat_blocked: boolean | null
+        is_active: boolean | null
+        telegram_bots: { name: string } | { name: string }[]
+      }
+      const botRows = ((bRes.data ?? []) as unknown as BotRaw[]).map(r => {
+        const tb = Array.isArray(r.telegram_bots) ? r.telegram_bots[0] : r.telegram_bots
+        return { id: r.telegram_bot_id, name: tb?.name ?? 'Бот', chat_blocked: r.chat_blocked, is_active: r.is_active }
+      })
+
+      type SubRaw = {
         account_id: string
         action: string | null
         created_at: string
         social_accounts: { external_title: string | null; external_username: string | null; platform: string | null } | { external_title: string | null; external_username: string | null; platform: string | null }[]
       }
-      const lastByAccount = new Map<string, Raw>()
-      ;((data ?? []) as unknown as Raw[]).forEach(s => {
+      const lastByAccount = new Map<string, SubRaw>()
+      ;((cRes.data ?? []) as unknown as SubRaw[]).forEach(s => {
         if (!lastByAccount.has(s.account_id)) lastByAccount.set(s.account_id, s)
       })
-      const rows: ChannelSubRow[] = []
+      const channelRows: Array<{ id: string; label: string; platform: string | null; subscribed: boolean }> = []
       lastByAccount.forEach(s => {
         const sa = Array.isArray(s.social_accounts) ? s.social_accounts[0] : s.social_accounts
         const label = sa?.external_title || (sa?.external_username ? `@${sa.external_username}` : 'Канал')
-        rows.push({
-          account_id: s.account_id,
-          channel_label: label,
+        channelRows.push({
+          id: s.account_id,
+          label,
           platform: sa?.platform ?? null,
-          last_action: s.action,
-          last_at: s.created_at,
+          subscribed: !(s.action === 'unsubscribe' || s.action === 'left'),
         })
       })
-      if (!cancelled) setChannels(rows)
+
+      if (!cancelled) {
+        setBots(botRows)
+        setChannels(channelRows)
+      }
     }
     load()
     return () => { cancelled = true }
-  }, [customerId, supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId])
 
-  if (channels === null) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
-  if (channels.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-400">
-        <div className="text-3xl mb-2">📣</div>
-        <div className="text-sm">Клиент не зафиксирован ни на одном канале проекта</div>
-      </div>
-    )
-  }
+  if (bots === null || channels === null) return null
+  if (bots.length === 0 && channels.length === 0) return null
 
   return (
-    <div className="space-y-2">
-      {channels.map(c => {
-        const isUnsubscribed = c.last_action === 'unsubscribe' || c.last_action === 'left'
-        return (
-          <div key={c.account_id} className="bg-[#FAFAFD] rounded-xl border border-gray-100 px-4 py-3 flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="font-medium text-gray-900">{c.channel_label}</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                {c.platform === 'telegram' ? 'Telegram' : (c.platform ?? '—')}
-                {c.last_at && <span className="text-gray-400"> · последнее действие {new Date(c.last_at).toLocaleDateString('ru')}</span>}
-              </div>
-            </div>
-            <div className="shrink-0">
-              {isUnsubscribed ? (
-                <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700">отписался</span>
-              ) : (
-                <span className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700">подписан</span>
-              )}
-            </div>
-          </div>
-        )
-      })}
+    <div className="pt-4 border-t border-gray-100">
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Подписки</h3>
+      <div className="flex flex-wrap gap-1.5">
+        {bots.map(b => {
+          const status = b.chat_blocked ? 'blocked' : b.is_active ? 'active' : 'paused'
+          const c = status === 'blocked' ? { bg: '#FEE2E2', fg: '#B91C1C' }
+                  : status === 'active' ? { bg: '#D1FAE5', fg: '#059669' }
+                  : { bg: '#F1F5F9', fg: '#64748B' }
+          const icon = status === 'blocked' ? '🚫' : status === 'active' ? '✓' : '⏸'
+          return (
+            <span key={b.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: c.bg, color: c.fg }} title={status === 'blocked' ? 'Заблокировал бота' : status === 'active' ? 'Подписан и активен' : 'Подписка на паузе'}>
+              <span>🤖 {b.name}</span>
+              <span>{icon}</span>
+            </span>
+          )
+        })}
+        {channels.map(ch => {
+          const c = ch.subscribed ? { bg: '#D1FAE5', fg: '#059669' } : { bg: '#FEE2E2', fg: '#B91C1C' }
+          return (
+            <span key={ch.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: c.bg, color: c.fg }} title={ch.subscribed ? 'Подписан на канал' : 'Отписался от канала'}>
+              <span>📣 {ch.label}</span>
+              <span>{ch.subscribed ? '✓' : '✕'}</span>
+            </span>
+          )
+        })}
+      </div>
     </div>
   )
 }
