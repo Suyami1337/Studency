@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { SkeletonList } from '@/components/ui/Skeleton'
 import { Modal } from '@/components/ui/Modal'
+import ProductGroupsTab from '@/components/learning/ProductGroupsTab'
 
 type Product = {
   id: string
@@ -295,7 +296,7 @@ function ProductDetail({
   onDuplicate?: () => void
 }) {
   const supabase = createClient()
-  const [tab, setTab] = useState<'tariffs' | 'analytics' | 'settings'>('tariffs')
+  const [tab, setTab] = useState<'tariffs' | 'groups' | 'analytics' | 'settings'>('tariffs')
   const [tariffs, setTariffs] = useState<Tariff[]>([])
   const [stats, setStats] = useState<OrderStat[]>([])
   const [loadingTariffs, setLoadingTariffs] = useState(true)
@@ -453,6 +454,7 @@ function ProductDetail({
 
   const tabs = [
     { key: 'tariffs', label: 'Тарифы' },
+    { key: 'groups', label: 'Группы и кураторы' },
     { key: 'analytics', label: 'Аналитика' },
     { key: 'settings', label: 'Настройки' },
   ] as const
@@ -633,6 +635,10 @@ function ProductDetail({
       )}
 
       {/* Tab: Аналитика */}
+      {tab === 'groups' && (
+        <ProductGroupsTab productId={product.id} projectId={projectId} />
+      )}
+
       {tab === 'analytics' && (
         <div className="space-y-4">
           <h3 className="font-semibold text-gray-900">Аналитика по тарифам</h3>
