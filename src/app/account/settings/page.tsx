@@ -157,34 +157,12 @@ function AccountSettingsInner() {
         </div>
 
         {activeTab === 'profile' && (
-          <div className="bg-white rounded-2xl border border-gray-100 p-6 space-y-5">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Email</label>
-              <div className="px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm text-gray-900">
-                {email}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Имя</label>
-              <div className="px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm text-gray-900">
-                {fullName || <span className="text-gray-400">Не указано</span>}
-              </div>
-            </div>
-
-            <div className="pt-5 border-t border-gray-100 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Выход из аккаунта</p>
-                <p className="text-xs text-gray-500 mt-0.5">Завершит сессию на этом устройстве</p>
-              </div>
-              <button
-                onClick={handleLogout}
-                disabled={loggingOut}
-                className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition-colors disabled:opacity-50"
-              >
-                {loggingOut ? 'Выходим...' : 'Выйти'}
-              </button>
-            </div>
-          </div>
+          <ProfileTab
+            email={email}
+            fullName={fullName}
+            onLogout={handleLogout}
+            loggingOut={loggingOut}
+          />
         )}
 
         {activeTab === 'domain' && <DomainTab />}
@@ -682,6 +660,240 @@ function DnsInstructions({
           <li>Нажмите «Добавить запись» и внесите {records.length === 1 ? 'запись' : 'обе записи'} из таблицы выше.</li>
           <li>Подождите 10–30 минут и нажмите <span className="font-semibold">«Проверить статус»</span>.</li>
         </ol>
+      </div>
+    </div>
+  )
+}
+
+// ─── ProfileTab — email/имя/пароль ───
+function ProfileTab({
+  email, fullName, onLogout, loggingOut,
+}: {
+  email: string
+  fullName: string
+  onLogout: () => void
+  loggingOut: boolean
+}) {
+  const supabase = createClient()
+  const [editingEmail, setEditingEmail] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [showPwdForm, setShowPwdForm] = useState(false)
+
+  const [emailDraft, setEmailDraft] = useState('')
+  const [emailSaving, setEmailSaving] = useState(false)
+  const [emailError, setEmailError] = useState('')
+  const [emailSuccess, setEmailSuccess] = useState(false)
+
+  const [nameDraft, setNameDraft] = useState('')
+  const [nameSaving, setNameSaving] = useState(false)
+  const [nameError, setNameError] = useState('')
+  const [currentName, setCurrentName] = useState(fullName)
+
+  const [oldPwd, setOldPwd] = useState('')
+  const [newPwd, setNewPwd] = useState('')
+  const [newPwd2, setNewPwd2] = useState('')
+  const [pwdSaving, setPwdSaving] = useState(false)
+  const [pwdError, setPwdError] = useState('')
+  const [pwdSuccess, setPwdSuccess] = useState(false)
+
+  async function handleSaveEmail() {
+    setEmailError('')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailDraft)) {
+      setEmailError('Некорректный email')
+      return
+    }
+    setEmailSaving(true)
+    const { error } = await supabase.auth.updateUser({ email: emailDraft.trim().toLowerCase() })
+    setEmailSaving(false)
+    if (error) { setEmailError(error.message); return }
+    setEmailSuccess(true)
+    setEditingEmail(false)
+    setEmailDraft('')
+  }
+
+  async function handleSaveName() {
+    setNameError('')
+    setNameSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setNameSaving(false); return }
+    const trimmed = nameDraft.trim() || null
+    const { error } = await supabase.from('users_meta').upsert({
+      user_id: user.id,
+      full_name: trimmed,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' })
+    setNameSaving(false)
+    if (error) { setNameError(error.message); return }
+    setCurrentName(trimmed ?? '')
+    setEditingName(false)
+  }
+
+  async function handleChangePassword() {
+    setPwdError('')
+    if (newPwd.length < 6) { setPwdError('Новый пароль не менее 6 символов'); return }
+    if (newPwd !== newPwd2) { setPwdError('Пароли не совпадают'); return }
+
+    setPwdSaving(true)
+    // Сначала проверяем старый пароль через signInWithPassword
+    const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: oldPwd })
+    if (signInErr) { setPwdSaving(false); setPwdError('Текущий пароль неверный'); return }
+
+    // Меняем на новый
+    const { error: updErr } = await supabase.auth.updateUser({ password: newPwd })
+    setPwdSaving(false)
+    if (updErr) { setPwdError(updErr.message); return }
+    setPwdSuccess(true)
+    setOldPwd(''); setNewPwd(''); setNewPwd2('')
+    setTimeout(() => { setShowPwdForm(false); setPwdSuccess(false) }, 2500)
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-6 space-y-5">
+      {/* Email */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">Email</label>
+        {emailSuccess && (
+          <div className="mb-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5">
+            ✓ Письмо с подтверждением отправлено на новый адрес. Кликните по ссылке в письме, чтобы завершить смену.
+          </div>
+        )}
+        {!editingEmail ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm text-gray-900">
+              {email}
+            </div>
+            <button
+              onClick={() => { setEditingEmail(true); setEmailDraft(email) }}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:border-[#6A55F8] hover:text-[#6A55F8]"
+            >
+              Изменить
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <input
+              type="email"
+              autoFocus
+              value={emailDraft}
+              onChange={e => setEmailDraft(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-lg border border-[#6A55F8] text-sm focus:outline-none"
+              placeholder="new@email.com"
+            />
+            {emailError && <div className="text-xs text-red-600">{emailError}</div>}
+            <div className="flex gap-2">
+              <button onClick={() => { setEditingEmail(false); setEmailError('') }} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
+              <button onClick={handleSaveEmail} disabled={emailSaving || !emailDraft || emailDraft === email} className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
+                {emailSaving ? 'Отправляем…' : 'Сменить email'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400">На новый адрес придёт письмо с ссылкой подтверждения. Email не сменится пока вы не подтвердите.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Имя */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">Имя</label>
+        {!editingName ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm text-gray-900">
+              {currentName || <span className="text-gray-400">Не указано</span>}
+            </div>
+            <button
+              onClick={() => { setEditingName(true); setNameDraft(currentName) }}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:border-[#6A55F8] hover:text-[#6A55F8]"
+            >
+              Изменить
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <input
+              type="text"
+              autoFocus
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-lg border border-[#6A55F8] text-sm focus:outline-none"
+              placeholder="Иван Иванов"
+            />
+            {nameError && <div className="text-xs text-red-600">{nameError}</div>}
+            <div className="flex gap-2">
+              <button onClick={() => { setEditingName(false); setNameError('') }} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
+              <button onClick={handleSaveName} disabled={nameSaving} className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
+                {nameSaving ? 'Сохраняем…' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Пароль */}
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">Пароль</label>
+        {pwdSuccess && (
+          <div className="mb-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5">
+            ✓ Пароль успешно изменён.
+          </div>
+        )}
+        {!showPwdForm ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 px-4 py-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm text-gray-500">
+              ••••••••
+            </div>
+            <button
+              onClick={() => setShowPwdForm(true)}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:border-[#6A55F8] hover:text-[#6A55F8]"
+            >
+              Сменить
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <input
+              type="password"
+              autoFocus
+              value={oldPwd}
+              onChange={e => setOldPwd(e.target.value)}
+              placeholder="Текущий пароль"
+              className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+            />
+            <input
+              type="password"
+              value={newPwd}
+              onChange={e => setNewPwd(e.target.value)}
+              placeholder="Новый пароль (мин. 6 символов)"
+              className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+            />
+            <input
+              type="password"
+              value={newPwd2}
+              onChange={e => setNewPwd2(e.target.value)}
+              placeholder="Повторите новый пароль"
+              className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm"
+            />
+            {pwdError && <div className="text-xs text-red-600">{pwdError}</div>}
+            <div className="flex gap-2">
+              <button onClick={() => { setShowPwdForm(false); setOldPwd(''); setNewPwd(''); setNewPwd2(''); setPwdError('') }} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
+              <button onClick={handleChangePassword} disabled={pwdSaving || !oldPwd || !newPwd || !newPwd2} className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
+                {pwdSaving ? 'Сохраняем…' : 'Сменить пароль'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="pt-5 border-t border-gray-100 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Выход из аккаунта</p>
+          <p className="text-xs text-gray-500 mt-0.5">Завершит сессию на этом устройстве</p>
+        </div>
+        <button
+          onClick={onLogout}
+          disabled={loggingOut}
+          className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition-colors disabled:opacity-50"
+        >
+          {loggingOut ? 'Выходим...' : 'Выйти'}
+        </button>
       </div>
     </div>
   )

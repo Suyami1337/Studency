@@ -1001,6 +1001,20 @@ function ContactFieldRow({
 function ContactsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
   const supabase = createClient()
   async function saveContact(key: keyof CustomerRow, newValue: string | null): Promise<{ ok: boolean; error?: string }> {
+    // Email — особый случай: если у клиента есть user_id (зарегистрирован),
+    // надо синхронизировать auth.users.email + отправить уведомление.
+    // Идём через API endpoint который делает это через service role.
+    if (key === 'email' && customer.user_id) {
+      const res = await fetch(`/api/projects/${customer.project_id}/customers/${customer.id}/email`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_email: newValue }),
+      })
+      const data = await res.json()
+      if (!res.ok) return { ok: false, error: data.error || 'Не удалось обновить email' }
+      if (data.customer) onUpdated(data.customer as Partial<CustomerRow>)
+      return { ok: true }
+    }
     const { data, error } = await supabase.from('customers').update({ [key]: newValue }).eq('id', customer.id).select().single()
     if (error) return { ok: false, error: error.message }
     if (data) onUpdated(data as Partial<CustomerRow>)
@@ -1050,25 +1064,36 @@ function RoleEditorModal({ customer, onClose, onChanged }: { customer: CustomerR
   type ProjectRole = { id: string; code: string; label: string; access_type: string }
   const [roles, setRoles] = useState<ProjectRole[]>([])
   const [memberId, setMemberId] = useState<string | null>(null)
+  const [myRoleCode, setMyRoleCode] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [selectedRoleId, setSelectedRoleId] = useState('')
   const [loaded, setLoaded] = useState(false)
 
+  // Сброс пароля
+  const [showResetPwd, setShowResetPwd] = useState(false)
+  const [newPwd, setNewPwd] = useState('')
+  const [resettingPwd, setResettingPwd] = useState(false)
+  const [resetSuccess, setResetSuccess] = useState(false)
+
   useEffect(() => {
     let cancelled = false
     async function load() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
       const [rRes, mRes] = await Promise.all([
         fetch(`/api/projects/${customer.project_id}/roles`).then(r => r.json()),
-        customer.user_id
-          ? fetch(`/api/projects/${customer.project_id}/members`).then(r => r.json())
-          : Promise.resolve({ members: [] }),
+        fetch(`/api/projects/${customer.project_id}/members`).then(r => r.json()),
       ])
       if (cancelled) return
       const list = (rRes.roles ?? []) as ProjectRole[]
       setRoles(list)
-      const me = (mRes.members ?? []).find((m: { user_id: string; id: string }) => m.user_id === customer.user_id)
+      type MemRow = { user_id: string; id: string; role_code?: string; is_self?: boolean }
+      const allMembers = (mRes.members ?? []) as MemRow[]
+      const me = allMembers.find(m => m.user_id === customer.user_id)
       setMemberId(me?.id ?? null)
+      const my = allMembers.find(m => m.user_id === user?.id) ?? allMembers.find(m => m.is_self)
+      setMyRoleCode(my?.role_code ?? null)
       const currentRole = list.find(r => r.label === customer.role_label)
       const fallback = list.find(r => r.code === 'student') ?? list.find(r => r.code === 'admin')
       setSelectedRoleId(currentRole?.id ?? fallback?.id ?? list[0]?.id ?? '')
@@ -1077,6 +1102,29 @@ function RoleEditorModal({ customer, onClose, onChanged }: { customer: CustomerR
     load()
     return () => { cancelled = true }
   }, [customer.id, customer.user_id, customer.project_id, customer.role_label])
+
+  async function handleResetPassword() {
+    setError('')
+    if (newPwd.length < 6) {
+      setError('Пароль не менее 6 символов')
+      return
+    }
+    setResettingPwd(true)
+    const res = await fetch(`/api/projects/${customer.project_id}/customers/${customer.id}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: newPwd }),
+    })
+    setResettingPwd(false)
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось сбросить пароль')
+      return
+    }
+    setResetSuccess(true)
+    setNewPwd('')
+    setTimeout(() => { setShowResetPwd(false); setResetSuccess(false) }, 2500)
+  }
 
   async function handleSave() {
     if (!selectedRoleId) return
@@ -1205,6 +1253,49 @@ function RoleEditorModal({ customer, onClose, onChanged }: { customer: CustomerR
                 {saving ? 'Сохраняем…' : isInvite ? 'Отправить' : 'Сохранить'}
               </button>
             </div>
+
+            {/* Сброс пароля — только если у customer есть user_id и текущий
+                админ owner или super_admin */}
+            {customer.user_id && (myRoleCode === 'owner' || myRoleCode === 'super_admin') && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                {!showResetPwd ? (
+                  <button
+                    onClick={() => setShowResetPwd(true)}
+                    className="text-sm text-gray-600 hover:text-[#6A55F8] hover:underline"
+                  >
+                    🔐 Сбросить пароль клиента
+                  </button>
+                ) : resetSuccess ? (
+                  <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-3">
+                    ✓ Пароль сброшен. Уведомление отправлено на {customer.email || 'email клиента'}.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="text-xs text-gray-500">Новый пароль для клиента</label>
+                    <input
+                      type="text"
+                      value={newPwd}
+                      onChange={e => setNewPwd(e.target.value)}
+                      placeholder="Минимум 6 символов"
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => { setShowResetPwd(false); setNewPwd('') }} className="flex-1 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-700">
+                        Отмена
+                      </button>
+                      <button
+                        onClick={handleResetPassword}
+                        disabled={resettingPwd || newPwd.length < 6}
+                        className="flex-1 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium disabled:opacity-50"
+                      >
+                        {resettingPwd ? 'Сбрасываем…' : 'Сбросить пароль'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400">Клиент получит уведомление на свой email о смене пароля.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
