@@ -56,7 +56,9 @@ export type CustomerRow = {
   // joined from customer_aggregates
   last_activity_at?: string | null
   orders_count?: number
-  revenue?: number
+  paid_orders_count?: number
+  total_amount?: number
+  revenue?: number  // сумма paid_amount по статусу paid
   has_paid?: boolean
   in_funnel?: boolean
   // joined from project_members + roles (через view customers_with_role)

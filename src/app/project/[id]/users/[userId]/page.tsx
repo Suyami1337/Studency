@@ -35,7 +35,7 @@ export default function UserCardPage() {
     setLoading(true)
     const [cRes, aRes] = await Promise.all([
       supabase.from('customers_with_role').select('*').eq('id', userId).single(),
-      supabase.from('customer_aggregates').select('last_activity_at, orders_count, revenue, has_paid, in_funnel').eq('customer_id', userId).maybeSingle(),
+      supabase.from('customer_aggregates').select('last_activity_at, orders_count, paid_orders_count, total_amount, revenue, has_paid, in_funnel').eq('customer_id', userId).maybeSingle(),
     ])
     if (cRes.data) {
       setCustomer({ ...(cRes.data as CustomerRow), ...((aRes.data ?? {}) as Partial<CustomerRow>) })
@@ -158,10 +158,13 @@ export default function UserCardPage() {
                     </h1>
                     <button
                       onClick={startEdit}
-                      className="text-sm text-gray-300 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-[#6A55F8] hover:bg-[#F0EDFF] transition-colors"
                       title="Изменить имя"
+                      aria-label="Изменить имя"
                     >
-                      ✎
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                      </svg>
                     </button>
                   </div>
                 )
@@ -257,11 +260,21 @@ export default function UserCardPage() {
         {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
 
         {/* Metrics row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-          <Metric label="Зарегистрирован" value={formatDate(customer.created_at)} hint={formatDateTime(customer.created_at)} />
-          <Metric label="Последняя активность" value={formatRelative(customer.last_activity_at ?? customer.created_at)} hint={formatDateTime(customer.last_activity_at ?? customer.created_at)} />
-          <Metric label="Заказов" value={String(customer.orders_count ?? 0)} />
-          <Metric label="Сумма заказов" value={formatMoney(customer.revenue ?? 0)} />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
+          <Metric
+            label="Зарегистрирован"
+            value={formatDate(customer.created_at)}
+            sub={formatDateTime(customer.created_at)}
+          />
+          <Metric
+            label="Последняя активность"
+            value={formatRelative(customer.last_activity_at ?? customer.created_at)}
+            sub={formatDateTime(customer.last_activity_at ?? customer.created_at)}
+          />
+          <Metric label="Заказов всего" value={String(customer.orders_count ?? 0)} />
+          <Metric label="Оплачено заказов" value={String(customer.paid_orders_count ?? 0)} />
+          <Metric label="Сумма заказов" value={formatMoney(customer.total_amount ?? 0)} />
+          <Metric label="Сумма оплат" value={formatMoney(customer.revenue ?? 0)} />
         </div>
 
         <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
@@ -430,11 +443,12 @@ function FirstTouchBlock({ customer, onOpenAll }: { customer: CustomerRow; onOpe
 }
 
 // ─── Helpers ───
-function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Metric({ label, value, sub, hint }: { label: string; value: string; sub?: string; hint?: string }) {
   return (
     <div className="bg-[#FAFAFD] rounded-xl px-3 py-2.5" title={hint}>
       <div className="text-xs text-gray-400">{label}</div>
       <div className="text-sm font-semibold text-gray-900 mt-0.5">{value}</div>
+      {sub && <div className="text-[11px] text-gray-400 mt-0.5">{sub}</div>}
     </div>
   )
 }
@@ -1006,10 +1020,13 @@ function ContactFieldRow({
           )}
           <button
             onClick={startEdit}
-            className="text-xs text-gray-400 hover:text-[#6A55F8] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            className="p-1 rounded text-gray-400 hover:text-[#6A55F8] hover:bg-[#F0EDFF] transition-colors shrink-0"
             title="Редактировать"
+            aria-label="Редактировать"
           >
-            ✎
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+            </svg>
           </button>
         </div>
       )}
@@ -1046,10 +1063,7 @@ function ContactsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdat
 
   return (
     <div className="pt-4 border-t border-gray-100">
-      <div className="flex items-center gap-2 mb-3">
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Контакты</h3>
-        <span className="text-xs text-gray-400">· наведите на поле и ✎ чтобы изменить</span>
-      </div>
+      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Контакты</h3>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-3">
         {contactFields.map(f => (
           <ContactFieldRow
@@ -1397,7 +1411,7 @@ function SubscriptionsBlock({ customerId }: { customerId: string }) {
   return (
     <div className="pt-4 border-t border-gray-100">
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Подписки</h3>
-      <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-2">
         {bots.map(b => {
           // chat_blocked=true означает что человек заблокировал бот / удалил чат — фактически отписался.
           const isUnsubscribed = !!b.chat_blocked
