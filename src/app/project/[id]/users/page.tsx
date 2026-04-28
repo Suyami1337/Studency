@@ -34,6 +34,11 @@ export default function UsersPage() {
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [dynamicOptions, setDynamicOptions] = useState<DynamicFilterOptions>(EMPTY_DYNAMIC_OPTIONS)
+  // Скрытые карточки (crm_visible=false) — это люди, которые подписались на
+  // канал по UTM или начали диалог в Direct, но в воронку ещё не вошли.
+  // По умолчанию они не показываются. Toggle вверху включает.
+  const [showHidden, setShowHidden] = useState(false)
+  const [hiddenCount, setHiddenCount] = useState(0)
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
@@ -115,6 +120,7 @@ export default function UsersPage() {
     })) as CustomerRow[]
     setCustomers(merged)
     setSegments(((sRes.data ?? []) as Segment[]))
+    setHiddenCount(merged.filter(c => c.crm_visible === false).length)
 
     // Dynamic options для модалки фильтров
     const allTags = new Set<string>()
@@ -234,7 +240,12 @@ export default function UsersPage() {
 
   // ── Filtering & sorting ──
   const visibleRows = useMemo(() => {
-    let filtered = applyFilters(customers, filterState)
+    // Сначала отрезаем «скрытые» (crm_visible=false) если toggle выключен.
+    let base = customers
+    if (!showHidden) {
+      base = customers.filter(c => c.crm_visible !== false)
+    }
+    let filtered = applyFilters(base, filterState)
     const q = searchQuery.trim().toLowerCase()
     if (q) {
       filtered = filtered.filter(r =>
@@ -250,7 +261,7 @@ export default function UsersPage() {
       )
     }
     return sortRows(filtered, sort.column, sort.direction)
-  }, [customers, filterState, sort, searchQuery])
+  }, [customers, filterState, sort, searchQuery, showHidden])
 
   // ── Selection ──
   function toggleSelected(id: string) {
@@ -287,8 +298,19 @@ export default function UsersPage() {
           <p className="text-sm text-gray-500 mt-0.5">
             {loading ? '…' : (
               filterState.conditions.length === 0 && !activeSegmentId
-                ? `Всего: ${customers.length}`
-                : `Показано ${visibleRows.length} из ${customers.length}`
+                ? `Всего: ${visibleRows.length}`
+                : `Показано ${visibleRows.length}`
+            )}
+            {hiddenCount > 0 && (
+              <button
+                onClick={() => setShowHidden(v => !v)}
+                className="ml-2 text-xs text-[#6A55F8] hover:underline"
+                title="Скрытые карточки = подписчики канала по UTM или начавшие диалог в Direct, ещё не вошедшие в воронку"
+              >
+                {showHidden
+                  ? `· скрыть невошедших в воронку (${hiddenCount})`
+                  : `· ещё ${hiddenCount} скрытых (показать)`}
+              </button>
             )}
           </p>
         </div>

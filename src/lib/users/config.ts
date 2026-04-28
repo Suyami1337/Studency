@@ -46,6 +46,7 @@ export type CustomerRow = {
   bot_subscribed: boolean | null
   bot_blocked: boolean | null
   channel_subscribed: boolean | null
+  crm_visible?: boolean | null   // false = скрытая карточка (подписка/диалог без воронки)
   created_at: string
   // first-touch attribution
   first_touch_at?: string | null

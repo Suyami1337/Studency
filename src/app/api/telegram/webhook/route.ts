@@ -153,10 +153,12 @@ export async function POST(request: NextRequest) {
 
           if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
             // Новый подписчик канала.
-            // Правило: customer создаём ТОЛЬКО если человек пришёл по UTM-trackable
-            // invite-link (есть source_id). Это означает «вход в воронку».
-            // Простая подписка через прямой поиск канала — НЕ создаёт customer,
-            // только запись в social_subscribers_log и инкремент counter подписчиков.
+            // Правило: подписка — это passive-действие (не воронка). Карточку
+            // создаём ТОЛЬКО при наличии UTM-source (для возможной retroactive
+            // привязки), но помечаем crm_visible=false — в /users не видна.
+            // Когда юзер сделает actionable действие (/start бота, клик на
+            // лендинг) — карточка станет видимой автоматически.
+            // Простая подписка без UTM — без customer вообще, только лог.
             if (sourceId) {
               const { data: newCustomer } = await supabase.from('customers').insert({
                 project_id: bot.project_id,
@@ -166,6 +168,7 @@ export async function POST(request: NextRequest) {
                 channel_subscribed: true,
                 channel_subscribed_at: new Date().toISOString(),
                 source_id: sourceId, source_slug: sourceSlug, source_name: sourceName,
+                crm_visible: false,
               }).select('id').single()
               if (newCustomer) {
                 await supabase.from('customer_actions').insert({
@@ -456,6 +459,8 @@ export async function POST(request: NextRequest) {
         const baseUpdate: Record<string, unknown> = {
           telegram_username: username, full_name: firstName,
           bot_subscribed: true, bot_subscribed_at: new Date().toISOString(),
+          // Активируем карточку если она была скрыта (подписка на канал и т.п.)
+          crm_visible: true,
         }
         if (existingFull && !(existingFull as { first_touch_at: string | null }).first_touch_at) {
           baseUpdate.first_touch_at = new Date().toISOString()
