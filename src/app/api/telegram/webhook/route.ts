@@ -152,48 +152,27 @@ export async function POST(request: NextRequest) {
             .select('id, source_id').eq('telegram_id', String(tgUserId)).eq('project_id', bot.project_id).maybeSingle()
 
           if (!customer && (newStatus === 'member' || newStatus === 'creator' || newStatus === 'administrator')) {
-            // Новый подписчик канала.
-            // Правило: подписка — это passive-действие (не воронка). Карточку
-            // создаём ТОЛЬКО при наличии UTM-source (для возможной retroactive
-            // привязки), но помечаем crm_visible=false — в /users не видна.
-            // Когда юзер сделает actionable действие (/start бота, клик на
-            // лендинг) — карточка станет видимой автоматически.
-            // Простая подписка без UTM — без customer вообще, только лог.
-            if (sourceId) {
-              const { data: newCustomer } = await supabase.from('customers').insert({
-                project_id: bot.project_id,
-                telegram_id: String(tgUserId),
-                telegram_username: tgUsername,
-                full_name: tgFirstName,
-                channel_subscribed: true,
-                channel_subscribed_at: new Date().toISOString(),
-                source_id: sourceId, source_slug: sourceSlug, source_name: sourceName,
-                crm_visible: false,
-              }).select('id').single()
-              if (newCustomer) {
-                await supabase.from('customer_actions').insert({
-                  customer_id: newCustomer.id, project_id: bot.project_id,
-                  action: 'channel_subscribed',
-                  data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
-                })
-                if (socialAccount) {
-                  await supabase.from('social_subscribers_log').insert({
-                    account_id: socialAccount.id,
-                    external_user_id: String(tgUserId),
-                    username: tgUsername,
-                    first_name: tgFirstName,
-                    action: 'join',
-                    invite_link_name: inviteLinkName,
-                    customer_id: newCustomer.id,
-                  })
-                }
-                const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
-                await supabase.from('traffic_sources').update({
-                  telegram_invite_member_count: (cur?.telegram_invite_member_count ?? 0) + 1,
-                }).eq('id', sourceId)
-              }
-            } else {
-              // Без UTM — карточку не создаём, только фиксируем факт подписки.
+            // Новый подписчик канала. Карточку создаём ВСЕГДА со crm_visible=false
+            // (lazy materialization — данные сохранены, но в /users по умолчанию
+            // не видна). Если есть UTM-source — записываем его в карточку и
+            // инкрементим counter источника. Когда юзер сделает actionable
+            // действие (/start бота, клик на лендинг) — карточка активируется.
+            const { data: newCustomer } = await supabase.from('customers').insert({
+              project_id: bot.project_id,
+              telegram_id: String(tgUserId),
+              telegram_username: tgUsername,
+              full_name: tgFirstName,
+              channel_subscribed: true,
+              channel_subscribed_at: new Date().toISOString(),
+              crm_visible: false,
+              ...(sourceId ? { source_id: sourceId, source_slug: sourceSlug, source_name: sourceName } : {}),
+            }).select('id').single()
+            if (newCustomer) {
+              await supabase.from('customer_actions').insert({
+                customer_id: newCustomer.id, project_id: bot.project_id,
+                action: 'channel_subscribed',
+                data: { channel_id: String(chatId), auto_created: true, invite_link_name: inviteLinkName, source_id: sourceId },
+              })
               if (socialAccount) {
                 await supabase.from('social_subscribers_log').insert({
                   account_id: socialAccount.id,
@@ -202,8 +181,14 @@ export async function POST(request: NextRequest) {
                   first_name: tgFirstName,
                   action: 'join',
                   invite_link_name: inviteLinkName,
-                  customer_id: null,
+                  customer_id: newCustomer.id,
                 })
+              }
+              if (sourceId) {
+                const { data: cur } = await supabase.from('traffic_sources').select('telegram_invite_member_count').eq('id', sourceId).single()
+                await supabase.from('traffic_sources').update({
+                  telegram_invite_member_count: (cur?.telegram_invite_member_count ?? 0) + 1,
+                }).eq('id', sourceId)
               }
             }
           } else if (customer) {

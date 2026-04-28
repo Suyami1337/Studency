@@ -199,12 +199,32 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
     let previousCustomerId: string | null = existingConv?.customer_id ?? null
 
     // Ищем customer по telegram_id в проекте
-    const { data: customer } = await supabase
+    const { data: existingCustomer } = await supabase
       .from('customers')
-      .select('id')
+      .select('id, crm_visible')
       .eq('project_id', acc.project_id)
       .eq('telegram_id', String(peerId))
       .maybeSingle()
+
+    let customerId = existingCustomer?.id ?? null
+
+    // Если customer не найден — создаём СКРЫТУЮ карточку (lazy materialization).
+    // Она появится в /users только когда юзер совершит actionable действие
+    // (/start бота, клик на лендинг и т.п.) — тогда crm_visible переключится.
+    if (!customerId) {
+      const { data: newCustomer } = await supabase
+        .from('customers')
+        .insert({
+          project_id: acc.project_id,
+          telegram_id: String(peerId),
+          telegram_username: peerUsername,
+          full_name: peerFirstName,
+          crm_visible: false,
+        })
+        .select('id')
+        .single()
+      customerId = newCustomer?.id ?? null
+    }
 
     if (existingConv) {
       convId = existingConv.id
@@ -218,7 +238,7 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
           peer_telegram_id: peerId,
           peer_username: peerUsername,
           peer_first_name: peerFirstName,
-          customer_id: customer?.id ?? null,
+          customer_id: customerId,
           status: 'open',
           unread_count: telegramUnread,
         })
@@ -228,10 +248,10 @@ export async function syncManagerAccount(supabase: SupabaseClient, acc: ManagerA
       convId = newConv.id
     }
 
-    // Привязываем к customer если не была привязана
-    if (customer && !previousCustomerId) {
-      await supabase.from('manager_conversations').update({ customer_id: customer.id }).eq('id', convId)
-      previousCustomerId = customer.id
+    // Привязываем к customer если ещё не была привязана
+    if (customerId && !previousCustomerId) {
+      await supabase.from('manager_conversations').update({ customer_id: customerId }).eq('id', convId)
+      previousCustomerId = customerId
     }
 
     // Вставляем сообщения батчем (ON CONFLICT DO NOTHING через upsert)
