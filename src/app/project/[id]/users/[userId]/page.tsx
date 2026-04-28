@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import ActivityTimeline from '@/components/users/ActivityTimeline'
+import { Modal } from '@/components/ui/Modal'
 import {
   CustomerRow, deriveClientType, CLIENT_TYPE_LABELS, CLIENT_TYPE_COLOR, CLIENT_TYPE_HINT,
   FIRST_TOUCH_KIND_LABELS, customerDisplayName, customerAvatarLetter,
   formatDate, formatDateTime, formatRelative, formatMoney,
 } from '@/lib/users/config'
 
-type TabId = 'activity' | 'orders' | 'access' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
+type TabId = 'activity' | 'orders' | 'access' | 'bots' | 'channels' | 'funnels' | 'touchpoints' | 'fields' | 'notes'
 
 export default function UserCardPage() {
   const supabase = createClient()
@@ -24,6 +25,7 @@ export default function UserCardPage() {
   const [tab, setTab] = useState<TabId>('activity')
   const [editMode, setEditMode] = useState(false)
   const [editData, setEditData] = useState<Partial<CustomerRow>>({})
+  const [showRoleEditor, setShowRoleEditor] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -185,15 +187,25 @@ export default function UserCardPage() {
                     ? { bg: '#D1FAE5', fg: '#059669' }
                     : { bg: '#F1F5F9', fg: '#64748B' }
                   return (
-                    <span
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                    <button
+                      onClick={() => setShowRoleEditor(true)}
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium hover:ring-2 hover:ring-offset-1 transition-all"
                       style={{ backgroundColor: c.bg, color: c.fg }}
-                      title="Роль в проекте (доступ к платформе)"
+                      title="Кликните, чтобы изменить роль"
                     >
                       🔑 {customer.role_label}
-                    </span>
+                    </button>
                   )
                 })()}
+                {!customer.role_label && customer.email && (
+                  <button
+                    onClick={() => setShowRoleEditor(true)}
+                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:border-[#6A55F8] hover:text-[#6A55F8]"
+                    title="Назначить роль / пригласить в проект"
+                  >
+                    🔑 Назначить роль
+                  </button>
+                )}
                 {customer.is_blocked && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600">
                     Заблокирован
@@ -262,6 +274,8 @@ export default function UserCardPage() {
           <Metric label="Сумма заказов" value={formatMoney(customer.revenue ?? 0)} />
         </div>
 
+        <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
+
         {customer.first_touch_at && (
           <FirstTouchBlock customer={customer} onOpenAll={() => setTab('touchpoints')} />
         )}
@@ -275,15 +289,17 @@ export default function UserCardPage() {
           </div>
         )}
 
-        <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
-
-        <RoleBlock customer={customer} onChanged={() => load()} />
-
-        <StatusBlock customer={customer} />
-
         <TagsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
 
       </div>
+
+      {showRoleEditor && (
+        <RoleEditorModal
+          customer={customer}
+          onClose={() => setShowRoleEditor(false)}
+          onChanged={() => { setShowRoleEditor(false); load() }}
+        />
+      )}
 
       {/* Tabs */}
       <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -292,6 +308,8 @@ export default function UserCardPage() {
             { id: 'activity',    label: 'Активность',   icon: '📊' },
             { id: 'orders',      label: 'Заказы',       icon: '🛒' },
             { id: 'access',      label: 'Продукты',     icon: '📚' },
+            { id: 'bots',        label: 'Чат-боты',     icon: '🤖' },
+            { id: 'channels',    label: 'Каналы',       icon: '📣' },
             { id: 'funnels',     label: 'Воронки',      icon: '🎯' },
             { id: 'touchpoints', label: 'Точки входа',  icon: '📍' },
             { id: 'fields',      label: 'Поля',         icon: '📋' },
@@ -314,6 +332,8 @@ export default function UserCardPage() {
           {tab === 'activity' && <ActivityTimeline customerId={customer.id} />}
           {tab === 'orders' && <OrdersTab customerId={customer.id} />}
           {tab === 'access' && <AccessTab projectId={customer.project_id} customerId={customer.id} />}
+          {tab === 'bots' && <BotsTab customerId={customer.id} />}
+          {tab === 'channels' && <ChannelsTab customerId={customer.id} />}
           {tab === 'funnels' && <FunnelsTab customerId={customer.id} />}
           {tab === 'touchpoints' && <TouchpointsTab customerId={customer.id} />}
           {tab === 'fields' && <FieldsTab customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />}
@@ -1264,23 +1284,21 @@ function ContactsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdat
   )
 }
 
-// ─── RoleBlock (под ContactsBlock в шапке карточки) ───
-function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: () => void }) {
+// ─── RoleEditorModal (открывается по клику на бейдж роли в шапке) ───
+function RoleEditorModal({ customer, onClose, onChanged }: { customer: CustomerRow; onClose: () => void; onChanged: () => void }) {
   type ProjectRole = { id: string; code: string; label: string; access_type: string }
   const [roles, setRoles] = useState<ProjectRole[]>([])
   const [memberId, setMemberId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [showInvite, setShowInvite] = useState(false)
-  const [inviteRoleId, setInviteRoleId] = useState('')
-  const [inviting, setInviting] = useState(false)
+  const [selectedRoleId, setSelectedRoleId] = useState('')
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       const [rRes, mRes] = await Promise.all([
         fetch(`/api/projects/${customer.project_id}/roles`).then(r => r.json()),
-        // membership лежит в project_members; ищем по user_id customer-а если он есть
         customer.user_id
           ? fetch(`/api/projects/${customer.project_id}/members`).then(r => r.json())
           : Promise.resolve({ members: [] }),
@@ -1290,27 +1308,52 @@ function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: 
       setRoles(list)
       const me = (mRes.members ?? []).find((m: { user_id: string; id: string }) => m.user_id === customer.user_id)
       setMemberId(me?.id ?? null)
-      const studentRole = list.find(r => r.code === 'student')
-      const adminRole = list.find(r => r.code === 'admin')
-      setInviteRoleId(studentRole?.id ?? adminRole?.id ?? list[0]?.id ?? '')
+      const currentRole = list.find(r => r.label === customer.role_label)
+      const fallback = list.find(r => r.code === 'student') ?? list.find(r => r.code === 'admin')
+      setSelectedRoleId(currentRole?.id ?? fallback?.id ?? list[0]?.id ?? '')
+      setLoaded(true)
     }
     load()
     return () => { cancelled = true }
   }, [customer.id, customer.user_id, customer.project_id, customer.role_label])
 
-  async function handleChangeRole(newRoleId: string) {
-    if (!memberId) return
+  async function handleSave() {
+    if (!selectedRoleId) return
     setError('')
     setSaving(true)
-    const res = await fetch(`/api/projects/${customer.project_id}/members/${memberId}`, {
-      method: 'PATCH',
+
+    if (memberId) {
+      // Уже есть membership — меняем роль
+      const res = await fetch(`/api/projects/${customer.project_id}/members/${memberId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_id: selectedRoleId }),
+      })
+      setSaving(false)
+      if (!res.ok) {
+        const d = await res.json()
+        setError(d.error || 'Не удалось изменить роль')
+        return
+      }
+      onChanged()
+      return
+    }
+
+    // Membership нет — приглашаем (или создаём membership через invite если user уже есть)
+    if (!customer.email) {
+      setSaving(false)
+      setError('У клиента не указан email — добавьте его в контактах сверху')
+      return
+    }
+    const res = await fetch('/api/team/invite', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role_id: newRoleId }),
+      body: JSON.stringify({ project_id: customer.project_id, email: customer.email, role_id: selectedRoleId }),
     })
     setSaving(false)
     if (!res.ok) {
       const d = await res.json()
-      setError(d.error || 'Не удалось изменить роль')
+      setError(d.error || 'Не удалось пригласить')
       return
     }
     onChanged()
@@ -1329,131 +1372,86 @@ function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: 
     onChanged()
   }
 
-  async function handleInvite() {
-    if (!customer.email) {
-      setError('У клиента не указан email — добавьте его в контактах сверху')
-      return
-    }
-    if (!inviteRoleId) return
-    setError('')
-    setInviting(true)
-    const res = await fetch('/api/team/invite', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project_id: customer.project_id, email: customer.email, role_id: inviteRoleId }),
-    })
-    setInviting(false)
-    if (!res.ok) {
-      const d = await res.json()
-      setError(d.error || 'Не удалось пригласить')
-      return
-    }
-    setShowInvite(false)
-    onChanged()
+  // Если customer = Владелец, не позволяем менять роль через эту модалку.
+  if (customer.role_code === 'owner') {
+    return (
+      <Modal isOpen={true} onClose={onClose} title="Роль в проекте" maxWidth="md">
+        <div className="p-6 space-y-3">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100 text-sm">
+            <span>👑</span>
+            <strong className="text-amber-800">Владелец проекта</strong>
+          </div>
+          <p className="text-sm text-gray-500">
+            Роль владельца меняется только через передачу владения в Настройках проекта → Команда.
+          </p>
+        </div>
+      </Modal>
+    )
   }
 
-  // ── Render ──
+  const isInvite = !memberId
+  const titleText = isInvite ? (customer.user_id ? 'Назначить роль' : 'Пригласить в проект') : 'Изменить роль'
+
   return (
-    <div className="pt-4 border-t border-gray-100">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Роль в проекте</h3>
-      </div>
+    <Modal isOpen={true} onClose={onClose} title={titleText} maxWidth="md">
+      <div className="p-6 space-y-4">
+        {error && <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>}
 
-      {error && <div className="mb-2 p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>}
+        {!loaded ? (
+          <div className="text-sm text-gray-400">Загрузка…</div>
+        ) : (
+          <>
+            {isInvite && (
+              <p className="text-sm text-gray-500">
+                {customer.user_id
+                  ? `Зарегистрированному пользователю ${customer.email} будет назначена выбранная роль, и придёт письмо «вам открыт доступ».`
+                  : customer.email
+                  ? `На ${customer.email} уйдёт письмо со ссылкой регистрации.`
+                  : 'У клиента не указан email — сначала добавьте email в контактах в шапке карточки.'}
+              </p>
+            )}
 
-      {customer.role_label && memberId && customer.role_code !== 'owner' && (
-        <div className="flex items-center gap-2">
-          <select
-            value={roles.find(r => r.label === customer.role_label)?.id ?? ''}
-            onChange={e => handleChangeRole(e.target.value)}
-            disabled={saving}
-            className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
-          >
-            {roles.filter(r => r.code !== 'owner' && r.code !== 'guest' && r.code !== 'lead').map(r => (
-              <option key={r.id} value={r.id}>{r.label}</option>
-            ))}
-          </select>
-          <button
-            onClick={handleRemoveMember}
-            className="text-xs text-gray-500 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 hover:border-red-200"
-          >
-            Удалить из проекта
-          </button>
-        </div>
-      )}
-
-      {customer.role_code === 'owner' && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50/60 border border-amber-100 text-sm">
-          <span>👑</span>
-          <strong className="text-amber-800">Владелец проекта</strong>
-        </div>
-      )}
-
-      {!customer.role_label && customer.user_id && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
-          <span className="text-sm text-gray-600">Зарегистрирован в платформе, но не приглашён в этот проект.</span>
-          <button onClick={() => setShowInvite(true)} className="text-sm font-medium text-[#6A55F8] hover:underline">
-            Назначить роль
-          </button>
-        </div>
-      )}
-
-      {!customer.role_label && !customer.user_id && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
-          <div className="text-sm text-gray-600">
-            <div>Нет входа в платформу.</div>
-            <div className="text-xs text-gray-400 mt-0.5">{customer.email ? 'Можно пригласить — отправим ссылку на email.' : 'Сначала укажите email клиента в контактах.'}</div>
-          </div>
-          <button
-            onClick={() => setShowInvite(true)}
-            disabled={!customer.email}
-            className="text-sm font-medium text-[#6A55F8] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Пригласить
-          </button>
-        </div>
-      )}
-
-      {showInvite && (
-        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-gray-100 p-6 w-full max-w-md">
-            <h2 className="text-base font-semibold text-gray-900 mb-1">{customer.user_id ? 'Назначить роль' : 'Пригласить в проект'}</h2>
-            <p className="text-sm text-gray-500 mb-5">
-              {customer.user_id
-                ? `Зарегистрированному пользователю ${customer.email} будет назначена выбранная роль и придёт письмо «вам открыт доступ».`
-                : `На ${customer.email} уйдёт письмо со ссылкой регистрации.`}
-            </p>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Роль</label>
-                <select value={inviteRoleId} onChange={e => setInviteRoleId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
-                  {roles.filter(r => r.code !== 'owner' && r.code !== 'guest' && r.code !== 'lead').map(r => (
-                    <option key={r.id} value={r.id}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button onClick={() => setShowInvite(false)} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
-                <button onClick={handleInvite} disabled={inviting} className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
-                  {inviting ? 'Отправляем…' : 'Отправить'}
-                </button>
-              </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">Роль</label>
+              <select
+                value={selectedRoleId}
+                onChange={e => setSelectedRoleId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
+              >
+                {roles.filter(r => r.code !== 'owner' && r.code !== 'guest' && r.code !== 'lead').map(r => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
+
+            <div className="flex gap-2 pt-2">
+              <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50">
+                Отмена
+              </button>
+              {!isInvite && (
+                <button
+                  onClick={handleRemoveMember}
+                  className="px-4 py-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-sm font-medium"
+                >
+                  Удалить из проекта
+                </button>
+              )}
+              <button
+                onClick={handleSave}
+                disabled={saving || !selectedRoleId || (isInvite && !customer.email)}
+                className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50"
+              >
+                {saving ? 'Сохраняем…' : isInvite ? 'Отправить' : 'Сохранить'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   )
 }
 
-// ─── StatusBlock (этапы воронок + чат-боты + каналы) ───
-type FunnelPositionRow = {
-  funnel_id: string
-  funnel_name: string
-  stage_name: string | null
-  stage_type: string | null
-  entered_at: string | null
-}
+// ─── BotsTab — список чат-ботов клиента с детализацией статуса ───
 type BotConvRow = {
   bot_id: string
   bot_name: string
@@ -1461,63 +1459,30 @@ type BotConvRow = {
   chat_blocked: boolean | null
   scenario_name: string | null
   step_position: number | null
-}
-type ChannelSubRow = {
-  account_id: string
-  channel_label: string
-  platform: string | null
-  last_action: string | null
+  updated_at: string | null
 }
 
-function StatusBlock({ customer }: { customer: CustomerRow }) {
+function BotsTab({ customerId }: { customerId: string }) {
   const supabase = createClient()
-  const [funnels, setFunnels] = useState<FunnelPositionRow[] | null>(null)
   const [bots, setBots] = useState<BotConvRow[] | null>(null)
-  const [channels, setChannels] = useState<ChannelSubRow[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
-      // Воронки: customer_funnel_positions JOIN funnels JOIN funnel_stages
-      const fpRes = await supabase
-        .from('customer_funnel_positions')
-        .select('funnel_id, stage_id, entered_at, funnels!inner(name), funnel_stages!inner(name, stage_type)')
-        .eq('customer_id', customer.id)
-
-      type FpRaw = {
-        funnel_id: string
-        stage_id: string
-        entered_at: string | null
-        funnels: { name: string } | { name: string }[]
-        funnel_stages: { name: string; stage_type: string | null } | { name: string; stage_type: string | null }[]
-      }
-      const fpRows: FunnelPositionRow[] = ((fpRes.data ?? []) as unknown as FpRaw[]).map(r => {
-        const f = Array.isArray(r.funnels) ? r.funnels[0] : r.funnels
-        const s = Array.isArray(r.funnel_stages) ? r.funnel_stages[0] : r.funnel_stages
-        return {
-          funnel_id: r.funnel_id,
-          funnel_name: f?.name ?? 'Воронка',
-          stage_name: s?.name ?? null,
-          stage_type: s?.stage_type ?? null,
-          entered_at: r.entered_at,
-        }
-      })
-      if (!cancelled) setFunnels(fpRows)
-
-      // Чат-боты: chatbot_conversations + telegram_bots + chatbot_scenarios
-      const cvRes = await supabase
+      const { data } = await supabase
         .from('chatbot_conversations')
-        .select('telegram_bot_id, current_step_position, is_active, chat_blocked, telegram_bots!inner(name), chatbot_scenarios(name)')
-        .eq('customer_id', customer.id)
-      type CvRaw = {
+        .select('telegram_bot_id, current_step_position, is_active, chat_blocked, updated_at, telegram_bots!inner(name), chatbot_scenarios(name)')
+        .eq('customer_id', customerId)
+      type Raw = {
         telegram_bot_id: string
         current_step_position: number | null
         is_active: boolean | null
         chat_blocked: boolean | null
+        updated_at: string | null
         telegram_bots: { name: string } | { name: string }[]
         chatbot_scenarios: { name: string } | { name: string }[] | null
       }
-      const cvRows: BotConvRow[] = ((cvRes.data ?? []) as unknown as CvRaw[]).map(r => {
+      const rows: BotConvRow[] = ((data ?? []) as unknown as Raw[]).map(r => {
         const tb = Array.isArray(r.telegram_bots) ? r.telegram_bots[0] : r.telegram_bots
         const sc = Array.isArray(r.chatbot_scenarios) ? r.chatbot_scenarios[0] : r.chatbot_scenarios
         return {
@@ -1527,136 +1492,138 @@ function StatusBlock({ customer }: { customer: CustomerRow }) {
           chat_blocked: r.chat_blocked,
           scenario_name: sc?.name ?? null,
           step_position: r.current_step_position,
+          updated_at: r.updated_at,
         }
       })
-      if (!cancelled) setBots(cvRows)
-
-      // Каналы: social_subscribers_log → последнее действие на каждом канале
-      const slRes = await supabase
-        .from('social_subscribers_log')
-        .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
-        .eq('customer_id', customer.id)
-        .order('created_at', { ascending: false })
-      type SlRaw = {
-        account_id: string
-        action: string | null
-        created_at: string
-        social_accounts: { external_title: string | null; external_username: string | null; platform: string | null } | { external_title: string | null; external_username: string | null; platform: string | null }[]
-      }
-      const lastByAccount = new Map<string, SlRaw>()
-      ;((slRes.data ?? []) as unknown as SlRaw[]).forEach(s => {
-        if (!lastByAccount.has(s.account_id)) lastByAccount.set(s.account_id, s)
-      })
-      const chRows: ChannelSubRow[] = []
-      lastByAccount.forEach((s) => {
-        const sa = Array.isArray(s.social_accounts) ? s.social_accounts[0] : s.social_accounts
-        const label = sa?.external_title || (sa?.external_username ? `@${sa.external_username}` : 'Канал')
-        chRows.push({
-          account_id: s.account_id,
-          channel_label: label,
-          platform: sa?.platform ?? null,
-          last_action: s.action,
-        })
-      })
-      if (!cancelled) setChannels(chRows)
+      if (!cancelled) setBots(rows)
     }
     load()
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customer.id])
+  }, [customerId, supabase])
 
-  if (!funnels && !bots && !channels) {
-    return null
-  }
-
-  const hasFunnels = (funnels?.length ?? 0) > 0
-  const hasBots = (bots?.length ?? 0) > 0
-  const hasChannels = (channels?.length ?? 0) > 0
-
-  if (!hasFunnels && !hasBots && !hasChannels) {
+  if (bots === null) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
+  if (bots.length === 0) {
     return (
-      <div className="pt-4 border-t border-gray-100">
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Статус</h3>
-        <p className="text-sm text-gray-400 italic">Не подписан ни на бота, ни на канал, ни не находится в воронке.</p>
+      <div className="text-center py-12 text-gray-400">
+        <div className="text-3xl mb-2">🤖</div>
+        <div className="text-sm">Клиент не подписан ни на один чат-бот этого проекта</div>
       </div>
     )
   }
 
   return (
-    <div className="pt-4 border-t border-gray-100 space-y-4">
-      <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Статус</h3>
-
-      {hasFunnels && (
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">🎯 Воронки</div>
-          <div className="space-y-1">
-            {funnels!.map(f => (
-              <div key={f.funnel_id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
-                <div className="min-w-0">
-                  <div className="font-medium text-gray-900 truncate">{f.funnel_name}</div>
-                  <div className="text-xs text-gray-500">
-                    {f.stage_name ? <>Этап: <strong>{f.stage_name}</strong></> : 'Этап не определён'}
-                    {f.entered_at && <span className="text-gray-400"> · с {new Date(f.entered_at).toLocaleDateString('ru')}</span>}
-                  </div>
-                </div>
-              </div>
-            ))}
+    <div className="space-y-2">
+      {bots.map(b => (
+        <div key={b.bot_id} className="bg-[#FAFAFD] rounded-xl border border-gray-100 px-4 py-3 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-gray-900">{b.bot_name}</div>
+            <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+              {b.scenario_name ? <>Сценарий: <strong>{b.scenario_name}</strong></> : <span className="italic">Без активного сценария</span>}
+              {b.step_position !== null && b.step_position !== undefined && (
+                <span className="text-gray-400">· шаг {b.step_position + 1}</span>
+              )}
+              {b.updated_at && (
+                <span className="text-gray-400">· обновлён {new Date(b.updated_at).toLocaleDateString('ru')}</span>
+              )}
+            </div>
+          </div>
+          <div className="shrink-0">
+            {b.chat_blocked ? (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700">🚫 заблокирован</span>
+            ) : b.is_active ? (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700">✓ активен</span>
+            ) : (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-500">пауза</span>
+            )}
           </div>
         </div>
-      )}
+      ))}
+    </div>
+  )
+}
 
-      {hasBots && (
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">🤖 Чат-боты</div>
-          <div className="space-y-1">
-            {bots!.map(b => (
-              <div key={b.bot_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-gray-900 truncate">{b.bot_name}</div>
-                  <div className="text-xs text-gray-500">
-                    {b.scenario_name ? <>Сценарий: <strong>{b.scenario_name}</strong></> : 'Без активного сценария'}
-                    {b.step_position !== null && b.step_position !== undefined && (
-                      <span className="text-gray-400"> · шаг {b.step_position + 1}</span>
-                    )}
-                  </div>
-                </div>
-                <div className="shrink-0">
-                  {b.chat_blocked ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700">🚫 заблокирован</span>
-                  ) : b.is_active ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">✓ активен</span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">пауза</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+// ─── ChannelsTab — список каналов клиента ───
+type ChannelSubRow = {
+  account_id: string
+  channel_label: string
+  platform: string | null
+  last_action: string | null
+  last_at: string | null
+}
 
-      {hasChannels && (
-        <div>
-          <div className="text-xs text-gray-500 mb-1.5">📣 Каналы</div>
-          <div className="space-y-1">
-            {channels!.map(c => (
-              <div key={c.account_id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#FAFAFD] text-sm">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-gray-900 truncate">{c.channel_label}</div>
-                  <div className="text-xs text-gray-500">{c.platform === 'telegram' ? 'Telegram' : (c.platform ?? '—')}</div>
-                </div>
-                <div className="shrink-0">
-                  {c.last_action === 'unsubscribe' || c.last_action === 'left' ? (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700">отписался</span>
-                  ) : (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">подписан</span>
-                  )}
-                </div>
+function ChannelsTab({ customerId }: { customerId: string }) {
+  const supabase = createClient()
+  const [channels, setChannels] = useState<ChannelSubRow[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data } = await supabase
+        .from('social_subscribers_log')
+        .select('account_id, action, created_at, social_accounts!inner(external_title, external_username, platform)')
+        .eq('customer_id', customerId)
+        .order('created_at', { ascending: false })
+      type Raw = {
+        account_id: string
+        action: string | null
+        created_at: string
+        social_accounts: { external_title: string | null; external_username: string | null; platform: string | null } | { external_title: string | null; external_username: string | null; platform: string | null }[]
+      }
+      const lastByAccount = new Map<string, Raw>()
+      ;((data ?? []) as unknown as Raw[]).forEach(s => {
+        if (!lastByAccount.has(s.account_id)) lastByAccount.set(s.account_id, s)
+      })
+      const rows: ChannelSubRow[] = []
+      lastByAccount.forEach(s => {
+        const sa = Array.isArray(s.social_accounts) ? s.social_accounts[0] : s.social_accounts
+        const label = sa?.external_title || (sa?.external_username ? `@${sa.external_username}` : 'Канал')
+        rows.push({
+          account_id: s.account_id,
+          channel_label: label,
+          platform: sa?.platform ?? null,
+          last_action: s.action,
+          last_at: s.created_at,
+        })
+      })
+      if (!cancelled) setChannels(rows)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [customerId, supabase])
+
+  if (channels === null) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
+  if (channels.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <div className="text-3xl mb-2">📣</div>
+        <div className="text-sm">Клиент не зафиксирован ни на одном канале проекта</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {channels.map(c => {
+        const isUnsubscribed = c.last_action === 'unsubscribe' || c.last_action === 'left'
+        return (
+          <div key={c.account_id} className="bg-[#FAFAFD] rounded-xl border border-gray-100 px-4 py-3 flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-gray-900">{c.channel_label}</div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                {c.platform === 'telegram' ? 'Telegram' : (c.platform ?? '—')}
+                {c.last_at && <span className="text-gray-400"> · последнее действие {new Date(c.last_at).toLocaleDateString('ru')}</span>}
               </div>
-            ))}
+            </div>
+            <div className="shrink-0">
+              {isUnsubscribed ? (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700">отписался</span>
+              ) : (
+                <span className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700">подписан</span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })}
     </div>
   )
 }
