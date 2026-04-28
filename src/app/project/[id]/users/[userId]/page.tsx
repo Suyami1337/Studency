@@ -299,6 +299,10 @@ export default function UserCardPage() {
           </div>
         )}
 
+        <ContactsBlock customer={customer} onUpdated={c => setCustomer(prev => prev ? { ...prev, ...c } : prev)} />
+
+        <RoleBlock customer={customer} onChanged={() => load()} />
+
       </div>
 
       {/* Tabs */}
@@ -307,7 +311,7 @@ export default function UserCardPage() {
           {([
             { id: 'activity',    label: 'Активность',   icon: '📊' },
             { id: 'orders',      label: 'Заказы',       icon: '🛒' },
-            { id: 'access',      label: 'Доступы',      icon: '🔑' },
+            { id: 'access',      label: 'Продукты',     icon: '📚' },
             { id: 'funnels',     label: 'Воронки',      icon: '🎯' },
             { id: 'touchpoints', label: 'Точки входа',  icon: '📍' },
             { id: 'fields',      label: 'Поля',         icon: '📋' },
@@ -1195,6 +1199,50 @@ function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: 
 
   if (loading) return <div className="text-sm text-gray-400 py-3">Загрузка…</div>
 
+  if (fields.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-400">
+        <div className="text-3xl mb-2">📋</div>
+        <div className="text-sm mb-2">Дополнительных полей пока нет</div>
+        <div className="text-xs text-gray-400 max-w-sm mx-auto">
+          Кастомные поля настраиваются в Настройках проекта → Поля клиента.
+          Контакты вынесены в шапку карточки.
+        </div>
+      </div>
+    )
+  }
+
+  // saveContact уже не нужен здесь — контакты в ContactsBlock в шапке.
+  void saveContact
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Дополнительные поля</h3>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+          {fields.map(f => (
+            <CustomFieldRow
+              key={f.id}
+              field={f}
+              value={values.get(f.id)}
+              onSave={(draft) => saveField(f.id, draft)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── ContactsBlock (под Metric row в шапке карточки) ───
+function ContactsBlock({ customer, onUpdated }: { customer: CustomerRow; onUpdated: (c: Partial<CustomerRow>) => void }) {
+  const supabase = createClient()
+  async function saveContact(key: keyof CustomerRow, newValue: string | null): Promise<{ ok: boolean; error?: string }> {
+    const { data, error } = await supabase.from('customers').update({ [key]: newValue }).eq('id', customer.id).select().single()
+    if (error) return { ok: false, error: error.message }
+    if (data) onUpdated(data as Partial<CustomerRow>)
+    return { ok: true }
+  }
+
   type ContactField = {
     key: keyof CustomerRow
     label: string
@@ -1204,7 +1252,6 @@ function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: 
     linkPrefix?: string
   }
   const contactFields: ContactField[] = [
-    { key: 'full_name', label: 'Имя', type: 'text', placeholder: 'Иван Иванов' },
     { key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com' },
     { key: 'phone', label: 'Телефон', type: 'tel', placeholder: '+7 999 123-45-67' },
     { key: 'telegram_username', label: 'Telegram', type: 'text', placeholder: 'username (без @)', isLink: true, linkPrefix: 'https://t.me/' },
@@ -1214,44 +1261,207 @@ function FieldsTab({ customer, onUpdated }: { customer: CustomerRow; onUpdated: 
   ]
 
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Контакты</h3>
-          <span className="text-xs text-gray-400">· наведите на поле и нажмите ✎ чтобы изменить</span>
-        </div>
-        <div className="grid grid-cols-2 gap-x-5 gap-y-4">
-          {contactFields.map(f => (
-            <ContactFieldRow
-              key={f.key}
-              label={f.label}
-              type={f.type}
-              placeholder={f.placeholder}
-              isLink={f.isLink}
-              linkPrefix={f.linkPrefix}
-              value={(customer[f.key] as string) ?? null}
-              onSave={(v) => saveContact(f.key, v)}
-            />
-          ))}
-        </div>
+    <div className="pt-4 border-t border-gray-100">
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Контакты</h3>
+        <span className="text-xs text-gray-400">· наведите на поле и ✎ чтобы изменить</span>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-5 gap-y-3">
+        {contactFields.map(f => (
+          <ContactFieldRow
+            key={f.key}
+            label={f.label}
+            type={f.type}
+            placeholder={f.placeholder}
+            isLink={f.isLink}
+            linkPrefix={f.linkPrefix}
+            value={(customer[f.key] as string) ?? null}
+            onSave={(v) => saveContact(f.key, v)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── RoleBlock (под ContactsBlock в шапке карточки) ───
+function RoleBlock({ customer, onChanged }: { customer: CustomerRow; onChanged: () => void }) {
+  type ProjectRole = { id: string; code: string; label: string; access_type: string }
+  const [roles, setRoles] = useState<ProjectRole[]>([])
+  const [memberId, setMemberId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [showInvite, setShowInvite] = useState(false)
+  const [inviteRoleId, setInviteRoleId] = useState('')
+  const [inviting, setInviting] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const [rRes, mRes] = await Promise.all([
+        fetch(`/api/projects/${customer.project_id}/roles`).then(r => r.json()),
+        // membership лежит в project_members; ищем по user_id customer-а если он есть
+        customer.user_id
+          ? fetch(`/api/projects/${customer.project_id}/members`).then(r => r.json())
+          : Promise.resolve({ members: [] }),
+      ])
+      if (cancelled) return
+      const list = (rRes.roles ?? []) as ProjectRole[]
+      setRoles(list)
+      const me = (mRes.members ?? []).find((m: { user_id: string; id: string }) => m.user_id === customer.user_id)
+      setMemberId(me?.id ?? null)
+      const studentRole = list.find(r => r.code === 'student')
+      const adminRole = list.find(r => r.code === 'admin')
+      setInviteRoleId(studentRole?.id ?? adminRole?.id ?? list[0]?.id ?? '')
+    }
+    load()
+    return () => { cancelled = true }
+  }, [customer.id, customer.user_id, customer.project_id, customer.role_label])
+
+  async function handleChangeRole(newRoleId: string) {
+    if (!memberId) return
+    setError('')
+    setSaving(true)
+    const res = await fetch(`/api/projects/${customer.project_id}/members/${memberId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role_id: newRoleId }),
+    })
+    setSaving(false)
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось изменить роль')
+      return
+    }
+    onChanged()
+  }
+
+  async function handleRemoveMember() {
+    if (!memberId) return
+    if (!confirm('Удалить из проекта? Доступ будет отозван.')) return
+    setError('')
+    const res = await fetch(`/api/projects/${customer.project_id}/members/${memberId}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось удалить')
+      return
+    }
+    onChanged()
+  }
+
+  async function handleInvite() {
+    if (!customer.email) {
+      setError('У клиента не указан email — добавьте его в контактах сверху')
+      return
+    }
+    if (!inviteRoleId) return
+    setError('')
+    setInviting(true)
+    const res = await fetch('/api/team/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project_id: customer.project_id, email: customer.email, role_id: inviteRoleId }),
+    })
+    setInviting(false)
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Не удалось пригласить')
+      return
+    }
+    setShowInvite(false)
+    onChanged()
+  }
+
+  // ── Render ──
+  return (
+    <div className="pt-4 border-t border-gray-100">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Роль в проекте</h3>
       </div>
 
-      {fields.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Дополнительные поля</h3>
-          <div className="grid grid-cols-2 gap-x-5 gap-y-4">
-            {fields.map(f => (
-              <CustomFieldRow
-                key={f.id}
-                field={f}
-                value={values.get(f.id)}
-                onSave={(draft) => saveField(f.id, draft)}
-              />
+      {error && <div className="mb-2 p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>}
+
+      {customer.role_label && memberId && customer.role_code !== 'owner' && (
+        <div className="flex items-center gap-2">
+          <select
+            value={roles.find(r => r.label === customer.role_label)?.id ?? ''}
+            onChange={e => handleChangeRole(e.target.value)}
+            disabled={saving}
+            className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white"
+          >
+            {roles.filter(r => r.code !== 'owner' && r.code !== 'guest' && r.code !== 'lead').map(r => (
+              <option key={r.id} value={r.id}>{r.label}</option>
             ))}
-          </div>
+          </select>
+          <button
+            onClick={handleRemoveMember}
+            className="text-xs text-gray-500 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 hover:border-red-200"
+          >
+            Удалить из проекта
+          </button>
         </div>
       )}
 
+      {customer.role_code === 'owner' && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+          <span>👑</span>
+          <span className="text-amber-800"><strong>Владелец</strong> — управление через «Команда» в Настройках проекта.</span>
+        </div>
+      )}
+
+      {!customer.role_label && customer.user_id && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
+          <span className="text-sm text-gray-600">Зарегистрирован в платформе, но не приглашён в этот проект.</span>
+          <button onClick={() => setShowInvite(true)} className="text-sm font-medium text-[#6A55F8] hover:underline">
+            Назначить роль
+          </button>
+        </div>
+      )}
+
+      {!customer.role_label && !customer.user_id && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
+          <div className="text-sm text-gray-600">
+            <div>Нет входа в платформу.</div>
+            <div className="text-xs text-gray-400 mt-0.5">{customer.email ? 'Можно пригласить — отправим ссылку на email.' : 'Сначала укажите email клиента в контактах.'}</div>
+          </div>
+          <button
+            onClick={() => setShowInvite(true)}
+            disabled={!customer.email}
+            className="text-sm font-medium text-[#6A55F8] hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Пригласить
+          </button>
+        </div>
+      )}
+
+      {showInvite && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-gray-100 p-6 w-full max-w-md">
+            <h2 className="text-base font-semibold text-gray-900 mb-1">{customer.user_id ? 'Назначить роль' : 'Пригласить в проект'}</h2>
+            <p className="text-sm text-gray-500 mb-5">
+              {customer.user_id
+                ? `Зарегистрированному пользователю ${customer.email} будет назначена выбранная роль и придёт письмо «вам открыт доступ».`
+                : `На ${customer.email} уйдёт письмо со ссылкой регистрации.`}
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Роль</label>
+                <select value={inviteRoleId} onChange={e => setInviteRoleId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm">
+                  {roles.filter(r => r.code !== 'owner' && r.code !== 'guest' && r.code !== 'lead').map(r => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowInvite(false)} className="flex-1 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
+                <button onClick={handleInvite} disabled={inviting} className="flex-1 py-2 rounded-lg bg-[#6A55F8] hover:bg-[#5040D6] text-white text-sm font-medium disabled:opacity-50">
+                  {inviting ? 'Отправляем…' : 'Отправить'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
