@@ -96,7 +96,7 @@ export default function UsersPage() {
     subChannelsMap.forEach((m, cid) => {
       const set = new Set<string>()
       m.forEach((action, aid) => {
-        if (action !== 'unsubscribe' && action !== 'left') set.add(aid)
+        if (action !== 'leave' && action !== 'unsubscribe' && action !== 'left') set.add(aid)
       })
       if (set.size > 0) subChannels.set(cid, set)
     })

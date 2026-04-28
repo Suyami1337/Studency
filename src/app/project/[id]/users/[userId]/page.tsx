@@ -1376,7 +1376,8 @@ function SubscriptionsBlock({ customerId }: { customerId: string }) {
           id: s.account_id,
           label,
           platform: sa?.platform ?? null,
-          subscribed: !(s.action === 'unsubscribe' || s.action === 'left'),
+          // action из БД: 'join' (подписался) или 'leave' (отписался/удалён).
+          subscribed: s.action !== 'leave' && s.action !== 'unsubscribe' && s.action !== 'left',
         })
       })
 
@@ -1396,27 +1397,31 @@ function SubscriptionsBlock({ customerId }: { customerId: string }) {
   return (
     <div className="pt-4 border-t border-gray-100">
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Подписки</h3>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="space-y-1.5">
         {bots.map(b => {
-          const status = b.chat_blocked ? 'blocked' : b.is_active ? 'active' : 'paused'
-          const c = status === 'blocked' ? { bg: '#FEE2E2', fg: '#B91C1C' }
-                  : status === 'active' ? { bg: '#D1FAE5', fg: '#059669' }
-                  : { bg: '#F1F5F9', fg: '#64748B' }
-          const icon = status === 'blocked' ? '🚫' : status === 'active' ? '✓' : '⏸'
+          // chat_blocked=true означает что человек заблокировал бот / удалил чат — фактически отписался.
+          const isUnsubscribed = !!b.chat_blocked
+          const c = isUnsubscribed ? { bg: '#FEE2E2', fg: '#B91C1C' } : { bg: '#D1FAE5', fg: '#059669' }
           return (
-            <span key={b.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: c.bg, color: c.fg }} title={status === 'blocked' ? 'Заблокировал бота' : status === 'active' ? 'Подписан и активен' : 'Подписка на паузе'}>
-              <span>🤖 {b.name}</span>
-              <span>{icon}</span>
-            </span>
+            <div key={b.id} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm" style={{ backgroundColor: c.bg, color: c.fg }}>
+              <span className="text-xs opacity-70">Чат-бот:</span>
+              <span className="font-medium">{b.name}</span>
+              <span className="text-base leading-none" title={isUnsubscribed ? 'Отписался / заблокировал бота' : 'Подписан'}>
+                {isUnsubscribed ? '✕' : '✓'}
+              </span>
+            </div>
           )
         })}
         {channels.map(ch => {
           const c = ch.subscribed ? { bg: '#D1FAE5', fg: '#059669' } : { bg: '#FEE2E2', fg: '#B91C1C' }
           return (
-            <span key={ch.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium" style={{ backgroundColor: c.bg, color: c.fg }} title={ch.subscribed ? 'Подписан на канал' : 'Отписался от канала'}>
-              <span>📣 {ch.label}</span>
-              <span>{ch.subscribed ? '✓' : '✕'}</span>
-            </span>
+            <div key={ch.id} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm" style={{ backgroundColor: c.bg, color: c.fg }}>
+              <span className="text-xs opacity-70">Канал:</span>
+              <span className="font-medium">{ch.label}</span>
+              <span className="text-base leading-none" title={ch.subscribed ? 'Подписан' : 'Отписался'}>
+                {ch.subscribed ? '✓' : '✕'}
+              </span>
+            </div>
           )
         })}
       </div>
