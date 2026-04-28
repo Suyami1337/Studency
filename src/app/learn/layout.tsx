@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import NotificationBell from '@/components/learning/NotificationBell'
 
 type SchoolMembership = {
   project_id: string
@@ -107,6 +108,7 @@ export default function LearnLayout({ children }: { children: React.ReactNode })
                 ))}
               </select>
             )}
+            <NotificationBell />
             <div className="text-sm text-gray-700">
               {user?.full_name || user?.email}
             </div>
